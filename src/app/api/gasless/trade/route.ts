@@ -298,9 +298,21 @@ function selectorFor(method: string): string | null {
 
 export async function POST(req: Request) {
   const reqStartTime = Date.now();
+  const timings: Record<string, number> = {};
+  
+  const logTiming = (step: string, extra?: Record<string, any>) => {
+    const elapsed = Date.now() - reqStartTime;
+    timings[step] = elapsed;
+    const extraStr = extra ? ` ${JSON.stringify(extra)}` : '';
+    console.log(`[TIMING][trade] +${elapsed}ms | ${step}${extraStr}`);
+  };
+  
   try {
+    logTiming('START');
+    
     // --- FAST PATH: Skip expensive checks when GASLESS_FAST_MODE=true ---
     const fastMode = String(process.env.GASLESS_FAST_MODE || '').toLowerCase() === 'true';
+    console.log(`[TIMING][trade] fastMode=${fastMode}`);
     
     // --- Circuit breaker check (parallelize with rate limit) ---
     const circuitPromise = isCircuitBreakerOpen();
@@ -325,6 +337,7 @@ export async function POST(req: Request) {
 
     // Await both in parallel
     const [circuitStatus, rateLimitResult] = await Promise.all([circuitPromise, rateLimitPromise]);
+    logTiming('rate_limit_done');
     
     if (circuitStatus.open) {
       console.warn('[GASLESS][API][trade] circuit breaker open', circuitStatus);
@@ -361,16 +374,7 @@ export async function POST(req: Request) {
     const signature: string = body?.signature;
     const sessionId: string | undefined = body?.sessionId;
     const params = body?.params;
-    console.log('[GASLESS][API][trade] incoming', { orderBook, method, fastMode });
-    console.log('[UpGas][API][trade] incoming', {
-      orderBook,
-      method,
-      isSession: Boolean(sessionId) && String(method).startsWith('session'),
-      hasMessage: !!message,
-      hasSignature: typeof signature === 'string',
-      hasSessionId: !!sessionId,
-      fastMode,
-    });
+    logTiming('parsed_body', { orderBook, method, isSession: Boolean(sessionId) && String(method).startsWith('session'), fastMode });
     if (!orderBook || !ethers.isAddress(orderBook)) {
       return NextResponse.json({ error: 'invalid orderBook' }, { status: 400 });
     }
@@ -384,6 +388,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'missing payload' }, { status: 400 });
       }
     }
+    logTiming('validation_done');
+    
     const rpcUrl = process.env.RPC_URL || process.env.RPC_URL_HYPEREVM;
     const registryAddress = process.env.SESSION_REGISTRY_ADDRESS;
     if (!rpcUrl) {
@@ -395,16 +401,19 @@ export async function POST(req: Request) {
       }
     }
     const provider = new ethers.JsonRpcProvider(rpcUrl);
+    logTiming('provider_created');
     
     // Skip network check and code check in fast mode - these add ~200-400ms
     if (!fastMode) {
       try {
         const net = await provider.getNetwork();
+        logTiming('network_check_done');
         console.log('[UpGas][API][trade] provider network', { chainId: String(net.chainId) });
       } catch {}
 
       try {
         const code = await provider.getCode(orderBook);
+        logTiming('code_check_done');
         if (!code || code === '0x') {
           return NextResponse.json(
             { error: 'orderbook_not_deployed', orderBook },
@@ -417,6 +426,8 @@ export async function POST(req: Request) {
           error: codeErr?.shortMessage || codeErr?.message || String(codeErr),
         });
       }
+    } else {
+      logTiming('fast_mode_skipped_checks');
     }
     // Session V2: session is authorized to a relayer *set* (Merkle root) in the registry.
     // Any relayer in our configured keyset can submit, but it must pass a valid Merkle proof.
@@ -517,7 +528,12 @@ export async function POST(req: Request) {
     let estimatedGasBuffered: bigint | null = null;
     let estimatedFromAddress: string | null = estimateFrom;
 
-    if (estimateFrom) {
+    logTiming('before_gas_estimate');
+    
+    // Skip gas estimation in fast mode - use default gas limit
+    const skipGasEstimate = fastMode || String(process.env.GASLESS_SKIP_GAS_ESTIMATE || '').toLowerCase() === 'true';
+    
+    if (!skipGasEstimate && estimateFrom) {
       try {
         let data: string | null = null;
         if (isSession) {
@@ -552,6 +568,7 @@ export async function POST(req: Request) {
 
         if (data) {
           estimatedGas = await provider.estimateGas({ from: estimateFrom, to: orderBook, data } as any);
+          logTiming('gas_estimate_done');
           estimatedGasBuffered = (estimatedGas * ESTIMATE_BUFFER_BPS) / 10000n;
           if (estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT && hasBig) {
             routedPool = 'hub_trade_big';
@@ -572,12 +589,15 @@ export async function POST(req: Request) {
           });
         }
       } catch (e: any) {
+        logTiming('gas_estimate_failed');
         console.warn('[UpGas][API][trade] estimateGas failed; using default pool', {
           method,
           error: e?.shortMessage || e?.message || String(e),
           estimateFrom,
         });
       }
+    } else {
+      logTiming('gas_estimate_skipped');
     }
 
     function isBlockGasLimitError(err: any): boolean {
@@ -621,21 +641,21 @@ export async function POST(req: Request) {
     }
 
     const sendWithPool = async (pool: 'hub_trade' | 'hub_trade_small' | 'hub_trade_big') => {
+      const sendPoolStart = Date.now();
       // IMPORTANT: Set gasLimit according to the target pool before sending.
       effectiveTradeGasLimit = computeGasLimitForPool(pool);
-      try {
-        console.log('[UpGas][API][trade] send gasLimit', {
-          pool,
-          gasLimit: effectiveTradeGasLimit.toString(),
-          estimatedGas: estimatedGas ? estimatedGas.toString() : null,
-          estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
-        });
-      } catch {}
+      console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | sendWithPool(${pool}) START`, {
+        gasLimit: effectiveTradeGasLimit.toString(),
+      });
+      
       return await withRelayer({
         pool,
         provider,
         stickyKey,
         action: async (wallet) => {
+        const actionStart = Date.now();
+        console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | withRelayer action START (${actionStart - sendPoolStart}ms into sendWithPool)`);
+        
         const meta = new ethers.Contract(orderBook, (MetaTradeFacet as any).abi, wallet);
         if (isSession) {
           if (!sessionId || typeof sessionId !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(sessionId)) {
@@ -1047,6 +1067,9 @@ export async function POST(req: Request) {
             // Some RPCs can be flaky here and we'd rather rely on the mined receipt when configured.
             }
           } // end if (!fastMode) for preflight
+          
+          console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | 🎯 ABOUT TO CALL SMART CONTRACT - method=${method} (${Date.now() - actionStart}ms into action)`);
+          
           switch (method) {
             case 'sessionPlaceLimit':
               return await sendWithNonceRetry({
@@ -1134,11 +1157,17 @@ export async function POST(req: Request) {
       });
     };
 
+    logTiming('before_send_tx');
+    
     let reroutedToBig = false;
     let tx: ethers.TransactionResponse;
     try {
+      console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | 🚀 CALLING sendWithPool(${routedPool}) NOW`);
       tx = await sendWithPool(routedPool);
+      logTiming('tx_broadcasted', { txHash: tx.hash });
+      console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | ✅ TX HASH RECEIVED: ${tx.hash}`);
     } catch (sendErr: any) {
+      logTiming('send_failed');
       const canRetryToBig = hasBig && routedPool !== 'hub_trade_big' && isBlockGasLimitError(sendErr);
       if (!canRetryToBig) throw sendErr;
       console.warn('[UpGas][API][trade] retrying via big-block relayer due to block gas limit error', {
@@ -1149,7 +1178,11 @@ export async function POST(req: Request) {
       reroutedToBig = true;
       routedPool = 'hub_trade_big';
       tx = await sendWithPool('hub_trade_big');
+      logTiming('tx_broadcasted_retry');
     }
+    
+    logTiming('before_history_persist');
+    
     // Persist *placement* history only.
     // IMPORTANT: cancellation must never depend on Supabase history writes.
     if (PLACE_METHODS.has(method)) {
@@ -1164,9 +1197,13 @@ export async function POST(req: Request) {
           message,
           params,
         });
+        logTiming('history_persisted');
       } catch (err) {
+        logTiming('history_persist_failed');
         console.error('[GASLESS][API][trade] history persist exception', err);
       }
+    } else {
+      logTiming('history_skipped');
     }
     // Configurable wait policy to reduce perceived latency
     const isCancelMethod = method === 'sessionCancelOrder' || method === 'metaCancelOrder';
@@ -1233,6 +1270,8 @@ export async function POST(req: Request) {
       });
     }
 
+    logTiming('before_poll_check');
+    
     // Optional short polling window for fast revert detection without waiting for confirmations.
     // For cancel methods we default to 0 so the client gets txHash immediately for optimistic UI;
     // set GASLESS_TRADE_POLL_RECEIPT_MS to poll for receipt if desired.
@@ -1243,9 +1282,11 @@ export async function POST(req: Request) {
       pollMs = 0;
     }
     // Placements: default to a short poll window (unless explicitly disabled) so we can surface immediate reverts.
-    if (!isCancelMethod && !pollMsRaw) {
+    // IN FAST MODE: Skip polling entirely
+    if (!isCancelMethod && !pollMsRaw && !fastMode) {
       pollMs = 7000;
     }
+    console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | poll_config: pollMs=${pollMs}, fastMode=${fastMode}, isCancelMethod=${isCancelMethod}`);
     if (Number.isFinite(pollMs) && pollMs > 0) {
       const deadline = Date.now() + pollMs;
       let lastRc: any = null;
@@ -1320,9 +1361,11 @@ export async function POST(req: Request) {
         });
       }
     }
+    logTiming('RESPONSE');
     const totalElapsedMs = Date.now() - reqStartTime;
     console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms, totalElapsedMs, fastMode });
     console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms, totalElapsedMs, fastMode });
+    console.log('[TIMING][trade] FINAL TIMINGS:', JSON.stringify(timings));
     return NextResponse.json({
       txHash: tx.hash,
       pending: true,
@@ -1333,6 +1376,7 @@ export async function POST(req: Request) {
       reroutedToBig,
       serverElapsedMs: totalElapsedMs,
       fastMode,
+      timings,
     });
   } catch (e: any) {
     if (e instanceof HttpError) {

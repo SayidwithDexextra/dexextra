@@ -253,8 +253,13 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
     label?: string
   }
 ): Promise<ethers.TransactionResponse> {
+  const fnStartTime = Date.now()
   const attempts = params.attempts ?? 4
   const label = params.label ?? `${params.method}`
+  
+  const elapsed = () => Date.now() - fnStartTime
+
+  console.log(`[TIMING][relayer] +0ms | sendWithNonceRetry START`, { label, attempts })
 
   let chainId: bigint = 0n
   try {
@@ -263,12 +268,17 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
   } catch {
     chainId = 0n
   }
+  console.log(`[TIMING][relayer] +${elapsed()}ms | getNetwork done`)
 
   let lastErr: any = null
   let feeBumpMultiplier = 0
   for (let i = 0; i < attempts; i++) {
+    console.log(`[TIMING][relayer] +${elapsed()}ms | attempt ${i + 1}/${attempts} START`)
+    
+    const nonceStart = elapsed()
     const observedPendingRaw = await (params.provider as any).getTransactionCount(params.wallet.address, 'pending')
     const observedPending = BigInt(observedPendingRaw)
+    console.log(`[TIMING][relayer] +${elapsed()}ms | getTransactionCount done (took ${elapsed() - nonceStart}ms)`, { nonce: observedPending.toString() })
 
     const cacheKey = nonceCacheKey(params.wallet.address, chainId)
     const cachedNext = localNextNonce.get(cacheKey)
@@ -276,6 +286,7 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
 
     // Optional Supabase-backed allocator (prevents cross-instance nonce collisions).
     // Enabled automatically when service-role env is present, unless RELAYER_NONCE_ALLOCATOR=disabled.
+    const allocatorStart = elapsed()
     try {
       const mode = String(process.env.RELAYER_NONCE_ALLOCATOR || '').trim().toLowerCase()
       const enabled = mode !== 'disabled' && mode !== 'off'
@@ -289,22 +300,20 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
             p_label: label,
           } as any)
           if (error) throw error
-          // data is a bigint-like number in JSON; normalize to bigint
           nonce = BigInt(data as any)
+          console.log(`[TIMING][relayer] +${elapsed()}ms | nonce allocator done (took ${elapsed() - allocatorStart}ms)`, { nonce: nonce.toString() })
         }
+      } else {
+        console.log(`[TIMING][relayer] +${elapsed()}ms | nonce allocator SKIPPED`)
       }
     } catch (e: any) {
-      // Fall back to observed pending nonce; do not block tx sending if allocator is down/misconfigured.
-      if (process.env.NODE_ENV !== 'production') {
-        const msg = String(e?.message || e)
-        console.warn(`[relayer][nonce-allocator] allocator unavailable, falling back: ${msg}`)
-      }
+      console.warn(`[TIMING][relayer] +${elapsed()}ms | nonce allocator FAILED (took ${elapsed() - allocatorStart}ms):`, e?.message || e)
     }
 
     // Build fee overrides — bump fees progressively on replacement-underpriced retries
-    // so the node accepts the tx as a valid replacement (requires ~10% higher fees).
     let feeOverrides: Record<string, bigint> = {}
     if (feeBumpMultiplier > 0) {
+      const feeStart = elapsed()
       try {
         const fee = await params.provider.getFeeData()
         if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
@@ -317,29 +326,34 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
           const bumpBps = 100n + 15n * BigInt(feeBumpMultiplier)
           feeOverrides = { gasPrice: (fee.gasPrice * bumpBps) / 100n }
         }
+        console.log(`[TIMING][relayer] +${elapsed()}ms | getFeeData done (took ${elapsed() - feeStart}ms)`)
       } catch {
-        // If fee fetch fails, continue without explicit fees — provider will fill defaults.
+        // If fee fetch fails, continue without explicit fees
       }
     }
 
     try {
       const fn = (params.contract as any)[params.method]
       if (typeof fn !== 'function') throw new Error(`Contract missing method: ${params.method}`)
+      
+      const txStart = elapsed()
+      console.log(`[TIMING][relayer] +${elapsed()}ms | 🚀 SENDING TX TO BLOCKCHAIN NOW - ${label}`, { nonce: nonce.toString() })
+      
       const tx: ethers.TransactionResponse = await fn(...params.args, {
         ...(params.overrides || {}),
         ...feeOverrides,
         nonce,
       })
+      
+      console.log(`[TIMING][relayer] +${elapsed()}ms | ✅ TX BROADCAST COMPLETE (took ${elapsed() - txStart}ms)`, { txHash: tx.hash })
 
-      // Update local nonce hint to avoid immediately reusing the same nonce on retries.
-      // Only advance on successful broadcast (i.e., we got a tx hash back).
+      // Update local nonce hint
       try {
         localNextNonce.set(cacheKey, nonce + 1n)
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       // Best-effort mark broadcasted for observability
+      const markStart = elapsed()
       try {
         const mode = String(process.env.RELAYER_NONCE_ALLOCATOR || '').trim().toLowerCase()
         const enabled = mode !== 'disabled' && mode !== 'off'
@@ -352,12 +366,12 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
               p_nonce: nonce.toString(),
               p_tx_hash: tx.hash,
             } as any)
+            console.log(`[TIMING][relayer] +${elapsed()}ms | mark_broadcasted done (took ${elapsed() - markStart}ms)`)
           }
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
 
+      console.log(`[TIMING][relayer] +${elapsed()}ms | sendWithNonceRetry COMPLETE`, { txHash: tx.hash, totalMs: elapsed() })
       return tx
     } catch (e: any) {
       lastErr = e
