@@ -788,11 +788,11 @@ class InteractiveTrader {
     // Tunable post-trade pauses so errors stay visible longer in the CLI
     this.tradeSuccessPauseMs = parseDuration(
       process.env.HACK_TRADE_SUCCESS_PAUSE_MS,
-      3000
+      8000
     );
     this.tradeErrorPauseMs = parseDuration(
       process.env.HACK_TRADE_ERROR_PAUSE_MS,
-      5000
+      8000
     );
 
     // Enable HTTP keep-alive for RPC
@@ -11984,13 +11984,26 @@ ${colors.brightRed}└───────────────────�
           );
         }
 
+        // Start timing from order submission
+        const submitStartTime = Date.now();
+
         // Always use margin limit order path per new design
         const tx = await this.contracts.obPlace
           .connect(this.currentUser)
           .placeMarginLimitOrder(priceWei, amountWei, isBuy);
 
-        console.log(colorText("⏳ Transaction submitted...", colors.yellow));
+        const txSubmittedTime = Date.now();
+        const submissionMs = txSubmittedTime - submitStartTime;
+        console.log(
+          colorText(
+            `⏳ Transaction submitted... (submission took ${submissionMs}ms)`,
+            colors.yellow
+          )
+        );
         const receipt = await tx.wait();
+        const confirmationTime = Date.now();
+        const confirmationMs = confirmationTime - txSubmittedTime;
+        const totalMs = confirmationTime - submitStartTime;
 
         console.log(
           colorText("✅ Order placed successfully!", colors.brightGreen)
@@ -11998,6 +12011,12 @@ ${colors.brightRed}└───────────────────�
         console.log(colorText(`📄 Transaction: ${tx.hash}`, colors.dim));
         console.log(
           colorText(`⛽ Gas used: ${receipt.gasUsed.toString()}`, colors.dim)
+        );
+        console.log(
+          colorText(
+            `⏱️  Timing: ${submissionMs}ms submit + ${confirmationMs}ms confirm = ${totalMs}ms total`,
+            colors.brightCyan
+          )
         );
         await this.logCollateralBreakdown("Post-trade collateral");
       } else {
@@ -12225,12 +12244,25 @@ ${colors.brightRed}└───────────────────�
           .connect(this.currentUser)
           .placeMarginMarketOrder.staticCall(amountWei, isBuy);
 
+        // Start timing from order submission
+        const submitStartTime = Date.now();
+
         const tx = await this.contracts.obPlace
           .connect(this.currentUser)
           .placeMarginMarketOrder(amountWei, isBuy);
 
-        console.log(colorText("⏳ Transaction submitted...", colors.yellow));
+        const txSubmittedTime = Date.now();
+        const submissionMs = txSubmittedTime - submitStartTime;
+        console.log(
+          colorText(
+            `⏳ Transaction submitted... (submission took ${submissionMs}ms)`,
+            colors.yellow
+          )
+        );
         const receipt = await tx.wait();
+        const confirmationTime = Date.now();
+        const confirmationMs = confirmationTime - txSubmittedTime;
+        const totalMs = confirmationTime - submitStartTime;
 
         console.log(colorText("✅ Market order executed!", colors.brightGreen));
         try {
@@ -12242,6 +12274,12 @@ ${colors.brightRed}└───────────────────�
         console.log(colorText(`📄 Transaction: ${tx.hash}`, colors.dim));
         console.log(
           colorText(`⛽ Gas used: ${receipt.gasUsed.toString()}`, colors.dim)
+        );
+        console.log(
+          colorText(
+            `⏱️  Timing: ${submissionMs}ms submit + ${confirmationMs}ms confirm = ${totalMs}ms total`,
+            colors.brightCyan
+          )
         );
         await this.logCollateralBreakdown("Post-trade collateral");
       } else {

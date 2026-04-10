@@ -10,7 +10,7 @@ import { useLightweightOrderBookStore, useOrderBook as useLightweightOB } from '
 import { useWallet } from '@/hooks/useWallet';
 import type { Market } from '@/hooks/useMarkets';
 import type { TokenData } from '@/types/token';
-import { createPublicClient, http, type Address } from 'viem';
+import { createPublicClient, webSocket, type Address } from 'viem';
 import { CHAIN_CONFIG } from '@/lib/contractConfig';
 
 interface MarketDataContextValue {
@@ -119,122 +119,127 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   const lightweightStore = useLightweightOrderBookStore();
   const lightweightOrderBook = useLightweightOB(symbol);
 
-  // SIMPLE DIRECT BLOCKCHAIN EVENT LISTENER
-  // Polls for new events every 3 seconds and updates the order book
+  // WEBSOCKET BLOCKCHAIN EVENT LISTENERS
+  // Uses watchContractEvent for real-time event subscriptions
   const marketAddress = (market as any)?.market_address as Address | undefined;
-  const lastBlockRef = useRef<bigint>(0n);
   
   useEffect(() => {
     if (!marketAddress || !symbol) return;
+    if (!CHAIN_CONFIG.wsRpcUrl) {
+      console.warn('[BlockchainEvents] No WebSocket RPC URL configured, event listeners disabled');
+      return;
+    }
     
-    const ORDER_EVENTS_ABI = [
-      {
-        type: 'event',
-        name: 'OrderPlaced',
-        inputs: [
-          { indexed: true, name: 'orderId', type: 'uint256' },
-          { indexed: true, name: 'trader', type: 'address' },
-          { indexed: false, name: 'price', type: 'uint256' },
-          { indexed: false, name: 'amount', type: 'uint256' },
-          { indexed: false, name: 'isBuy', type: 'bool' },
-          { indexed: false, name: 'isMarginOrder', type: 'bool' },
-        ],
-      },
-      {
-        type: 'event',
-        name: 'OrderRested',
-        inputs: [
-          { indexed: true, name: 'orderId', type: 'uint256' },
-          { indexed: true, name: 'trader', type: 'address' },
-          { indexed: false, name: 'price', type: 'uint256' },
-          { indexed: false, name: 'amount', type: 'uint256' },
-          { indexed: false, name: 'isBuy', type: 'bool' },
-          { indexed: false, name: 'isMarginOrder', type: 'bool' },
-        ],
-      },
-      {
-        type: 'event',
-        name: 'TradeExecutionCompleted',
-        inputs: [
-          { indexed: true, name: 'buyer', type: 'address' },
-          { indexed: true, name: 'seller', type: 'address' },
-          { indexed: false, name: 'price', type: 'uint256' },
-          { indexed: false, name: 'amount', type: 'uint256' },
-        ],
-      },
-    ] as const;
+    const ORDER_RESTED_ABI = {
+      type: 'event',
+      name: 'OrderRested',
+      inputs: [
+        { indexed: true, name: 'orderId', type: 'uint256' },
+        { indexed: true, name: 'trader', type: 'address' },
+        { indexed: false, name: 'price', type: 'uint256' },
+        { indexed: false, name: 'amount', type: 'uint256' },
+        { indexed: false, name: 'isBuy', type: 'bool' },
+        { indexed: false, name: 'isMarginOrder', type: 'bool' },
+      ],
+    } as const;
     
-    const pollEvents = async () => {
-      try {
-        const client = createPublicClient({
-          transport: http(CHAIN_CONFIG.rpcUrl),
-        });
-        
-        const currentBlock = await client.getBlockNumber();
-        
-        // Initialize from 10 blocks ago on first run
-        if (lastBlockRef.current === 0n) {
-          lastBlockRef.current = currentBlock > 10n ? currentBlock - 10n : 0n;
-        }
-        
-        if (currentBlock <= lastBlockRef.current) return;
-        
-        const logs = await client.getLogs({
-          address: marketAddress,
-          events: ORDER_EVENTS_ABI,
-          fromBlock: lastBlockRef.current + 1n,
-          toBlock: currentBlock,
-        });
-        
-        lastBlockRef.current = currentBlock;
-        
-        if (logs.length === 0) return;
-        
+    const TRADE_EXECUTED_ABI = {
+      type: 'event',
+      name: 'TradeExecutionCompleted',
+      inputs: [
+        { indexed: true, name: 'buyer', type: 'address' },
+        { indexed: true, name: 'seller', type: 'address' },
+        { indexed: false, name: 'price', type: 'uint256' },
+        { indexed: false, name: 'amount', type: 'uint256' },
+      ],
+    } as const;
+    
+    const client = createPublicClient({
+      transport: webSocket(CHAIN_CONFIG.wsRpcUrl),
+    });
+    
+    const myAddress = userAddress?.toLowerCase() || '';
+    
+    console.log(`[BlockchainEvents] Starting WebSocket listeners for ${symbol} at ${marketAddress}`);
+    
+    // Watch for OrderRested events (limit orders resting on the book)
+    const unwatchOrderRested = client.watchContractEvent({
+      address: marketAddress,
+      abi: [ORDER_RESTED_ABI],
+      eventName: 'OrderRested',
+      onLogs: (logs) => {
         for (const log of logs) {
-          const eventName = (log as any).eventName;
-          const args = (log as any).args || {};
-          const myAddress = userAddress?.toLowerCase() || '';
-          
-          // Scale values: price is 1e6, amount is 1e18
+          const args = log.args as any;
           const price = args.price ? Number(args.price) / 1e6 : 0;
           const amount = args.amount ? Number(args.amount) / 1e18 : 0;
           const isBuy = args.isBuy;
-          
-          // Get trader address - different field names for different events
           const trader = args.trader ? String(args.trader).toLowerCase() : '';
+          
+          console.log(`[BlockchainEvents] OrderRested received`, {
+            price: price.toFixed(4),
+            amount: amount.toFixed(6),
+            isBuy,
+            trader: trader.slice(0, 10) + '...',
+          });
+          
+          // Skip own orders - already handled by optimistic updates
+          if (myAddress && trader === myAddress) {
+            console.log(`[BlockchainEvents] Skipping own OrderRested event`);
+            continue;
+          }
+          
+          const side = isBuy ? 'buy' : 'sell';
+          console.log(`[BlockchainEvents] Adding liquidity: ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
+          lightweightStore.addLiquidity(symbol, side, price, amount);
+        }
+      },
+      onError: (error) => {
+        console.error('[BlockchainEvents] OrderRested watcher error:', error);
+      },
+    });
+    
+    // Watch for TradeExecutionCompleted events (trades removing liquidity)
+    const unwatchTradeExecuted = client.watchContractEvent({
+      address: marketAddress,
+      abi: [TRADE_EXECUTED_ABI],
+      eventName: 'TradeExecutionCompleted',
+      onLogs: (logs) => {
+        for (const log of logs) {
+          const args = log.args as any;
+          const price = args.price ? Number(args.price) / 1e6 : 0;
+          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
           const buyer = args.buyer ? String(args.buyer).toLowerCase() : '';
           const seller = args.seller ? String(args.seller).toLowerCase() : '';
           
-          // Check if this is our own order/trade
-          const isOwnOrder = myAddress && (
-            trader === myAddress || 
-            buyer === myAddress || 
-            seller === myAddress
-          );
+          console.log(`[BlockchainEvents] TradeExecutionCompleted received`, {
+            price: price.toFixed(4),
+            amount: amount.toFixed(6),
+            buyer: buyer.slice(0, 10) + '...',
+            seller: seller.slice(0, 10) + '...',
+          });
           
-          // Skip ALL events involving our address - already handled by optimistic updates
-          if (isOwnOrder) continue;
-          
-          if (eventName === 'OrderRested') {
-            // Limit order rested on book - ADD liquidity
-            const side = isBuy ? 'buy' : 'sell';
-            lightweightStore.addLiquidity(symbol, side, price, amount);
-          } else if (eventName === 'TradeExecutionCompleted') {
-            // Trade executed - REMOVE liquidity from BOTH sides (we don't know which was maker)
-            lightweightStore.removeLiquidity(symbol, 'buy', price, amount);
-            lightweightStore.removeLiquidity(symbol, 'sell', price, amount);
+          // Skip own trades - already handled by optimistic updates
+          if (myAddress && (buyer === myAddress || seller === myAddress)) {
+            console.log(`[BlockchainEvents] Skipping own TradeExecutionCompleted event`);
+            continue;
           }
+          
+          // Remove liquidity from both sides (we don't know which was maker)
+          console.log(`[BlockchainEvents] Removing liquidity (trade): ${amount.toFixed(6)} @ ${price.toFixed(4)} from both sides`);
+          lightweightStore.removeLiquidity(symbol, 'buy', price, amount);
+          lightweightStore.removeLiquidity(symbol, 'sell', price, amount);
         }
-      } catch (err) {
-        console.error('[BlockchainEvents] Error polling events:', err);
-      }
+      },
+      onError: (error) => {
+        console.error('[BlockchainEvents] TradeExecutionCompleted watcher error:', error);
+      },
+    });
+    
+    return () => {
+      console.log(`[BlockchainEvents] Stopping WebSocket listeners for ${symbol}`);
+      unwatchOrderRested();
+      unwatchTradeExecuted();
     };
-    
-    // Poll immediately and then every 3 seconds
-    pollEvents();
-    const interval = setInterval(pollEvents, 3000);
-    
-    return () => clearInterval(interval);
   }, [marketAddress, symbol, userAddress, lightweightStore]);
 
   // FALLBACK POLLING: For markets without OrderRested upgrade

@@ -211,12 +211,29 @@ export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
       }
       
       const state = get();
-      const orderBook = state.orderBooks.get(normalizedSymbol);
+      let orderBook = state.orderBooks.get(normalizedSymbol);
       console.log(`[LightweightOB] simulateTrade START: ${normalizedSymbol} ${side} ${type} ${amount}@${price}`);
 
+      // If no order book exists, create an empty one so limit orders can still rest
       if (!orderBook) {
-        console.warn(`[LightweightOB] No order book for ${normalizedSymbol}`);
-        return { filledPrice: price, filledAmount: 0, priceImpact: 0 };
+        console.log(`[LightweightOB] No order book for ${normalizedSymbol}, creating empty one`);
+        orderBook = {
+          symbol: normalizedSymbol,
+          bids: [],
+          asks: [],
+          bestBid: 0,
+          bestAsk: 0,
+          spread: 0,
+          spreadPercent: 0,
+          lastUpdated: Date.now(),
+          snapshotSource: 'optimistic',
+        };
+        // Store it immediately
+        set(s => {
+          const newOrderBooks = new Map(s.orderBooks);
+          newOrderBooks.set(normalizedSymbol, orderBook!);
+          return { orderBooks: newOrderBooks };
+        });
       }
 
       const tradeId = `trade-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -398,11 +415,21 @@ export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
 
       set(state => {
         const newOrderBooks = new Map(state.orderBooks);
-        const orderBook = newOrderBooks.get(normalizedSymbol);
+        let orderBook = newOrderBooks.get(normalizedSymbol);
 
+        // Create empty order book if it doesn't exist
         if (!orderBook) {
-          console.warn(`[LightweightOB] No order book for ${normalizedSymbol}`);
-          return state;
+          orderBook = {
+            symbol: normalizedSymbol,
+            bids: [],
+            asks: [],
+            bestBid: 0,
+            bestAsk: 0,
+            spread: 0,
+            spreadPercent: 0,
+            lastUpdated: Date.now(),
+            snapshotSource: 'optimistic',
+          };
         }
 
         const levels = side === 'buy' ? [...orderBook.bids] : [...orderBook.asks];
