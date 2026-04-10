@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useMarket } from '@/hooks/useMarket';
 import { useMarketTicker } from '@/hooks/useMarketTicker';
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
