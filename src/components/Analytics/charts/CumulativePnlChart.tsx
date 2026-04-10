@@ -12,9 +12,10 @@ interface CumulativePnlChartProps {
   data: DailyActivityData[] | DailyPnlData[]
   isLoading?: boolean
   height?: number
+  hideValues?: boolean
 }
 
-export default function CumulativePnlChart({ data, isLoading, height = 180 }: CumulativePnlChartProps) {
+export default function CumulativePnlChart({ data, isLoading, height = 180, hideValues = false }: CumulativePnlChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<Chart | null>(null)
 
@@ -123,8 +124,8 @@ export default function CumulativePnlChart({ data, isLoading, height = 180 }: Cu
             boxHeight: 6,
             callbacks: {
               label: (ctx) => {
-                const value = ctx.parsed.y
-                return `${ctx.dataset.label}: ${formatCurrency(value, { showSign: true })}`
+                const value = ctx.parsed.y ?? 0
+                return `${ctx.dataset.label}: ${hideValues ? '$••••••' : formatCurrency(value, { showSign: true })}`
               },
             },
           },
@@ -145,7 +146,7 @@ export default function CumulativePnlChart({ data, isLoading, height = 180 }: Cu
             ticks: {
               color: '#505050',
               font: { size: 8 },
-              callback: (value) => formatCurrency(Number(value), { showSign: true, compact: true }),
+              callback: (value) => hideValues ? '•••' : formatCurrency(Number(value), { showSign: true, compact: true }),
             },
           },
         },
@@ -158,7 +159,7 @@ export default function CumulativePnlChart({ data, isLoading, height = 180 }: Cu
         chartRef.current = null
       }
     }
-  }, [cumulativeData, isPositive, height])
+  }, [cumulativeData, isPositive, height, hideValues])
 
   const totalPnl = cumulativeData.length > 0 ? cumulativeData[cumulativeData.length - 1].cumulative : 0
 
@@ -166,8 +167,8 @@ export default function CumulativePnlChart({ data, isLoading, height = 180 }: Cu
     <div className="bg-[#0A0A0A] rounded border border-[#141414] p-2">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[9px] font-medium text-[#a0a0a0] uppercase tracking-wide">Cumulative P&L</span>
-        <span className={`text-[9px] font-mono ${isPositive ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
-          {formatCurrency(totalPnl, { showSign: true })}
+        <span className={`text-[9px] font-mono ${hideValues ? 'text-[#606060]' : isPositive ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+          {hideValues ? '$••••••' : formatCurrency(totalPnl, { showSign: true })}
         </span>
       </div>
 

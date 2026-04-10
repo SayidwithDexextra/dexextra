@@ -9,9 +9,10 @@ interface SummaryCardsProps {
   isLoading?: boolean
   onChainRealizedPnl?: number
   onChainUnrealizedPnl?: number
+  hideValues?: boolean
 }
 
-export default function SummaryCards({ summary, isLoading, onChainRealizedPnl, onChainUnrealizedPnl }: SummaryCardsProps) {
+export default function SummaryCards({ summary, isLoading, onChainRealizedPnl, onChainUnrealizedPnl, hideValues = false }: SummaryCardsProps) {
   if (isLoading) {
     return (
       <div className="grid grid-cols-3 md:grid-cols-6 xl:grid-cols-7 gap-2">
@@ -25,7 +26,11 @@ export default function SummaryCards({ summary, isLoading, onChainRealizedPnl, o
     )
   }
 
-  // Use on-chain values when available (same source as Portfolio sidebar)
+  const displayValue = (value: number, opts?: { showSign?: boolean }) => {
+    if (hideValues) return '$••••••'
+    return formatCurrency(value, opts)
+  }
+
   const realizedPnl = onChainRealizedPnl ?? summary.totalRealizedPnl
   const unrealizedPnl = onChainUnrealizedPnl ?? summary.totalUnrealizedPnl
   const netPnl = realizedPnl + unrealizedPnl
@@ -33,16 +38,16 @@ export default function SummaryCards({ summary, isLoading, onChainRealizedPnl, o
   const hasSettlements = summary.settledPositionsCount > 0
 
   const cards = [
-    { label: 'Deposits', value: formatCurrency(summary.totalDeposits), color: 'text-[#4ade80]' },
-    { label: 'Withdrawals', value: formatCurrency(summary.totalWithdrawals), color: 'text-[#c0c0c0]' },
-    { label: 'Fees', value: formatCurrency(summary.totalFeesPaid), color: 'text-[#fbbf24]' },
+    { label: 'Deposits', value: displayValue(summary.totalDeposits), color: hideValues ? 'text-[#606060]' : 'text-[#4ade80]' },
+    { label: 'Withdrawals', value: displayValue(summary.totalWithdrawals), color: hideValues ? 'text-[#606060]' : 'text-[#c0c0c0]' },
+    { label: 'Fees', value: displayValue(summary.totalFeesPaid), color: hideValues ? 'text-[#606060]' : 'text-[#fbbf24]' },
     ...(hasSettlements ? [{ 
       label: `Settled (${summary.settledPositionsCount})`, 
-      value: formatCurrency(summary.totalSettlementPnl, { showSign: true }), 
-      color: summary.totalSettlementPnl >= 0 ? 'text-[#22d3ee]' : 'text-[#f87171]' 
+      value: displayValue(summary.totalSettlementPnl, { showSign: true }), 
+      color: hideValues ? 'text-[#606060]' : summary.totalSettlementPnl >= 0 ? 'text-[#22d3ee]' : 'text-[#f87171]' 
     }] : []),
-    { label: 'Realized', value: formatCurrency(realizedPnl, { showSign: true }), color: realizedPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]' },
-    { label: 'Net', value: formatCurrency(netPnl, { showSign: true }), color: netPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]' },
+    { label: 'Realized', value: displayValue(realizedPnl, { showSign: true }), color: hideValues ? 'text-[#606060]' : realizedPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]' },
+    { label: 'Net', value: displayValue(netPnl, { showSign: true }), color: hideValues ? 'text-[#606060]' : netPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]' },
   ]
 
   const gridCols = hasSettlements ? 'grid-cols-3 md:grid-cols-4 xl:grid-cols-7' : 'grid-cols-3 md:grid-cols-6'

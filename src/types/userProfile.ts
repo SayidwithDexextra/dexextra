@@ -2,6 +2,20 @@
 
 export const DEFAULT_PROFILE_IMAGE = '/GenericDexeteraUser. .jpg';
 
+export interface AnalyticsPrivacySettings {
+  hide_portfolio_value: boolean;
+  hide_pnl: boolean;
+  hide_trade_history: boolean;
+  hide_from_public: boolean;
+}
+
+export const DEFAULT_ANALYTICS_PRIVACY: AnalyticsPrivacySettings = {
+  hide_portfolio_value: false,
+  hide_pnl: false,
+  hide_trade_history: false,
+  hide_from_public: false,
+};
+
 export interface UserProfile {
   id: string;
   wallet_address: string;
@@ -19,6 +33,7 @@ export interface UserProfile {
   banner_image_url?: string;
   email_notifications_enabled: boolean;
   is_active: boolean;
+  analytics_privacy?: AnalyticsPrivacySettings;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +52,7 @@ export interface PublicUserProfile {
   facebook_url?: string;
   profile_image_url?: string;
   banner_image_url?: string;
+  analytics_privacy?: AnalyticsPrivacySettings;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +90,7 @@ export interface UpdateUserProfileRequest {
   profile_image_url?: string;
   banner_image_url?: string;
   email_notifications_enabled?: boolean;
+  analytics_privacy?: AnalyticsPrivacySettings;
 }
 
 export interface UserProfileSearchResult {

@@ -11,9 +11,10 @@ interface ActivityChartProps {
   data: DailyActivityData[]
   isLoading?: boolean
   height?: number
+  hideValues?: boolean
 }
 
-export default function ActivityChart({ data, isLoading, height = 180 }: ActivityChartProps) {
+export default function ActivityChart({ data, isLoading, height = 180, hideValues = false }: ActivityChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<Chart | null>(null)
 
@@ -105,7 +106,7 @@ export default function ActivityChart({ data, isLoading, height = 180 }: Activit
             boxWidth: 6,
             boxHeight: 6,
             callbacks: {
-              label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y)}`,
+              label: (ctx) => `${ctx.dataset.label}: ${hideValues ? '$••••••' : formatCurrency(ctx.parsed.y ?? 0)}`,
             },
           },
         },
@@ -125,7 +126,7 @@ export default function ActivityChart({ data, isLoading, height = 180 }: Activit
             ticks: {
               color: '#505050',
               font: { size: 8 },
-              callback: (value) => formatCurrency(Number(value), { compact: true }),
+              callback: (value) => hideValues ? '•••' : formatCurrency(Number(value), { compact: true }),
             },
           },
         },
@@ -138,7 +139,7 @@ export default function ActivityChart({ data, isLoading, height = 180 }: Activit
         chartRef.current = null
       }
     }
-  }, [data])
+  }, [data, hideValues])
 
   return (
     <div className="bg-[#0A0A0A] rounded border border-[#141414] p-2">

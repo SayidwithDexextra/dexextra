@@ -232,11 +232,6 @@
             },
             {
               "internalType": "uint256",
-              "name": "prevOrderId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
               "name": "marginRequired",
               "type": "uint256"
             },

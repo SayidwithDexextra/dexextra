@@ -27,6 +27,7 @@ interface PortfolioBreakdownChartProps {
   data: PortfolioBreakdownData
   isLoading?: boolean
   height?: number
+  hideValues?: boolean
 }
 
 const palette = [
@@ -40,7 +41,8 @@ const palette = [
 export default function PortfolioBreakdownChart({ 
   data, 
   isLoading, 
-  height = 180 
+  height = 180,
+  hideValues = false,
 }: PortfolioBreakdownChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -161,11 +163,12 @@ export default function PortfolioBreakdownChart({
                 return lines
               }, [''])
               
+              const valueDisplay = hideValues ? '$••••••' : formatCurrency(item.value)
               tooltipEl.innerHTML = `
                 <div style="background: rgba(15,15,15,0.98); border: 1px solid #333; border-radius: 6px; padding: 12px; max-width: 220px;">
                   <div style="color: #fff; font-size: 11px; font-weight: 600; margin-bottom: 4px;">${item.label}</div>
                   <div style="color: #a0a0a0; font-size: 10px; margin-bottom: 8px;">
-                    ${formatCurrency(item.value)} (${formatPercent(item.percentage, { decimals: 1 })})
+                    ${valueDisplay} (${formatPercent(item.percentage, { decimals: 1 })})
                   </div>
                   <div style="color: #707070; font-size: 9px; line-height: 1.4;">
                     ${descLines.join('<br/>')}
@@ -197,7 +200,7 @@ export default function PortfolioBreakdownChart({
         tooltipEl.remove()
       }
     }
-  }, [chartData])
+  }, [chartData, hideValues])
 
   const total = data.totalCollateral
 
@@ -208,7 +211,7 @@ export default function PortfolioBreakdownChart({
           Portfolio Breakdown
         </span>
         <span className="text-[10px] text-[#e0e0e0] font-mono">
-          {formatCurrency(total, { compact: true })}
+          {hideValues ? '$••••••' : formatCurrency(total, { compact: true })}
         </span>
       </div>
 
@@ -236,8 +239,8 @@ export default function PortfolioBreakdownChart({
           >
             <div className="cursor-help">
               <div className="text-[9px] text-[#606060] uppercase">Used</div>
-              <div className="text-[11px] font-mono text-[#3b82f6]">
-                {formatCurrency(data.marginUsed, { compact: true })}
+              <div className={`text-[11px] font-mono ${hideValues ? 'text-[#606060]' : 'text-[#3b82f6]'}`}>
+                {hideValues ? '$••••••' : formatCurrency(data.marginUsed, { compact: true })}
               </div>
             </div>
           </Tooltip>
@@ -248,8 +251,8 @@ export default function PortfolioBreakdownChart({
           >
             <div className="cursor-help">
               <div className="text-[9px] text-[#606060] uppercase">Reserved</div>
-              <div className="text-[11px] font-mono text-[#fbbf24]">
-                {formatCurrency(data.marginReserved, { compact: true })}
+              <div className={`text-[11px] font-mono ${hideValues ? 'text-[#606060]' : 'text-[#fbbf24]'}`}>
+                {hideValues ? '$••••••' : formatCurrency(data.marginReserved, { compact: true })}
               </div>
             </div>
           </Tooltip>
@@ -260,8 +263,8 @@ export default function PortfolioBreakdownChart({
           >
             <div className="cursor-help">
               <div className="text-[9px] text-[#606060] uppercase">Available</div>
-              <div className="text-[11px] font-mono text-[#4ade80]">
-                {formatCurrency(data.availableCash, { compact: true })}
+              <div className={`text-[11px] font-mono ${hideValues ? 'text-[#606060]' : 'text-[#4ade80]'}`}>
+                {hideValues ? '$••••••' : formatCurrency(data.availableCash, { compact: true })}
               </div>
             </div>
           </Tooltip>
@@ -272,8 +275,8 @@ export default function PortfolioBreakdownChart({
           >
             <div className="cursor-help">
               <div className="text-[9px] text-[#606060] uppercase">Unrealized</div>
-              <div className={`text-[11px] font-mono ${data.unrealizedPnl >= 0 ? 'text-[#a855f7]' : 'text-[#f87171]'}`}>
-                {formatCurrency(data.unrealizedPnl, { compact: true, showSign: true })}
+              <div className={`text-[11px] font-mono ${hideValues ? 'text-[#606060]' : data.unrealizedPnl >= 0 ? 'text-[#a855f7]' : 'text-[#f87171]'}`}>
+                {hideValues ? '$••••••' : formatCurrency(data.unrealizedPnl, { compact: true, showSign: true })}
               </div>
             </div>
           </Tooltip>

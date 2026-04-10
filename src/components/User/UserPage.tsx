@@ -1,10 +1,12 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
 import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { type PublicUserProfile, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import { useWallet } from '@/hooks/useWallet'
+
+const UserAnalyticsTab = lazy(() => import('./UserAnalyticsTab'))
 
 export interface UserPageProps {
   walletAddress: string
@@ -71,13 +73,14 @@ export default function UserPage({ walletAddress, initialProfile, className }: U
     return Boolean(me && target && me === target)
   }, [walletData.address, walletAddress])
 
-  type UserTabId = 'profile' | 'links' | 'markets'
+  type UserTabId = 'profile' | 'links' | 'markets' | 'analytics'
   const tabs = useMemo(
     () =>
       [
         { id: 'profile' as const, label: 'Profile' },
         { id: 'links' as const, label: 'Links' },
         { id: 'markets' as const, label: 'Markets' },
+        { id: 'analytics' as const, label: 'Analytics' },
       ] satisfies Array<{ id: UserTabId; label: string }>,
     []
   )
@@ -627,6 +630,17 @@ export default function UserPage({ walletAddress, initialProfile, className }: U
                     })()}
                   </div>
                 </div>
+              ) : null}
+
+              {activeTab === 'analytics' ? (
+                <Suspense fallback={
+                  <div className="flex items-center gap-2 py-8">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6] animate-pulse" />
+                    <span className="text-[11px] text-[#707070]">Loading analytics...</span>
+                  </div>
+                }>
+                  <UserAnalyticsTab walletAddress={walletAddress} />
+                </Suspense>
               ) : null}
             </div>
           </div>

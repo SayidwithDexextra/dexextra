@@ -10,9 +10,10 @@ interface FeesByMarketChartProps {
   data: Array<{ market: string; fees: number; trades: number }>
   isLoading?: boolean
   height?: number
+  hideValues?: boolean
 }
 
-export default function FeesByMarketChart({ data, isLoading, height = 180 }: FeesByMarketChartProps) {
+export default function FeesByMarketChart({ data, isLoading, height = 180, hideValues = false }: FeesByMarketChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<Chart | null>(null)
 
@@ -64,7 +65,8 @@ export default function FeesByMarketChart({ data, isLoading, height = 180 }: Fee
             callbacks: {
               label: (ctx) => {
                 const item = topMarkets[ctx.dataIndex]
-                return [formatCurrency(item?.fees || 0, { minimumDecimals: 4 }), `${formatNumber(item?.trades || 0)} trades`]
+                const feesDisplay = hideValues ? '$••••••' : formatCurrency(item?.fees || 0, { minimumDecimals: 4 })
+                return [feesDisplay, `${formatNumber(item?.trades || 0)} trades`]
               },
             },
           },
@@ -76,7 +78,7 @@ export default function FeesByMarketChart({ data, isLoading, height = 180 }: Fee
             ticks: {
               color: '#505050',
               font: { size: 8 },
-              callback: (value) => formatCurrency(Number(value), { compact: true }),
+              callback: (value) => hideValues ? '•••' : formatCurrency(Number(value), { compact: true }),
             },
           },
           y: {
@@ -97,7 +99,7 @@ export default function FeesByMarketChart({ data, isLoading, height = 180 }: Fee
         chartRef.current = null
       }
     }
-  }, [data])
+  }, [data, hideValues])
 
   return (
     <div className="bg-[#0A0A0A] rounded border border-[#141414] p-2">

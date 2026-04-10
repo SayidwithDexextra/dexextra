@@ -48,6 +48,13 @@ const optionalSocialUrl = (platform: Parameters<typeof normalizeSocialUrlInput>[
       return normalized === null ? undefined : normalized;
     });
 
+const AnalyticsPrivacySchema = z.object({
+  hide_portfolio_value: z.boolean().optional(),
+  hide_pnl: z.boolean().optional(),
+  hide_trade_history: z.boolean().optional(),
+  hide_from_public: z.boolean().optional(),
+}).optional();
+
 const UpdateProfileSchema = z.object({
   wallet_address: walletAddressSchema,
   username: z.string().optional(),
@@ -63,6 +70,7 @@ const UpdateProfileSchema = z.object({
   profile_image_url: optionalUrl('Invalid profile image URL'),
   banner_image_url: optionalUrl('Invalid banner image URL'),
   email_notifications_enabled: z.boolean().optional(),
+  analytics_privacy: AnalyticsPrivacySchema,
 });
 
 // GET - Get user profile by wallet address

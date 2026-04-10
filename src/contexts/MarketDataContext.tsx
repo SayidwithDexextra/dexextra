@@ -236,6 +236,59 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     
     return () => clearInterval(interval);
   }, [marketAddress, symbol, userAddress, lightweightStore]);
+
+  // FALLBACK POLLING: For markets without OrderRested upgrade
+  // Periodically fetch fresh order book data from API and re-initialize the lightweight store
+  // This ensures the UI stays in sync even without real-time events
+  const lastFallbackRefreshRef = useRef<number>(0);
+  const hasReceivedEventsRef = useRef<boolean>(false);
+  
+  useEffect(() => {
+    if (!symbol || !marketAddress) return;
+    
+    const FALLBACK_INTERVAL = 15000; // 15 seconds
+    const MIN_REFRESH_INTERVAL = 10000; // Don't refresh more often than every 10 seconds
+    
+    const refreshFromApi = async () => {
+      const now = Date.now();
+      
+      // Skip if we refreshed recently
+      if (now - lastFallbackRefreshRef.current < MIN_REFRESH_INTERVAL) return;
+      
+      try {
+        const response = await fetch(`/api/orderbook/live?symbol=${encodeURIComponent(symbol)}&levels=25`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        if (!data?.depth) return;
+        
+        const depth = data.depth;
+        if (!depth.bidPrices?.length && !depth.askPrices?.length) return;
+        
+        // Re-initialize the lightweight order book with fresh data
+        lightweightStore.initializeOrderBook(symbol, depth, 'api');
+        lastFallbackRefreshRef.current = now;
+      } catch (err) {
+        // Silently fail - this is just a fallback
+      }
+    };
+    
+    // Start fallback polling after a short delay to allow event-based updates to work first
+    const startDelay = setTimeout(() => {
+      refreshFromApi();
+      const interval = setInterval(refreshFromApi, FALLBACK_INTERVAL);
+      
+      // Store interval ID for cleanup
+      (startDelay as any)._interval = interval;
+    }, 2000);
+    
+    return () => {
+      clearTimeout(startDelay);
+      if ((startDelay as any)._interval) {
+        clearInterval((startDelay as any)._interval);
+      }
+    };
+  }, [symbol, marketAddress, lightweightStore]);
   
   // Periodically clean up stale pending trades (every 30 seconds)
   useEffect(() => {
