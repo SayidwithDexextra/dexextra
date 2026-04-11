@@ -148,6 +148,10 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     return false;
   }, []);
 
+  // Track resting orders by orderId so we can remove liquidity when cancelled
+  // Map of orderId -> { price, amount, isBuy }
+  const restingOrdersRef = useRef<Map<string, { price: number; amount: number; isBuy: boolean }>>(new Map());
+
   // WEBSOCKET BLOCKCHAIN EVENT LISTENERS
   // Uses watchContractEvent for real-time event subscriptions
   const marketAddress = (market as any)?.market_address as Address | undefined;
@@ -196,6 +200,18 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       ],
     } as const;
     
+    const ORDER_CANCELLED_ABI = {
+      type: 'event',
+      name: 'OrderCancelled',
+      inputs: [
+        { indexed: true, name: 'orderId', type: 'uint256' },
+        { indexed: true, name: 'trader', type: 'address' },
+        { indexed: false, name: 'price', type: 'uint256' },
+        { indexed: false, name: 'amount', type: 'uint256' },
+        { indexed: false, name: 'isBuy', type: 'bool' },
+      ],
+    } as const;
+    
     const client = createPublicClient({
       transport: webSocket(CHAIN_CONFIG.wsRpcUrl),
     });
@@ -240,21 +256,28 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       onLogs: (logs) => {
         for (const log of logs) {
           const args = log.args as any;
+          const orderId = args.orderId ? String(args.orderId) : '';
           const price = args.price ? Number(args.price) / 1e6 : 0;
           const amount = args.amount ? Number(args.amount) / 1e18 : 0;
           const isBuy = args.isBuy;
           const trader = args.trader ? String(args.trader).toLowerCase() : '';
           
           console.log(`[BlockchainEvents] OrderRested received`, {
+            orderId,
             price: price.toFixed(4),
             amount: amount.toFixed(6),
             isBuy,
             trader: trader.slice(0, 10) + '...',
           });
           
+          // Track this resting order so we can remove it if cancelled
+          if (orderId) {
+            restingOrdersRef.current.set(orderId, { price, amount, isBuy });
+          }
+          
           // Skip own orders - already handled by optimistic updates
           if (myAddress && trader === myAddress) {
-            console.log(`[BlockchainEvents] Skipping own OrderRested event`);
+            console.log(`[BlockchainEvents] Skipping own OrderRested event (but tracked for cancellation)`);
             continue;
           }
           
@@ -265,6 +288,44 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       },
       onError: (error) => {
         console.error('[BlockchainEvents] OrderRested watcher error:', error);
+      },
+    });
+    
+    // Watch for OrderCancelled events (orders being removed from book)
+    const unwatchOrderCancelled = client.watchContractEvent({
+      address: marketAddress,
+      abi: [ORDER_CANCELLED_ABI],
+      eventName: 'OrderCancelled',
+      onLogs: (logs) => {
+        for (const log of logs) {
+          const args = log.args as any;
+          const orderId = args.orderId ? String(args.orderId) : '';
+          const trader = args.trader ? String(args.trader).toLowerCase() : '';
+          const price = args.price ? Number(args.price) / 1e6 : 0;
+          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
+          const isBuy = args.isBuy;
+          
+          console.log(`[BlockchainEvents] OrderCancelled received`, {
+            orderId,
+            price: price.toFixed(4),
+            amount: amount.toFixed(6),
+            isBuy,
+            trader: trader.slice(0, 10) + '...',
+          });
+          
+          // Remove liquidity directly using event data (no need for tracking map)
+          if (price > 0 && amount > 0) {
+            const side = isBuy ? 'buy' : 'sell';
+            console.log(`[BlockchainEvents] Removing cancelled order liquidity: ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
+            lightweightStore.removeLiquidity(symbol, side, price, amount);
+          }
+          
+          // Also clean up from tracking map if present
+          restingOrdersRef.current.delete(orderId);
+        }
+      },
+      onError: (error) => {
+        console.error('[BlockchainEvents] OrderCancelled watcher error:', error);
       },
     });
     
@@ -315,9 +376,42 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       console.log(`[BlockchainEvents] Stopping WebSocket listeners for ${symbol}`);
       unwatchOrderPlaced();
       unwatchOrderRested();
+      unwatchOrderCancelled();
       unwatchTradeExecuted();
     };
   }, [marketAddress, symbol, userAddress, lightweightStore, isRecentTakerTrade]);
+
+  // Listen for DOM events from user's own order cancellations (from MarketActivityTabs)
+  // This provides immediate optimistic updates when the user cancels their own orders
+  useEffect(() => {
+    if (!symbol) return;
+    
+    const handleOrdersUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail.symbol?.toUpperCase() !== symbol.toUpperCase()) return;
+      
+      if (detail.eventType === 'OrderCancelled') {
+        const price = detail.price ? Number(detail.price) / 1e6 : 0;
+        const amount = detail.amount ? Number(detail.amount) / 1e18 : 0;
+        const isBuy = detail.isBuy;
+        const orderId = detail.orderId;
+        
+        if (price > 0 && amount > 0) {
+          const side = isBuy ? 'buy' : 'sell';
+          console.log(`[BlockchainEvents] Own order cancelled (DOM event): ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
+          lightweightStore.removeLiquidity(symbol, side, price, amount);
+          
+          // Also remove from our tracking map if present
+          if (orderId) {
+            restingOrdersRef.current.delete(String(orderId));
+          }
+        }
+      }
+    };
+    
+    window.addEventListener('ordersUpdated', handleOrdersUpdated);
+    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+  }, [symbol, lightweightStore]);
 
   // FALLBACK POLLING: For markets without OrderRested upgrade
   // Periodically fetch fresh order book data from API and re-initialize the lightweight store

@@ -9,7 +9,7 @@ contract OBSettlementFacet {
     using OrderBookStorage for OrderBookStorage.State;
 
     // Mirror event for consistency with placement facet
-    event OrderCancelled(uint256 indexed orderId, address indexed trader);
+    event OrderCancelled(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy);
 
     modifier onlyOwner() {
         LibDiamond.enforceIsContractOwner();
@@ -58,7 +58,7 @@ contract OBSettlementFacet {
                     // Remove from user's order list
                     uint256[] storage lst = s.userOrders[order.trader];
                     for (uint256 ui = 0; ui < lst.length; ui++) { if (lst[ui] == currentOrderId) { if (ui < lst.length - 1) { lst[ui] = lst[lst.length - 1]; } lst.pop(); break; } }
-                    emit OrderCancelled(currentOrderId, order.trader);
+                    emit OrderCancelled(currentOrderId, order.trader, order.price, order.amount, order.isBuy);
                     delete s.orders[currentOrderId];
                     delete s.cumulativeMarginUsed[currentOrderId];
                 }
@@ -87,7 +87,7 @@ contract OBSettlementFacet {
                     }
                     uint256[] storage lst2 = s.userOrders[order2.trader];
                     for (uint256 ui2 = 0; ui2 < lst2.length; ui2++) { if (lst2[ui2] == currentOrderId2) { if (ui2 < lst2.length - 1) { lst2[ui2] = lst2[lst2.length - 1]; } lst2.pop(); break; } }
-                    emit OrderCancelled(currentOrderId2, order2.trader);
+                    emit OrderCancelled(currentOrderId2, order2.trader, order2.price, order2.amount, order2.isBuy);
                     delete s.orders[currentOrderId2];
                     delete s.cumulativeMarginUsed[currentOrderId2];
                 }

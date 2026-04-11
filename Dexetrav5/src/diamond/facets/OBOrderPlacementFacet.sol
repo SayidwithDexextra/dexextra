@@ -16,7 +16,8 @@ contract OBOrderPlacementFacet {
 
     // Reuse key events for parity (subset needed by callers)
     event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder);
-    event OrderCancelled(uint256 indexed orderId, address indexed trader);
+    /// @notice Emitted when an order is cancelled, includes full order details for UI updates
+    event OrderCancelled(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy);
     event OrderModified(uint256 indexed oldOrderId, uint256 indexed newOrderId, address indexed trader, uint256 newPrice, uint256 newAmount);
     
     /// @notice Emitted ONLY when an order rests on the book (unfilled portion of a limit order).
@@ -231,7 +232,7 @@ contract OBOrderPlacementFacet {
             s.vault.unreserveMargin(order.trader, bytes32(orderId));
         }
         s.removeOrderFromUserList( trader, orderId);
-        emit OrderCancelled(orderId, trader);
+        emit OrderCancelled(orderId, trader, order.price, order.amount, order.isBuy);
         delete s.orders[orderId];
         delete s.cumulativeMarginUsed[orderId];
         _onOrderBookLiquidityChanged();
@@ -287,7 +288,7 @@ contract OBOrderPlacementFacet {
             OrderBookStorage.state().vault.unreserveMargin(order.trader, bytes32(orderId));
         }
         s.removeOrderFromUserList( msg.sender, orderId);
-        emit OrderCancelled(orderId, msg.sender);
+        emit OrderCancelled(orderId, msg.sender, order.price, order.amount, order.isBuy);
         delete s.orders[orderId];
         delete s.cumulativeMarginUsed[orderId];
         // Trigger mark update and liquidation scan after liquidity removal
@@ -315,7 +316,7 @@ contract OBOrderPlacementFacet {
         }
         // Remove from user's list and delete order
         s.removeOrderFromUserList( order.trader, orderId);
-        emit OrderCancelled(orderId, order.trader);
+        emit OrderCancelled(orderId, order.trader, order.price, order.amount, order.isBuy);
         delete s.orders[orderId];
         delete s.cumulativeMarginUsed[orderId];
         // Update marks/liquidations after liquidity removal
@@ -346,7 +347,7 @@ contract OBOrderPlacementFacet {
                         s.vault.unreserveMargin(order.trader, bytes32(currentOrderId));
                     }
                     s.removeOrderFromUserList( order.trader, currentOrderId);
-                    emit OrderCancelled(currentOrderId, order.trader);
+                    emit OrderCancelled(currentOrderId, order.trader, order.price, order.amount, order.isBuy);
                     delete s.orders[currentOrderId];
                     delete s.cumulativeMarginUsed[currentOrderId];
                 }
@@ -370,7 +371,7 @@ contract OBOrderPlacementFacet {
                         s.vault.unreserveMargin(order2.trader, bytes32(currentOrderId2));
                     }
                     s.removeOrderFromUserList( order2.trader, currentOrderId2);
-                    emit OrderCancelled(currentOrderId2, order2.trader);
+                    emit OrderCancelled(currentOrderId2, order2.trader, order2.price, order2.amount, order2.isBuy);
                     delete s.orders[currentOrderId2];
                     delete s.cumulativeMarginUsed[currentOrderId2];
                 }

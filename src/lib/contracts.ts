@@ -144,7 +144,7 @@ export const OBOrderPlacementFacetABI = [
   "function cancelOrder(uint256 orderId) external",
   "event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)",
   "event OrderRested(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)",
-  "event OrderCancelled(uint256 indexed orderId, address indexed trader)",
+  "event OrderCancelled(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy)",
   "event OrderModified(uint256 indexed oldOrderId, uint256 indexed newOrderId, address indexed trader, uint256 newPrice, uint256 newAmount)"
 ];
 
