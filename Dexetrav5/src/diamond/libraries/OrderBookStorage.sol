@@ -6,7 +6,7 @@ import "../interfaces/ICoreVault.sol";
 library OrderBookStorage {
     bytes32 internal constant STORAGE_SLOT = keccak256("hyperliquid.orderbook.storage.v1");
 
-    struct Order { uint256 orderId; address trader; uint256 price; uint256 amount; bool isBuy; uint256 timestamp; uint256 nextOrderId; uint256 prevOrderId; uint256 marginRequired; bool isMarginOrder; }
+    struct Order { uint256 orderId; address trader; uint256 price; uint256 amount; bool isBuy; uint256 timestamp; uint256 nextOrderId; uint256 marginRequired; bool isMarginOrder; uint256 prevOrderId; }
     struct PriceLevel { uint256 totalAmount; uint256 firstOrderId; uint256 lastOrderId; bool exists; }
     struct Trade { uint256 tradeId; address buyer; address seller; uint256 price; uint256 amount; uint256 timestamp; uint256 buyOrderId; uint256 sellOrderId; bool buyerIsMargin; bool sellerIsMargin; uint256 tradeValue; uint256 buyerFee; uint256 sellerFee; }
     

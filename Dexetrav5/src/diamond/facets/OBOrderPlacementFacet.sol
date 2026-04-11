@@ -700,9 +700,9 @@ contract OBOrderPlacementFacet {
             isBuy: isBuy,
             timestamp: block.timestamp,
             nextOrderId: 0,
-            prevOrderId: 0,
             marginRequired: 0,
-            isMarginOrder: isMarginOrder
+            isMarginOrder: isMarginOrder,
+            prevOrderId: 0
         });
         uint256 remaining = amount;
         if (isBuy) { remaining = _matchBuyOrder(s, o, remaining); } else { remaining = _matchSellOrder(s, o, remaining); }
@@ -737,9 +737,9 @@ contract OBOrderPlacementFacet {
             isBuy: isBuy,
             timestamp: block.timestamp,
             nextOrderId: 0,
-            prevOrderId: 0,
             marginRequired: marginRequired,
-            isMarginOrder: isMarginOrder
+            isMarginOrder: isMarginOrder,
+            prevOrderId: 0
         });
 
         uint256 remaining = amount;

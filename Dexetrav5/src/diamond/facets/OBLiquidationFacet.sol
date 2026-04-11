@@ -323,7 +323,7 @@ contract OBLiquidationFacet {
 
         // Create synthetic order and cross book
         OrderBookStorage.Order memory liqOrder = OrderBookStorage.Order({
-            orderId: 0, trader: address(this), price: isBuy ? maxPrice : minPrice, amount: amount, isBuy: isBuy, timestamp: block.timestamp, nextOrderId: 0, prevOrderId: 0, marginRequired: 0, isMarginOrder: true
+            orderId: 0, trader: address(this), price: isBuy ? maxPrice : minPrice, amount: amount, isBuy: isBuy, timestamp: block.timestamp, nextOrderId: 0, marginRequired: 0, isMarginOrder: true, prevOrderId: 0
         });
         uint256 remaining = amount;
         emit LiquidationMarketOrderAttempt(trader, amount, isBuy, markPrice);

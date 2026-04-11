@@ -1,0 +1,222 @@
+{
+  "OBOrderPlacementFacet": {
+    "address": "0x571F319Ebc94b287eF3CE165281405f3fA6ee02f",
+    "selectors": [
+      {
+        "selector": "0xb997fc21",
+        "name": "adminCancelAllRestingOrders()"
+      },
+      {
+        "selector": "0x9ae10a1f",
+        "name": "adminCancelOrder(uint256)"
+      },
+      {
+        "selector": "0x514fcac7",
+        "name": "cancelOrder(uint256)"
+      },
+      {
+        "selector": "0x1c1a2f7c",
+        "name": "cancelOrderBy(address,uint256)"
+      },
+      {
+        "selector": "0x434cae61",
+        "name": "modifyOrder(uint256,uint256,uint256)"
+      },
+      {
+        "selector": "0x0cdd4611",
+        "name": "modifyOrderBy(address,uint256,uint256,uint256)"
+      },
+      {
+        "selector": "0xe14090b9",
+        "name": "placeLimitOrder(uint256,uint256,bool)"
+      },
+      {
+        "selector": "0x8ee908e4",
+        "name": "placeLimitOrderBy(address,uint256,uint256,bool)"
+      },
+      {
+        "selector": "0x1b295ea6",
+        "name": "placeMarginLimitOrder(uint256,uint256,bool)"
+      },
+      {
+        "selector": "0x0419e423",
+        "name": "placeMarginLimitOrderBy(address,uint256,uint256,bool)"
+      },
+      {
+        "selector": "0x8f68da58",
+        "name": "placeMarginMarketOrder(uint256,bool)"
+      },
+      {
+        "selector": "0xb50d2373",
+        "name": "placeMarginMarketOrderBy(address,uint256,bool)"
+      },
+      {
+        "selector": "0x2bf1f034",
+        "name": "placeMarginMarketOrderWithSlippage(uint256,bool,uint256)"
+      },
+      {
+        "selector": "0xf693baa5",
+        "name": "placeMarketOrder(uint256,bool)"
+      },
+      {
+        "selector": "0xdb977195",
+        "name": "placeMarketOrderBy(address,uint256,bool)"
+      },
+      {
+        "selector": "0xe59ac135",
+        "name": "placeMarketOrderWithSlippage(uint256,bool,uint256)"
+      }
+    ]
+  },
+  "OBTradeExecutionFacet": {
+    "address": "0xF6538aDFd32a37CA36EE9E464F554416150300e0",
+    "selectors": [
+      {
+        "selector": "0xdffd8a1f",
+        "name": "getAllTrades(uint256,uint256)"
+      },
+      {
+        "selector": "0xa242068f",
+        "name": "getLastTwentyTrades()"
+      },
+      {
+        "selector": "0xc63877eb",
+        "name": "getRecentTrades(uint256)"
+      },
+      {
+        "selector": "0x72666684",
+        "name": "getTradeById(uint256)"
+      },
+      {
+        "selector": "0x8a7a9555",
+        "name": "getTradeStatistics()"
+      },
+      {
+        "selector": "0xbdae53d6",
+        "name": "getTradesByTimeRange(uint256,uint256,uint256,uint256)"
+      },
+      {
+        "selector": "0xb0157cfb",
+        "name": "getUserTradeCount(address)"
+      },
+      {
+        "selector": "0x5e7f18af",
+        "name": "getUserTrades(address,uint256,uint256)"
+      },
+      {
+        "selector": "0xcd3c96f4",
+        "name": "obExecuteTrade(address,address,uint256,uint256,bool,bool,bool)"
+      },
+      {
+        "selector": "0xfec5fa72",
+        "name": "obExecuteTradeBatch(address,bool,bool,(address,uint256,uint256,bool,uint256)[])"
+      }
+    ]
+  },
+  "OBLiquidationFacet": {
+    "address": "0x2aEBaA8949bF73E05DB875E6eE250d2D92210f3e",
+    "selectors": [
+      {
+        "selector": "0x1e7d2e9c",
+        "name": "liquidateDirect(address)"
+      },
+      {
+        "selector": "0x290dfbd9",
+        "name": "onMarkPriceUpdate(uint256)"
+      },
+      {
+        "selector": "0x6dfa2f31",
+        "name": "pokeLiquidations()"
+      },
+      {
+        "selector": "0xdd3a8f17",
+        "name": "pokeLiquidationsMulti(uint256)"
+      },
+      {
+        "selector": "0x60282a09",
+        "name": "setConfigLiquidationDebug(bool)"
+      },
+      {
+        "selector": "0x34014867",
+        "name": "setConfigLiquidationScanOnTrade(bool)"
+      },
+      {
+        "selector": "0x68ddc679",
+        "name": "setLiquidationScanParams(uint256,uint256)"
+      }
+    ]
+  },
+  "OBViewFacet": {
+    "address": "0x5186528f22b1b349169915F240be064fDb86a128",
+    "selectors": [
+      {
+        "selector": "0xcffb7d15",
+        "name": "bestAsk()"
+      },
+      {
+        "selector": "0x20c1614b",
+        "name": "bestBid()"
+      },
+      {
+        "selector": "0x41371294",
+        "name": "buyLevels(uint256)"
+      },
+      {
+        "selector": "0xdadcfd9a",
+        "name": "getActiveOrdersCount()"
+      },
+      {
+        "selector": "0xd9a319b0",
+        "name": "getFeeStructure()"
+      },
+      {
+        "selector": "0xab47f1bf",
+        "name": "getFilledAmount(uint256)"
+      },
+      {
+        "selector": "0x6d64bcc9",
+        "name": "getLeverageInfo()"
+      },
+      {
+        "selector": "0xed6d60be",
+        "name": "getMaxSlippageBps()"
+      },
+      {
+        "selector": "0xd09ef241",
+        "name": "getOrder(uint256)"
+      },
+      {
+        "selector": "0x8f0fa0a5",
+        "name": "getTradingParameters()"
+      },
+      {
+        "selector": "0x63c69f08",
+        "name": "getUserOrders(address)"
+      },
+      {
+        "selector": "0x5b7c2dad",
+        "name": "getUserPosition(address)"
+      },
+      {
+        "selector": "0xdf449cb8",
+        "name": "lastTradePrice()"
+      },
+      {
+        "selector": "0x8e31e7e0",
+        "name": "marketStatic()"
+      },
+      {
+        "selector": "0xc4aa7395",
+        "name": "maxSlippageBps()"
+      },
+      {
+        "selector": "0x851955d0",
+        "name": "sellLevels(uint256)"
+      },
+      {
+        "selector": "0xfe1aab4e",
+        "name": "totalMarginLockedInMarket()"
+      }
+    ]
+  }
+}

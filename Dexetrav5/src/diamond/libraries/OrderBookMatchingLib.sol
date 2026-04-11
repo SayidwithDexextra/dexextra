@@ -208,6 +208,7 @@ library OrderBookMatchingLib {
     }
 
     /// @dev O(1) order removal using doubly-linked list with prevOrderId
+    /// @notice Falls back to O(n) traversal for legacy orders where prevOrderId was not set
     function removeOrderFromLevel(OrderBookStorage.State storage s, uint256 orderId, uint256 price, bool isBuy) internal {
         OrderBookStorage.PriceLevel storage level = isBuy ? s.buyLevels[price] : s.sellLevels[price];
         OrderBookStorage.Order storage order = s.orders[orderId];
@@ -215,6 +216,16 @@ library OrderBookMatchingLib {
         
         uint256 prevId = order.prevOrderId;
         uint256 nextId = order.nextOrderId;
+        
+        // Handle legacy orders: prevOrderId=0 but order is not first in list
+        // This happens for orders created before prevOrderId was added to the struct
+        if (prevId == 0 && level.firstOrderId != orderId) {
+            // O(n) fallback: traverse to find the previous order
+            prevId = level.firstOrderId;
+            while (prevId != 0 && s.orders[prevId].nextOrderId != orderId) {
+                prevId = s.orders[prevId].nextOrderId;
+            }
+        }
         
         if (prevId != 0) {
             s.orders[prevId].nextOrderId = nextId;
