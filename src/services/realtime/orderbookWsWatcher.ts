@@ -30,6 +30,15 @@ const ORDERBOOK_EVENT_ABI = [
   },
   {
     type: 'event',
+    name: 'OrderPartiallyFilled',
+    inputs: [
+      { indexed: true, name: 'orderId', type: 'uint256' },
+      { indexed: false, name: 'filledAmount', type: 'uint256' },
+      { indexed: false, name: 'remainingAmount', type: 'uint256' }
+    ]
+  },
+  {
+    type: 'event',
     name: 'OrderCancelled',
     inputs: [
       { indexed: true, name: 'orderId', type: 'uint256' },
@@ -89,11 +98,12 @@ export async function startOrderbookWsWatchers(): Promise<Unsubscribe[]> {
     const channelSymbol = symbol ? `market-${symbol.toUpperCase()}` : null;
     const channelMetric = metricId ? `market-${metricId}` : null;
 
-    const broadcast = async (eventName: 'OrderPlaced' | 'OrderFilled' | 'OrderCancelled', log: any) => {
+    const broadcast = async (eventName: 'OrderPlaced' | 'OrderFilled' | 'OrderPartiallyFilled' | 'OrderCancelled', log: any) => {
       try {
+        const args = log?.args as any;
         const base = {
-          orderId: String((log?.args as any)?.orderId ?? ''),
-          trader: String((log?.args as any)?.trader ?? ''),
+          orderId: String(args?.orderId ?? ''),
+          trader: String(args?.trader ?? ''),
           eventType: eventName,
           address: address,
           blockNumber: Number(log?.blockNumber ?? 0),
@@ -101,11 +111,24 @@ export async function startOrderbookWsWatchers(): Promise<Unsubscribe[]> {
           timestamp: Date.now(),
         };
 
+        // Include fill amounts for partial fill events
+        const payload = eventName === 'OrderPartiallyFilled' 
+          ? {
+              ...base,
+              filledAmount: String(args?.filledAmount ?? '0'),
+              remainingAmount: String(args?.remainingAmount ?? '0'),
+            }
+          : eventName === 'OrderFilled'
+          ? {
+              ...base,
+              filledAmount: String(args?.filledAmount ?? '0'),
+            }
+          : base;
+
         // Use direct access to pusher instance (pattern used elsewhere in codebase)
         const p: any = (pusher as any)['pusher'];
         if (!p) return;
 
-        const payload = base;
         // Broadcast to symbol and metric channels
         if (channelSymbol) await p.trigger(channelSymbol, 'order-update', payload);
         if (channelMetric) await p.trigger(channelMetric, 'order-update', payload);
@@ -143,6 +166,19 @@ export async function startOrderbookWsWatchers(): Promise<Unsubscribe[]> {
     });
     unsubscribes.push(filledUnsub);
 
+    const partialFilledUnsub = wsClient.watchContractEvent({
+      address,
+      abi: ORDERBOOK_EVENT_ABI as any,
+      eventName: 'OrderPartiallyFilled',
+      onLogs: (logs: any[]) => {
+        logs.forEach((log) => broadcast('OrderPartiallyFilled', log));
+      },
+      onError: (error: Error) => {
+        console.error('[orderbookWsWatcher] OrderPartiallyFilled watcher error', error);
+      }
+    });
+    unsubscribes.push(partialFilledUnsub);
+
     const cancelUnsub = wsClient.watchContractEvent({
       address,
       abi: ORDERBOOK_EVENT_ABI as any,
@@ -156,7 +192,7 @@ export async function startOrderbookWsWatchers(): Promise<Unsubscribe[]> {
     });
     unsubscribes.push(cancelUnsub);
 
-     console.log(`[orderbookWsWatcher] Watching ${address} for OrderPlaced/OrderFilled/OrderCancelled (symbol=${symbol}, marketIdentifier=${metricId || 'N/A'})`);
+     console.log(`[orderbookWsWatcher] Watching ${address} for OrderPlaced/OrderFilled/OrderPartiallyFilled/OrderCancelled (symbol=${symbol}, marketIdentifier=${metricId || 'N/A'})`);
   }
 
   return unsubscribes;

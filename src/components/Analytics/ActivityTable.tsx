@@ -148,7 +148,7 @@ export default function ActivityTable({ activities, isLoading, compact }: Activi
                   <td className="px-3 py-2">
                     {activity.txHash ? (
                       <a
-                        href={`https://explorer.hyperliquid.xyz/tx/${activity.txHash}`}
+                        href={`https://hyperevmscan.io/tx/${activity.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-[10px] text-[#3b82f6] hover:text-[#60a5fa] font-mono transition-colors"

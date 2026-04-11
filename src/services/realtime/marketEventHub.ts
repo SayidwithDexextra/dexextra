@@ -973,12 +973,30 @@ export function useMarketEventHub(symbol: string, address: Address | null | unde
       const channel = `market-${symbol}`;
       const handlers = {
         'order-update': (data: any) => {
-          // Backend WS watcher sends { eventType: 'OrderPlaced' | 'OrderFilled' | 'OrderCancelled', ... }
+          // Backend WS watcher sends { eventType: 'OrderPlaced' | 'OrderFilled' | 'OrderPartiallyFilled' | 'OrderCancelled', ... }
           const eventType = String((data as any)?.eventType || '').trim();
           if (eventType === 'OrderFilled') {
             // Filled implies orderbook changed + position changed
             emit(u, { type: 'order-placed', source: 'pusher', symbol, address, timestamp: nowMs(), payload: data });
             emit(u, { type: 'trade-executed', source: 'pusher', symbol, address, timestamp: nowMs(), payload: data });
+            return;
+          }
+          if (eventType === 'OrderPartiallyFilled') {
+            // Partial fill - update order status and orderbook, but position remains open
+            emit(u, { type: 'order-placed', source: 'pusher', symbol, address, timestamp: nowMs(), payload: data });
+            // Dispatch ordersUpdated so UI components can refresh filled_quantity
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                source: 'partial-fill',
+                symbol,
+                orderId: (data as any)?.orderId,
+                filledAmount: (data as any)?.filledAmount,
+                totalFilledQuantity: (data as any)?.totalFilledQuantity,
+                fillPercent: (data as any)?.fillPercent,
+                status: (data as any)?.status,
+                timestamp: nowMs()
+              }
+            }));
             return;
           }
           // Default: treat as order lifecycle change

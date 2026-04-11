@@ -185,7 +185,7 @@ export default function DepositModalStatus({
 
   const handleExplorerLink = () => {
     if (transactionHash && typeof window !== 'undefined') {
-      window.open(`https://explorer.hyperliquid.xyz/tx/${transactionHash}`, '_blank')
+      window.open(`https://hyperevmscan.io/tx/${transactionHash}`, '_blank')
     }
   }
 

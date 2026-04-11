@@ -135,7 +135,7 @@ export default function Faucet({ className }: FaucetProps) {
                 decimals: 18,
               },
               rpcUrls: ['https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'],
-              blockExplorerUrls: ['https://explorer.hyperliquid.xyz/'],
+              blockExplorerUrls: ['https://hyperevmscan.io/'],
             }],
           })
         } catch (addError) {

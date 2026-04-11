@@ -944,7 +944,7 @@ function SettlementsTab({
                   </span>
                   {activity.txHash ? (
                     <a
-                      href={`https://explorer.hyperliquid.xyz/tx/${activity.txHash}`}
+                      href={`https://hyperevmscan.io/tx/${activity.txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-[#3b82f6] hover:text-[#60a5fa] font-mono transition-colors"
@@ -2177,7 +2177,7 @@ function OrdersTab({
           </button>
         </div>
 
-        <div className="grid grid-cols-4 lg:grid-cols-8 gap-4">
+        <div className="grid grid-cols-4 lg:grid-cols-7 gap-4">
           <div>
             <div className="text-[10px] text-[#707070] uppercase tracking-wide mb-1">Total Orders</div>
             <div className="text-[18px] font-semibold text-[#e0e0e0] font-mono">{formatNumber(summary.totalOrders)}</div>
@@ -2189,10 +2189,6 @@ function OrdersTab({
           <div>
             <div className="text-[10px] text-[#707070] uppercase tracking-wide mb-1">Filled</div>
             <div className="text-[18px] font-semibold text-[#4ade80] font-mono">{formatNumber(summary.filledOrders)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-[#707070] uppercase tracking-wide mb-1">Cancelled</div>
-            <div className="text-[18px] font-semibold text-[#707070] font-mono">{formatNumber(summary.cancelledOrders)}</div>
           </div>
           <div>
             <div className="text-[10px] text-[#707070] uppercase tracking-wide mb-1">Buy Orders</div>
@@ -2323,7 +2319,7 @@ function OrdersTab({
                   <td className="px-4 py-3">
                     {order.txHash ? (
                       <a
-                        href={`https://explorer.hyperliquid.xyz/tx/${order.txHash}`}
+                        href={`https://hyperevmscan.io/tx/${order.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-[10px] text-[#3b82f6] hover:text-[#60a5fa] font-mono transition-colors"

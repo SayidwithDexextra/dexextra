@@ -2360,7 +2360,7 @@ export default function Settings({ className }: SettingsProps) {
                           <td className="px-4 py-2.5 text-right">
                             {f.tx_hash ? (
                               <a
-                                href={`https://explorer.hyperliquid.xyz/tx/${f.tx_hash}`}
+                                href={`https://hyperevmscan.io/tx/${f.tx_hash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[10px] text-t-fg-muted hover:text-t-fg-label font-mono transition-colors duration-200"

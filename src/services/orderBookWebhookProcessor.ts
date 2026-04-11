@@ -16,6 +16,10 @@ export const HYPERLIQUID_EVENT_TOPICS = {
   ORDER_CANCELLED: '0xdc408a4b23cfe0edfa69e1ccca52c3f9e60bc441b3b25c09ec6defb38896a4f3',
   ORDER_CANCELLED_ACTUAL: '0xb2705df32ac67fc3101f496cd7036bf59074a603544d97d73650b6f09744986a', // REAL hash from deployed contract
   
+  // Partial fill events (for incremental order fill tracking)
+  ORDER_PARTIALLY_FILLED: '0xff5d5b1b81d52f6ee4735ef3e855e92d966085830dc91daad5efcff6defc5531',
+  ORDER_FULLY_FILLED: '0xd1ecaef071efe2a4f447a53abbf877f27caa6c56010b289f8a96b832eb5c40db',
+  
   // Legacy compatibility (deprecated)
   ORDER_ADDED: '0x184a980efa61c0acfeff92c0613bf2d3aceedadec9002d919c6bde9218b56c68',
   ORDER_MATCHED: '0xe5426fa5d075d3a0a2ce3373a3df298c78eec0ded097810b0e69a92c21b4b0b3',
@@ -61,8 +65,10 @@ export interface ProcessedOrderEvent {
   txHash: string;
   blockNumber: number;
   logIndex: number;
-  eventType: 'placed' | 'cancelled' | 'executed' | 'added' | 'matched';
+  eventType: 'placed' | 'cancelled' | 'executed' | 'added' | 'matched' | 'partial_fill';
   contractAddress: string;
+  filledAmount?: string;
+  remainingAmount?: string;
 }
 
 export class OrderBookWebhookProcessor {
@@ -468,6 +474,42 @@ export class OrderBookWebhookProcessor {
           }
           break;
 
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_PARTIALLY_FILLED:
+          // OrderPartiallyFilled(uint256 indexed orderId, uint256 filledAmount, uint256 remainingAmount)
+          console.log(`🔍 [DYNAMIC] Processing OrderPartiallyFilled event`);
+          if (topics.length >= 2) {
+            const orderId = topics[1]; // uint256 orderId (indexed)
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256'], data);
+            const filledAmount = decodedData[0].toString();
+            const remainingAmount = decodedData[1].toString();
+
+            console.log(`📊 [PARTIAL_FILL] Parsed partial fill event:`, {
+              orderId,
+              filledAmount,
+              remainingAmount,
+              txHash: log.transaction.hash,
+              blockNumber: log.transaction.blockNumber
+            });
+
+            return {
+              orderId: orderId,
+              trader: '', // Will be looked up from existing order
+              metricId: metricId || 'UNKNOWN',
+              orderType: 1, // LIMIT (only limit orders can be partially filled)
+              side: 0, // Will be determined from existing order
+              quantity: filledAmount, // The amount filled in this event
+              price: '0', // Price will be looked up from existing order
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'partial_fill',
+              contractAddress: log.account.address,
+              filledAmount,
+              remainingAmount
+            };
+          }
+          break;
+
         case HYPERLIQUID_EVENT_TOPICS.ORDER_CANCELLED:
         case HYPERLIQUID_EVENT_TOPICS.ORDER_CANCELLED_ACTUAL:
           // OrderCancelled(bytes32 indexed orderId, address indexed user, uint256 timestamp)
@@ -697,6 +739,10 @@ export class OrderBookWebhookProcessor {
           console.log(`💾 [DEBUG] Processing order match...`);
           // For now, treat matched events as executions
           return await this.updateOrderExecution(orderEvent);
+        
+        case 'partial_fill':
+          console.log(`💾 [DEBUG] Processing partial fill event...`);
+          return await this.updateOrderPartialFill(orderEvent, marketId);
         
         default:
           console.warn(`⚠️ [DEBUG] Unknown event type ${orderEvent.eventType} - not saved to DB`);
@@ -1495,6 +1541,177 @@ export class OrderBookWebhookProcessor {
     } catch (error) {
       console.error(`❌ Failed to update order execution: ${(error as Error).message}`);
       return false;
+    }
+  }
+
+  /**
+   * Update order with partial fill - incrementally add to filled_quantity
+   * Called when OrderPartiallyFilled event is received
+   */
+  private async updateOrderPartialFill(orderEvent: ProcessedOrderEvent, marketId: string): Promise<boolean> {
+    try {
+      const PRICE_PRECISION = 1000000; // 1e6 decimals (USDC precision)
+      const filledAmount = parseFloat(orderEvent.filledAmount || '0') / PRICE_PRECISION;
+      const remainingAmount = parseFloat(orderEvent.remainingAmount || '0') / PRICE_PRECISION;
+      
+      console.log(`📊 [PARTIAL_FILL] Processing partial fill for order ${orderEvent.orderId}:`, {
+        filledAmount,
+        remainingAmount,
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber
+      });
+
+      if (filledAmount <= 0) {
+        console.warn(`⚠️ [PARTIAL_FILL] Ignoring partial fill with zero amount`);
+        return true;
+      }
+
+      // First, find the existing order to get current filled_quantity and other details
+      const { data: existingOrder, error: lookupError } = await this.supabase
+        .from('userOrderHistory')
+        .select('*')
+        .eq('order_id', orderEvent.orderId.toString())
+        .eq('market_metric_id', marketId)
+        .order('occurred_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (lookupError && lookupError.code !== 'PGRST116') {
+        console.error(`❌ [PARTIAL_FILL] Error looking up existing order:`, lookupError);
+        return false;
+      }
+
+      // Calculate new filled quantity
+      const previousFilledQuantity = existingOrder 
+        ? parseFloat(existingOrder.filled_quantity || '0')
+        : 0;
+      const newFilledQuantity = previousFilledQuantity + filledAmount;
+      const totalQuantity = existingOrder 
+        ? parseFloat(existingOrder.quantity || '0')
+        : newFilledQuantity + remainingAmount;
+      
+      // Determine new status based on fill amount
+      const isFullyFilled = remainingAmount <= 0 || newFilledQuantity >= totalQuantity;
+      const newStatus = isFullyFilled ? 'FILLED' : 'PARTIALLY_FILLED';
+      
+      console.log(`📊 [PARTIAL_FILL] Fill calculation:`, {
+        previousFilled: previousFilledQuantity,
+        thisFilledAmount: filledAmount,
+        newFilledQuantity,
+        totalQuantity,
+        remainingAmount,
+        isFullyFilled,
+        newStatus
+      });
+
+      // Insert a new event row for the partial fill (append-only history)
+      const { error: insertError } = await this.supabase
+        .from('userOrderHistory')
+        .insert([{
+          trader_wallet_address: existingOrder?.trader_wallet_address || orderEvent.trader,
+          market_metric_id: marketId,
+          order_id: orderEvent.orderId.toString(),
+          tx_hash: orderEvent.txHash,
+          block_number: orderEvent.blockNumber,
+          log_index: orderEvent.logIndex,
+          event_type: 'PARTIAL_FILL',
+          side: existingOrder?.side || (orderEvent.side === 0 ? 'BUY' : 'SELL'),
+          order_type: existingOrder?.order_type || this.getOrderTypeString(orderEvent.orderType),
+          price: existingOrder?.price,
+          quantity: totalQuantity,
+          filled_quantity: newFilledQuantity,
+          status: newStatus
+        }]);
+
+      if (insertError) {
+        console.error(`❌ [PARTIAL_FILL] Failed to insert partial fill event:`, insertError);
+        return false;
+      }
+
+      console.log(`✅ [PARTIAL_FILL] Recorded partial fill for order ${orderEvent.orderId}: +${filledAmount} (total filled: ${newFilledQuantity}/${totalQuantity})`);
+
+      // Broadcast partial fill event via Pusher for real-time UI updates
+      try {
+        await this.broadcastPartialFill(orderEvent, marketId, {
+          orderId: orderEvent.orderId,
+          filledAmount,
+          totalFilledQuantity: newFilledQuantity,
+          totalQuantity,
+          remainingAmount,
+          status: newStatus,
+          trader: existingOrder?.trader_wallet_address || orderEvent.trader
+        });
+      } catch (broadcastError) {
+        console.warn(`⚠️ [PARTIAL_FILL] Failed to broadcast partial fill event:`, broadcastError);
+        // Don't fail the whole operation if broadcast fails
+      }
+
+      // If the order is now fully filled, also update position
+      if (isFullyFilled && existingOrder) {
+        console.log(`📊 [PARTIAL_FILL] Order fully filled, updating position...`);
+        const price = parseFloat(existingOrder.price || '0');
+        if (price > 0) {
+          const positionEvent: ProcessedOrderEvent = {
+            ...orderEvent,
+            trader: existingOrder.trader_wallet_address,
+            side: existingOrder.side === 'BUY' ? 0 : 1,
+            quantity: String(totalQuantity * PRICE_PRECISION),
+            price: String(price * PRICE_PRECISION)
+          };
+          await this.updatePosition(positionEvent, marketId, totalQuantity, price);
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`❌ [PARTIAL_FILL] Failed to update order partial fill: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Broadcast partial fill event via Pusher for real-time UI updates
+   */
+  private async broadcastPartialFill(
+    orderEvent: ProcessedOrderEvent,
+    marketId: string,
+    fillData: {
+      orderId: string;
+      filledAmount: number;
+      totalFilledQuantity: number;
+      totalQuantity: number;
+      remainingAmount: number;
+      status: string;
+      trader: string;
+    }
+  ): Promise<void> {
+    try {
+      const channel = `market-${marketId}`;
+      const payload = {
+        eventType: 'OrderPartiallyFilled',
+        orderId: fillData.orderId,
+        trader: fillData.trader,
+        filledAmount: fillData.filledAmount,
+        totalFilledQuantity: fillData.totalFilledQuantity,
+        totalQuantity: fillData.totalQuantity,
+        remainingAmount: fillData.remainingAmount,
+        fillPercent: (fillData.totalFilledQuantity / fillData.totalQuantity) * 100,
+        status: fillData.status,
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber,
+        timestamp: Date.now()
+      };
+
+      await this.pusherService.trigger(channel, 'order-update', payload);
+      await this.pusherService.trigger('recent-transactions', 'partial-fill', payload);
+      
+      console.log(`📡 [PARTIAL_FILL] Broadcasted partial fill event to ${channel}:`, {
+        orderId: fillData.orderId,
+        fillPercent: payload.fillPercent.toFixed(1) + '%',
+        status: fillData.status
+      });
+    } catch (error) {
+      throw error;
     }
   }
 
