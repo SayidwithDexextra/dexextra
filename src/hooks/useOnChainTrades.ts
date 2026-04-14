@@ -304,14 +304,23 @@ export function useOnChainTrades(): UseOnChainTradesResult {
     fetchTrades()
   }, [fetchTrades, tick])
 
-  // Calculate daily P&L from trades
-  // For each day: sum of (sell value - buy value - fees)
+  // Calculate daily P&L from trades using FIFO method
+  // P&L is only realized when a position is closed (opposite side trade)
   const dailyPnl = useMemo<DailyPnlData[]>(() => {
     if (trades.length === 0) return []
 
+    // Sort trades by timestamp ascending for FIFO processing
+    const sortedTrades = [...trades].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+
+    // Track open positions per market: { marketId: { side: 'LONG' | 'SHORT', lots: [{ quantity, price, fee }] } }
+    const positions = new Map<string, { 
+      side: 'LONG' | 'SHORT'
+      lots: Array<{ quantity: number; price: number; fee: number }>
+    }>()
+
     const dailyMap = new Map<string, DailyPnlData>()
 
-    for (const trade of trades) {
+    for (const trade of sortedTrades) {
       const date = trade.timestamp.toISOString().split('T')[0]
       const existing = dailyMap.get(date) || {
         date,
@@ -323,20 +332,75 @@ export function useOnChainTrades(): UseOnChainTradesResult {
         sells: 0,
       }
 
-      // P&L calculation:
-      // - SELL: you receive tradeValue (positive)
-      // - BUY: you pay tradeValue (negative)
-      // - Fee is always subtracted
-      const tradePnl = trade.side === 'SELL' ? trade.tradeValue : -trade.tradeValue
-      
-      existing.pnl += tradePnl - trade.fee
-      existing.fees += trade.fee
       existing.trades += 1
       existing.volume += trade.tradeValue
+      existing.fees += trade.fee
+      
       if (trade.side === 'BUY') {
         existing.buys += 1
       } else {
         existing.sells += 1
+      }
+
+      // Get or initialize position for this market
+      let position = positions.get(trade.marketId)
+      
+      const tradeSide = trade.side === 'BUY' ? 'LONG' : 'SHORT'
+      
+      if (!position) {
+        // Opening a new position
+        positions.set(trade.marketId, {
+          side: tradeSide,
+          lots: [{ quantity: trade.quantity, price: trade.price, fee: trade.fee }]
+        })
+        // No realized P&L when opening a position, just the fee
+        existing.pnl -= trade.fee
+      } else if (position.side === tradeSide) {
+        // Adding to existing position (same direction)
+        position.lots.push({ quantity: trade.quantity, price: trade.price, fee: trade.fee })
+        // No realized P&L when adding to position, just the fee
+        existing.pnl -= trade.fee
+      } else {
+        // Closing position (opposite direction) - FIFO method
+        let remainingQty = trade.quantity
+        let realizedPnl = 0
+        
+        while (remainingQty > 0 && position.lots.length > 0) {
+          const lot = position.lots[0]
+          const closeQty = Math.min(remainingQty, lot.quantity)
+          
+          // Calculate P&L for this portion
+          // For LONG position being closed by SELL: P&L = (sell price - buy price) * quantity
+          // For SHORT position being closed by BUY: P&L = (sell price - buy price) * quantity
+          if (position.side === 'LONG') {
+            // Closing long: we bought at lot.price, selling at trade.price
+            realizedPnl += (trade.price - lot.price) * closeQty
+          } else {
+            // Closing short: we sold at lot.price, buying back at trade.price
+            realizedPnl += (lot.price - trade.price) * closeQty
+          }
+          
+          remainingQty -= closeQty
+          lot.quantity -= closeQty
+          
+          if (lot.quantity <= 0) {
+            position.lots.shift()
+          }
+        }
+        
+        // If we closed all lots and still have remaining quantity, we're opening opposite position
+        if (remainingQty > 0) {
+          position.side = tradeSide
+          position.lots = [{ quantity: remainingQty, price: trade.price, fee: 0 }]
+        }
+        
+        // If position is fully closed, remove it
+        if (position.lots.length === 0) {
+          positions.delete(trade.marketId)
+        }
+        
+        // Add realized P&L minus fee for this trade
+        existing.pnl += realizedPnl - trade.fee
       }
 
       dailyMap.set(date, existing)

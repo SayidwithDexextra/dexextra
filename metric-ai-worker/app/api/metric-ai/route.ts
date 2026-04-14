@@ -626,13 +626,175 @@ export async function POST(req: NextRequest) {
           ? { min: historicalStats.suspiciousBelow, max: historicalStats.suspiciousAbove }
           : undefined;
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // ARCHIVE-FIRST SETTLEMENT FLOW
+        // For settlement context, we archive the live page FIRST, then analyze
+        // the archived Wayback URL. This ensures perfect congruence between
+        // the evidence URL and the AI-extracted settlement price.
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // Archive-first flow tracking variables
+        let archiveFirstFlow = false;
+        let archiveFallbackUsed = false;
+        let textExtractedValue: number | null = null;
+        let visionExtractedValue: number | null = null;
+        let extractionConfidenceMatch = false;
+        let valueSource: 'text' | 'vision' | 'consensus' | 'fallback' = 'fallback';
+        const analyzedUrlsMap: Map<string, { liveUrl: string; analyzedUrl: string; isArchived: boolean; waybackTimestamp?: string }> = new Map();
+        
+        // Determine which URLs to analyze (archived or live)
+        let urlsToAnalyze = [...input.urls];
+        
+        // ARCHIVE-FIRST: For settlement, archive live pages FIRST before any analysis
+        if (input.context === 'settlement' && ENABLE_VISION_ANALYSIS) {
+          console.log('[Metric-AI] 📦 ARCHIVE-FIRST SETTLEMENT MODE');
+          console.log('[Metric-AI] 📦 Phase 0: Archiving live pages FIRST (before any analysis)');
+          
+          const { archiveMulti } = await import('../../../lib/archiveMulti');
+          
+          // Archive all live URLs in parallel
+          // Use longer timeouts for live pages (they require full page render + crawl)
+          const archiveStartTime = Date.now();
+          const archiveResults = await Promise.allSettled(
+            input.urls.map(url => archiveMulti(url, { 
+              totalTimeoutMs: 60_000,      // 60s total timeout
+              providerTimeoutMs: 55_000,   // 55s per provider (live pages take longer)
+            }))
+          );
+          
+          const archivedUrls: { liveUrl: string; waybackUrl: string; timestamp?: string }[] = [];
+          const failedUrls: string[] = [];
+          
+          for (let i = 0; i < input.urls.length; i++) {
+            const result = archiveResults[i];
+            const liveUrl = input.urls[i];
+            
+            if (result.status === 'fulfilled' && result.value.success && result.value.primaryUrl) {
+              const iaResult = result.value.archives?.find((a: any) => a.provider === 'internet_archive' && a.success);
+              archivedUrls.push({
+                liveUrl,
+                waybackUrl: result.value.primaryUrl,
+                timestamp: iaResult?.timestamp,
+              });
+              console.log(`[Metric-AI] ✓ Archived: ${liveUrl} → ${result.value.primaryUrl}`);
+            } else {
+              const reason = result.status === 'rejected' 
+                ? result.reason?.message 
+                : result.value?.error || 'unknown';
+              failedUrls.push(liveUrl);
+              console.warn(`[Metric-AI] ⚠ Archive failed for ${liveUrl}: ${reason}`);
+            }
+          }
+          
+          console.log(`[Metric-AI] 📦 Phase 0 complete in ${Date.now() - archiveStartTime}ms`, {
+            archived: archivedUrls.length,
+            failed: failedUrls.length,
+          });
+          
+          if (archivedUrls.length > 0) {
+            archiveFirstFlow = true;
+            
+            // Use archived Wayback URLs for analysis instead of live URLs
+            urlsToAnalyze = archivedUrls.map(a => a.waybackUrl);
+            
+            // Track the mapping for resolution
+            for (const archived of archivedUrls) {
+              analyzedUrlsMap.set(archived.waybackUrl, {
+                liveUrl: archived.liveUrl,
+                analyzedUrl: archived.waybackUrl,
+                isArchived: true,
+                waybackTimestamp: archived.timestamp,
+              });
+            }
+            
+            // Add failed URLs as fallback (will analyze live)
+            for (const failedUrl of failedUrls) {
+              urlsToAnalyze.push(failedUrl);
+              analyzedUrlsMap.set(failedUrl, {
+                liveUrl: failedUrl,
+                analyzedUrl: failedUrl,
+                isArchived: false,
+              });
+              archiveFallbackUsed = true;
+            }
+            
+            // ── WAYBACK AVAILABILITY CHECK WITH EXPONENTIAL BACKOFF ──
+            // Freshly archived URLs may take a moment to become accessible.
+            // We verify with exponential backoff: 2s, 4s, 8s delays.
+            console.log('[Metric-AI] ⏳ Verifying Wayback URLs are accessible...');
+            
+            const verifyWaybackUrl = async (waybackUrl: string, maxRetries = 3): Promise<boolean> => {
+              const delays = [2000, 4000, 8000]; // Exponential backoff
+              
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                  const response = await fetch(waybackUrl, {
+                    method: 'HEAD',
+                    headers: { 'User-Agent': 'Dexextra/1.0' },
+                    signal: AbortSignal.timeout(10_000),
+                  });
+                  
+                  if (response.ok || response.status === 200 || response.status === 302) {
+                    console.log(`[Metric-AI] ✓ Wayback URL accessible (attempt ${attempt + 1}): ${waybackUrl}`);
+                    return true;
+                  }
+                  
+                  console.log(`[Metric-AI] ⏳ Wayback not ready (status ${response.status}), attempt ${attempt + 1}/${maxRetries}`);
+                } catch (err: any) {
+                  console.log(`[Metric-AI] ⏳ Wayback check failed (attempt ${attempt + 1}): ${err?.message || 'timeout'}`);
+                }
+                
+                if (attempt < maxRetries - 1) {
+                  const delay = delays[attempt] || delays[delays.length - 1];
+                  console.log(`[Metric-AI] ⏳ Waiting ${delay}ms before retry...`);
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                }
+              }
+              
+              return false;
+            };
+            
+            // Verify first archived URL (representative check)
+            const firstArchivedUrl = archivedUrls[0]?.waybackUrl;
+            if (firstArchivedUrl) {
+              const isAccessible = await verifyWaybackUrl(firstArchivedUrl);
+              if (!isAccessible) {
+                console.warn('[Metric-AI] ⚠ Wayback URL not accessible after retries, proceeding anyway');
+              }
+            }
+            
+          } else {
+            // All archiving failed - fall back to current flow (analyze live pages)
+            archiveFallbackUsed = true;
+            for (const url of input.urls) {
+              analyzedUrlsMap.set(url, {
+                liveUrl: url,
+                analyzedUrl: url,
+                isArchived: false,
+              });
+            }
+            console.warn('[Metric-AI] ⚠ All archiving failed, falling back to live URL analysis');
+          }
+        } else {
+          // Non-settlement context - use live URLs directly
+          for (const url of input.urls) {
+            analyzedUrlsMap.set(url, {
+              liveUrl: url,
+              analyzedUrl: url,
+              isArchived: false,
+            });
+          }
+        }
+
         console.log('[Metric-AI] 🌐 Phase 1: Fetching content and capturing screenshots via Jina', {
-          urlCount: input.urls.length,
+          urlCount: urlsToAnalyze.length,
+          archiveFirstFlow,
+          archiveFallbackUsed,
         });
 
         // --- Phase 1: Fetch content + screenshots in parallel per URL ---
-        // Uses Jina Reader for text extraction and Jina screenshots for vision.
-        const urlProcessingPromises = input.urls.map(async (url) => {
+        // In archive-first mode, these are Wayback URLs; otherwise live pages.
+        const urlProcessingPromises = urlsToAnalyze.map(async (url) => {
           const screenshotData: SourceScreenshotData = { url };
           
           try {
@@ -749,6 +911,11 @@ export async function POST(req: NextRequest) {
                   captureTimeMs: extScreenshot.captureTimeMs,
                 };
               }
+              
+              // Store Jina text content for dual analysis (used in settlement archive-first flow)
+              if (jinaResult.success && jinaResult.content) {
+                (screenshotData as any).jinaTextContent = jinaResult.content;
+              }
 
               // Build digest from Jina content + raw HTML supplements
               const digestParts: string[] = [];
@@ -862,10 +1029,21 @@ export async function POST(req: NextRequest) {
         });
 
         // Settlement Wayback URLs - declared at this scope for use in resolution object
-        // These are populated in Phase 2b (BEFORE AI analysis) for evidence congruence
+        // In archive-first mode, these are set from Phase 0 archiving
+        // In fallback mode, these are set from Phase 2b screenshot archiving
         let settlementWaybackUrl: string | null = null;
         let settlementWaybackTimestamp: string | null = null;
         let settlementWaybackPageUrl: string | null = null;
+        
+        // In archive-first mode, populate settlement URLs from the already-archived pages
+        if (archiveFirstFlow) {
+          const firstArchivedEntry = Array.from(analyzedUrlsMap.values()).find(e => e.isArchived);
+          if (firstArchivedEntry) {
+            settlementWaybackUrl = firstArchivedEntry.analyzedUrl;
+            settlementWaybackTimestamp = firstArchivedEntry.waybackTimestamp || null;
+            settlementWaybackPageUrl = firstArchivedEntry.analyzedUrl;
+          }
+        }
 
         // --- Phase 2: Upload screenshots + multi-model vision consensus ---
         if (ENABLE_VISION_ANALYSIS) {
@@ -884,77 +1062,125 @@ export async function POST(req: NextRequest) {
             });
             await Promise.all(uploadPromises);
 
-            // CRITICAL: Archive to Wayback IMMEDIATELY after upload, BEFORE AI analysis
-            // This ensures the Wayback snapshot captures the exact same content the AI will analyze
-            console.log('[Metric-AI] 📦 Phase 2b: Archiving to Wayback (BEFORE AI analysis for evidence congruence)');
-            const { archivePage } = await import('../../../lib/archivePage');
-
-            // Collect screenshot public URLs from successful uploads
-            const screenshotPublicUrls: { sourceUrl: string; screenshotUrl: string }[] = [];
-            for (const [url, data] of screenshotDataMap) {
-              if (data.uploadResult?.publicUrl) {
-                screenshotPublicUrls.push({ sourceUrl: url, screenshotUrl: data.uploadResult.publicUrl });
+            // In archive-first mode, we already archived the live pages in Phase 0
+            // Now we archive the SCREENSHOTS of those archived pages for additional evidence
+            if (archiveFirstFlow) {
+              console.log('[Metric-AI] 📦 Phase 2b: Archiving screenshots of archived pages (archive-first mode)');
+              const { archiveMulti } = await import('../../../lib/archiveMulti');
+              
+              // Collect screenshot public URLs from successful uploads
+              const screenshotPublicUrls: { sourceUrl: string; screenshotUrl: string }[] = [];
+              for (const [url, data] of screenshotDataMap) {
+                if (data.uploadResult?.publicUrl) {
+                  screenshotPublicUrls.push({ sourceUrl: url, screenshotUrl: data.uploadResult.publicUrl });
+                }
               }
-            }
-
-            const sourceUrls = input.urls.slice(0, 3);
-            console.log(`[Metric-AI] 📦 Archiving to Wayback: ${screenshotPublicUrls.length} screenshot(s) + ${sourceUrls.length} source URL(s)`);
-
-            // Archive screenshots (PRIMARY evidence - this is what the AI analyzes) and original pages (secondary) in parallel
-            const [screenshotArchiveResults, pageArchiveResults] = await Promise.all([
-              Promise.allSettled(
-                screenshotPublicUrls.map(({ screenshotUrl }) => archivePage(screenshotUrl, { timeoutMs: 30_000 }))
-              ),
-              Promise.allSettled(
-                sourceUrls.map((url) => archivePage(url, { timeoutMs: 30_000 }))
-              ),
-            ]);
-
-            // Process screenshot archive results (PRIMARY evidence - congruent with AI analysis)
-            for (let i = 0; i < screenshotArchiveResults.length; i++) {
-              const r = screenshotArchiveResults[i];
-              const { sourceUrl, screenshotUrl } = screenshotPublicUrls[i];
-              if (r.status === 'fulfilled' && r.value.success && r.value.waybackUrl) {
-                console.log(`[Metric-AI] ✓ Screenshot archived (PRIMARY): ${screenshotUrl} → ${r.value.waybackUrl}`);
-                if (i === 0) {
-                  settlementWaybackUrl = r.value.waybackUrl;
-                  settlementWaybackTimestamp = r.value.timestamp || null;
+              
+              if (screenshotPublicUrls.length > 0) {
+                const screenshotArchiveResults = await Promise.allSettled(
+                  screenshotPublicUrls.map(({ screenshotUrl }) => archiveMulti(screenshotUrl, { totalTimeoutMs: 30_000 }))
+                );
+                
+                for (let i = 0; i < screenshotArchiveResults.length; i++) {
+                  const r = screenshotArchiveResults[i];
+                  const { sourceUrl, screenshotUrl } = screenshotPublicUrls[i];
+                  if (r.status === 'fulfilled' && r.value.success && r.value.primaryUrl) {
+                    const successCount = r.value.archives.filter((a: any) => a.success).length;
+                    console.log(`[Metric-AI] ✓ Screenshot archived to ${successCount} provider(s): ${screenshotUrl} → ${r.value.primaryUrl}`);
+                    const matchingData = screenshotDataMap.get(sourceUrl);
+                    if (matchingData) {
+                      (matchingData as any).waybackScreenshotUrl = r.value.primaryUrl;
+                      (matchingData as any).archiveSnapshots = r.value.archives.filter((a: any) => a.success);
+                    }
+                  }
                 }
-                // Store on screenshotDataMap for later use in sources
-                const matchingData = screenshotDataMap.get(sourceUrl);
-                if (matchingData) {
-                  (matchingData as any).waybackScreenshotUrl = r.value.waybackUrl;
-                }
-              } else {
-                const reason = r.status === 'rejected' ? r.reason?.message : r.value?.error;
-                console.warn(`[Metric-AI] ⚠ Screenshot archive failed for ${screenshotUrl}: ${reason || 'unknown'}`);
               }
-            }
+              
+              console.log('[Metric-AI] ✓ Phase 2b complete (archive-first): Primary evidence from Phase 0 archiving', {
+                primaryEvidenceUrl: settlementWaybackUrl,
+                archiveFirstFlow: true,
+              });
+              
+            } else {
+              // FALLBACK MODE: Archive screenshots and live pages (original behavior)
+              // This ensures the archive snapshots capture the exact same content the AI analyzed
+              console.log('[Metric-AI] 📦 Phase 2b: Multi-archiving (FALLBACK mode - archiving live content)');
+              const { archiveMulti } = await import('../../../lib/archiveMulti');
 
-            // Process original page archive results (secondary - best-effort, may differ from screenshot)
-            for (let i = 0; i < pageArchiveResults.length; i++) {
-              const r = pageArchiveResults[i];
-              if (r.status === 'fulfilled' && r.value.success && r.value.waybackUrl) {
-                console.log(`[Metric-AI] ✓ Page archived (secondary): ${sourceUrls[i]} → ${r.value.waybackUrl}`);
-                if (i === 0) {
-                  settlementWaybackPageUrl = r.value.waybackUrl;
+              // Collect screenshot public URLs from successful uploads
+              const screenshotPublicUrls: { sourceUrl: string; screenshotUrl: string }[] = [];
+              for (const [url, data] of screenshotDataMap) {
+                if (data.uploadResult?.publicUrl) {
+                  screenshotPublicUrls.push({ sourceUrl: url, screenshotUrl: data.uploadResult.publicUrl });
                 }
-                // Store on screenshotDataMap for later use in sources
-                const matchingData = screenshotDataMap.get(sourceUrls[i]);
-                if (matchingData) {
-                  (matchingData as any).waybackPageUrl = r.value.waybackUrl;
-                  (matchingData as any).waybackPageTimestamp = r.value.timestamp || null;
-                }
-              } else {
-                const reason = r.status === 'rejected' ? r.reason?.message : r.value?.error;
-                console.warn(`[Metric-AI] ⚠ Page archive failed for ${sourceUrls[i]}: ${reason || 'unknown'}`);
               }
-            }
 
-            console.log('[Metric-AI] ✓ Phase 2b complete: Wayback archival done BEFORE AI analysis', {
-              primaryEvidenceUrl: settlementWaybackUrl,
-              secondaryPageUrl: settlementWaybackPageUrl,
-            });
+              const sourceUrls = input.urls.slice(0, 3);
+              console.log(`[Metric-AI] 📦 Multi-archiving: ${screenshotPublicUrls.length} screenshot(s) + ${sourceUrls.length} source URL(s)`);
+
+              // Archive screenshots (PRIMARY evidence) and original pages (secondary) in parallel to MULTIPLE archives
+              const [screenshotArchiveResults, pageArchiveResults] = await Promise.all([
+                Promise.allSettled(
+                  screenshotPublicUrls.map(({ screenshotUrl }) => archiveMulti(screenshotUrl, { totalTimeoutMs: 30_000 }))
+                ),
+                Promise.allSettled(
+                  sourceUrls.map((url) => archiveMulti(url, { totalTimeoutMs: 30_000 }))
+                ),
+              ]);
+
+              // Process screenshot archive results (PRIMARY evidence - congruent with AI analysis)
+              for (let i = 0; i < screenshotArchiveResults.length; i++) {
+                const r = screenshotArchiveResults[i];
+                const { sourceUrl, screenshotUrl } = screenshotPublicUrls[i];
+                if (r.status === 'fulfilled' && r.value.success && r.value.primaryUrl) {
+                  const successCount = r.value.archives.filter((a: any) => a.success).length;
+                  console.log(`[Metric-AI] ✓ Screenshot archived to ${successCount} provider(s) (PRIMARY): ${screenshotUrl} → ${r.value.primaryUrl}`);
+                  if (i === 0) {
+                    settlementWaybackUrl = r.value.primaryUrl;
+                    // Try to get timestamp from IA result if available
+                    const iaResult = r.value.archives.find((a: any) => a.provider === 'internet_archive' && a.success);
+                    settlementWaybackTimestamp = iaResult?.timestamp || null;
+                  }
+                  // Store all archive URLs on screenshotDataMap for later use in sources
+                  const matchingData = screenshotDataMap.get(sourceUrl);
+                  if (matchingData) {
+                    (matchingData as any).waybackScreenshotUrl = r.value.primaryUrl;
+                    (matchingData as any).archiveSnapshots = r.value.archives.filter((a: any) => a.success);
+                  }
+                } else {
+                  const reason = r.status === 'rejected' ? r.reason?.message : r.value?.error;
+                  console.warn(`[Metric-AI] ⚠ Screenshot multi-archive failed for ${screenshotUrl}: ${reason || 'unknown'}`);
+                }
+              }
+
+              // Process original page archive results (secondary - best-effort, may differ from screenshot)
+              for (let i = 0; i < pageArchiveResults.length; i++) {
+                const r = pageArchiveResults[i];
+                if (r.status === 'fulfilled' && r.value.success && r.value.primaryUrl) {
+                  const successCount = r.value.archives.filter((a: any) => a.success).length;
+                  console.log(`[Metric-AI] ✓ Page archived to ${successCount} provider(s) (secondary): ${sourceUrls[i]} → ${r.value.primaryUrl}`);
+                  if (i === 0) {
+                    settlementWaybackPageUrl = r.value.primaryUrl;
+                  }
+                  // Store all archive URLs on screenshotDataMap for later use in sources
+                  const matchingData = screenshotDataMap.get(sourceUrls[i]);
+                  if (matchingData) {
+                    (matchingData as any).waybackPageUrl = r.value.primaryUrl;
+                    const iaPageResult = r.value.archives.find((a: any) => a.provider === 'internet_archive' && a.success);
+                    (matchingData as any).waybackPageTimestamp = iaPageResult?.timestamp || null;
+                    (matchingData as any).pageArchiveSnapshots = r.value.archives.filter((a: any) => a.success);
+                  }
+                } else {
+                  const reason = r.status === 'rejected' ? r.reason?.message : r.value?.error;
+                  console.warn(`[Metric-AI] ⚠ Page multi-archive failed for ${sourceUrls[i]}: ${reason || 'unknown'}`);
+                }
+              }
+
+              console.log('[Metric-AI] ✓ Phase 2b complete (fallback): Multi-archival done BEFORE AI analysis', {
+                primaryEvidenceUrl: settlementWaybackUrl,
+                secondaryPageUrl: settlementWaybackPageUrl,
+              });
+            }
           }
 
           console.log('[Metric-AI] 👁️ Phase 2c: Running multi-model vision consensus', { jobId, screenshotsToAnalyze: screenshotsToProcess.length });
@@ -995,6 +1221,143 @@ export async function POST(req: NextRequest) {
 
           const visionSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length;
           console.log('[Metric-AI] ✓ Vision analysis complete', { jobId, visionSuccessCount });
+          
+          // ═══════════════════════════════════════════════════════════════════════════
+          // DUAL ANALYSIS: Extract numeric value from text content AND compare with vision
+          // For settlement context, we use both text extraction and vision analysis
+          // to increase confidence in the extracted value.
+          // ═══════════════════════════════════════════════════════════════════════════
+          if (input.context === 'settlement' && archiveFirstFlow) {
+            console.log('[Metric-AI] 🔍 Phase 2d: Dual Analysis (text + vision comparison)');
+            
+            // Extract numeric value from text content using LLM
+            const textExtractionPromise = (async () => {
+              // Collect all text content from Jina extractions
+              const textContents: string[] = [];
+              for (const [, data] of screenshotDataMap) {
+                if ((data as any).jinaTextContent) {
+                  textContents.push((data as any).jinaTextContent);
+                }
+              }
+              
+              // Also use the digest texts we collected
+              const allTextContent = [...textContents, ...texts].join('\n\n---\n\n').slice(0, 50_000);
+              
+              if (!allTextContent || allTextContent.length < 50) {
+                console.log('[Metric-AI] ⚠ No text content available for text extraction');
+                return null;
+              }
+              
+              try {
+                const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                const textExtractionPrompt = `You are extracting a precise numeric value from archived webpage content.
+
+METRIC TO EXTRACT: "${input.metric}"
+${input.description ? `DESCRIPTION: "${input.description}"` : ''}
+
+INSTRUCTIONS:
+1. Find the EXACT current value for the specified metric in the content below
+2. Return ONLY the numeric value (no currency symbols, units, or text)
+3. Use decimal notation (e.g., 95123.45, not "$95,123.45")
+4. If multiple values exist, use the most recent/current one
+5. If the value cannot be found, respond with "NOT_FOUND"
+
+ARCHIVED PAGE CONTENT:
+${allTextContent.slice(0, 30_000)}
+
+EXTRACTED NUMERIC VALUE:`;
+
+                const textResponse = await openai.chat.completions.create({
+                  model: OPENAI_MODEL_FAST,
+                  messages: [{ role: 'user', content: textExtractionPrompt }],
+                  temperature: 0,
+                  max_tokens: 100,
+                });
+                
+                const extractedText = textResponse.choices[0]?.message?.content?.trim() || '';
+                
+                if (extractedText === 'NOT_FOUND' || !extractedText) {
+                  console.log('[Metric-AI] ⚠ Text extraction could not find value');
+                  return null;
+                }
+                
+                // Parse the numeric value
+                const cleanedValue = extractedText.replace(/[^0-9.+-]/g, '');
+                const numericValue = parseFloat(cleanedValue);
+                
+                if (!Number.isFinite(numericValue)) {
+                  console.log('[Metric-AI] ⚠ Text extraction returned non-numeric:', extractedText);
+                  return null;
+                }
+                
+                console.log('[Metric-AI] ✓ Text extraction result:', { 
+                  rawValue: extractedText, 
+                  numericValue 
+                });
+                return numericValue;
+              } catch (err: any) {
+                console.error('[Metric-AI] Text extraction error:', err?.message || err);
+                return null;
+              }
+            })();
+            
+            // Wait for text extraction
+            textExtractedValue = await textExtractionPromise;
+            
+            // Get vision extracted value from the best consensus
+            const bestVisionConsensus = Array.from(screenshotDataMap.values())
+              .map(d => d.visionConsensus)
+              .filter((c): c is VisionConsensus => !!c && c.numericValue !== undefined)
+              .sort((a, b) => b.confidence - a.confidence)[0];
+            
+            if (bestVisionConsensus?.numericValue !== undefined) {
+              visionExtractedValue = bestVisionConsensus.numericValue;
+            }
+            
+            // Compare text and vision values for confidence
+            if (textExtractedValue !== null && visionExtractedValue !== null) {
+              const tolerance = 0.01; // 1% tolerance
+              const diff = Math.abs(textExtractedValue - visionExtractedValue);
+              const maxVal = Math.max(Math.abs(textExtractedValue), Math.abs(visionExtractedValue));
+              const relativeDiff = maxVal > 0 ? diff / maxVal : 0;
+              
+              extractionConfidenceMatch = relativeDiff < tolerance;
+              
+              if (extractionConfidenceMatch) {
+                valueSource = 'consensus';
+                console.log('[Metric-AI] ✓ DUAL ANALYSIS: Text and Vision AGREE', {
+                  textValue: textExtractedValue,
+                  visionValue: visionExtractedValue,
+                  relativeDiff: (relativeDiff * 100).toFixed(3) + '%',
+                });
+              } else {
+                // Prefer vision value when there's a mismatch (more reliable for rendered content)
+                valueSource = 'vision';
+                console.warn('[Metric-AI] ⚠ DUAL ANALYSIS: Text/Vision MISMATCH', {
+                  textValue: textExtractedValue,
+                  visionValue: visionExtractedValue,
+                  relativeDiff: (relativeDiff * 100).toFixed(3) + '%',
+                  using: 'vision (more reliable for rendered content)',
+                });
+              }
+            } else if (visionExtractedValue !== null) {
+              valueSource = 'vision';
+              console.log('[Metric-AI] ℹ Using vision value only (text extraction unavailable)');
+            } else if (textExtractedValue !== null) {
+              valueSource = 'text';
+              console.log('[Metric-AI] ℹ Using text value only (vision extraction unavailable)');
+            } else {
+              valueSource = 'fallback';
+              console.warn('[Metric-AI] ⚠ Both text and vision extraction failed, will rely on fusion');
+            }
+            
+            console.log('[Metric-AI] ✓ Phase 2d complete: Dual analysis done', {
+              textExtractedValue,
+              visionExtractedValue,
+              extractionConfidenceMatch,
+              valueSource,
+            });
+          }
         }
 
         // --- Build evidence sections for the enhanced prompt ---
@@ -1356,6 +1719,15 @@ export async function POST(req: NextRequest) {
           settlement_wayback_url: settlementWaybackUrl,
           settlement_wayback_timestamp: settlementWaybackTimestamp,
           settlement_wayback_page_url: settlementWaybackPageUrl,
+          // Archive-first settlement flow fields
+          archive_first_flow: archiveFirstFlow,
+          archive_fallback_used: archiveFallbackUsed,
+          analyzed_urls: Array.from(analyzedUrlsMap.values()),
+          // Dual analysis fields
+          text_extracted_value: textExtractedValue,
+          vision_extracted_value: visionExtractedValue,
+          extraction_confidence_match: extractionConfidenceMatch,
+          value_source: valueSource,
         };
 
         let resolutionId: string | null = null;

@@ -58,7 +58,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
   } = useAccountActivity({
     enabled: isConnected,
     limit: 500,
-    refreshInterval: 30000,
+    refreshInterval: 0, // Disable polling - user can manually refresh
   })
 
   const {
@@ -67,7 +67,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
     summary: feeSummary,
     liveIds: feeLiveIds,
     isLoading: feesLoading,
-  } = useUserFees(isConnected ? walletData?.address : null, { recentLimit: 20 })
+  } = useUserFees(isConnected ? walletData?.address : null, { recentLimit: 20, disableRealtime: true })
 
   const {
     markets: ownerMarkets,
@@ -79,7 +79,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
     isProtocolRecipient,
     hasRevenue,
     isLoading: ownerLoading,
-  } = useOwnerEarnings(isConnected ? walletData?.address : null)
+  } = useOwnerEarnings(isConnected ? walletData?.address : null, { disableRealtime: true })
 
   const {
     markets: createdMarkets,
@@ -182,7 +182,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
       className="w-full min-h-screen"
       style={{ background: '#050505' }}
     >
-      <div className="max-w-[1400px] mx-auto px-6 pt-3">
+      <div className="max-w-[1400px] mx-auto px-6 pt-3 pb-24">
         {/* Hero Section */}
         <AccountHero
           summary={summary}

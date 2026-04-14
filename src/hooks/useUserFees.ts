@@ -72,8 +72,9 @@ function parseFeeDetail(r: any): FeeDetailRow {
 
 let _userFeesChannelCounter = 0
 
-export function useUserFees(walletAddress: string | null, opts?: { recentLimit?: number }): UseUserFeesResult {
+export function useUserFees(walletAddress: string | null, opts?: { recentLimit?: number; disableRealtime?: boolean }): UseUserFeesResult {
   const recentLimit = opts?.recentLimit ?? 20
+  const disableRealtime = opts?.disableRealtime ?? false
   const channelIdRef = useRef(`user_fees_${++_userFeesChannelCounter}_${Date.now()}`)
   const [summary, setSummary] = useState<FeeSummaryRow[]>([])
   const [recentFees, setRecentFees] = useState<FeeDetailRow[]>([])
@@ -148,7 +149,7 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
 
   // Realtime: subscribe to new trading_fees rows for this user
   useEffect(() => {
-    if (!normalizedAddr) return
+    if (!normalizedAddr || disableRealtime) return
 
     const channel = supabase
       .channel(`${channelIdRef.current}:${normalizedAddr}`)
@@ -219,7 +220,7 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [normalizedAddr])
+  }, [normalizedAddr, disableRealtime])
 
   const totals = useMemo<UserFeeTotals>(() => {
     if (summary.length === 0)

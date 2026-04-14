@@ -55,7 +55,8 @@ export interface UseOwnerEarningsResult {
 
 let _ownerEarningsChannelCounter = 0
 
-export function useOwnerEarnings(walletAddress: string | null): UseOwnerEarningsResult {
+export function useOwnerEarnings(walletAddress: string | null, opts?: { disableRealtime?: boolean }): UseOwnerEarningsResult {
+  const disableRealtime = opts?.disableRealtime ?? false
   const channelIdRef = useRef(`owner_earnings_${++_ownerEarningsChannelCounter}_${Date.now()}`)
   const [markets, setMarkets] = useState<OwnerEarningsRow[]>([])
   const [protocolMarkets, setProtocolMarkets] = useState<ProtocolEarningsRow[]>([])
@@ -136,7 +137,7 @@ export function useOwnerEarnings(walletAddress: string | null): UseOwnerEarnings
   normalizedAddrRef.current = normalizedAddr
 
   useEffect(() => {
-    if (!normalizedAddr) return
+    if (!normalizedAddr || disableRealtime) return
 
     const channel = supabase
       .channel(`${channelIdRef.current}:${normalizedAddr}`)
@@ -238,7 +239,7 @@ export function useOwnerEarnings(walletAddress: string | null): UseOwnerEarnings
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [normalizedAddr])
+  }, [normalizedAddr, disableRealtime])
 
   const totals = useMemo<OwnerEarningsTotals>(() => {
     if (markets.length === 0)

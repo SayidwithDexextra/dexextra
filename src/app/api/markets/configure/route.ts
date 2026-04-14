@@ -5,6 +5,7 @@ import {
   OBOrderPlacementFacetABI,
   CoreVaultABI,
   resolveFactoryVault,
+  FeeRegistryABI,
 } from '@/lib/contracts';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
@@ -388,21 +389,47 @@ export async function POST(req: Request) {
         }
       }
 
-      // 4. Configure fees (fire both with pre-allocated nonces, no intermediate waits)
+      // 4. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
       if (needFees) {
-        const defaultProtocolRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-        const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
-          ? feeRecipient : defaultProtocolRecipient;
+        const feeRegistryAddress = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS || '';
+        let takerFeeBps = 7;
+        let makerFeeBps = 3;
+        let protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+        let protocolFeeShareBps = 8000;
+
+        // Read from FeeRegistry if configured
+        if (feeRegistryAddress && ethers.isAddress(feeRegistryAddress)) {
+          try {
+            laneLog('A', 'Read fee registry', 'start', shortAddr(feeRegistryAddress));
+            logS('read_fee_registry', 'start', { feeRegistry: feeRegistryAddress });
+            const feeRegistry = new ethers.Contract(feeRegistryAddress, FeeRegistryABI, provider);
+            const [regTakerBps, regMakerBps, regProtocolRecipient, regProtocolShareBps] = await feeRegistry.getFeeStructure();
+            takerFeeBps = Number(regTakerBps);
+            makerFeeBps = Number(regMakerBps);
+            protocolFeeRecipient = regProtocolRecipient;
+            protocolFeeShareBps = Number(regProtocolShareBps);
+            laneLog('A', 'Read fee registry', 'success', `taker=${takerFeeBps} maker=${makerFeeBps} share=${protocolFeeShareBps}`);
+            logS('read_fee_registry', 'success', { takerFeeBps, makerFeeBps, protocolFeeRecipient: shortAddr(protocolFeeRecipient), protocolFeeShareBps });
+          } catch (e: any) {
+            laneLog('A', 'Read fee registry', 'error', `${e?.message || String(e)} — using defaults`);
+            logS('read_fee_registry', 'error', { error: e?.message || String(e), fallback: 'using defaults' });
+          }
+        }
+
+        // For rollovers, use the existing feeRecipient if provided
+        if (isRollover && feeRecipient && ethers.isAddress(feeRecipient)) {
+          protocolFeeRecipient = feeRecipient;
+        }
         const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
           ? feeRecipient : (creatorWalletAddress || ownerAddress);
 
         if (!configState.fees_configured && protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
           try {
-            laneLog('A', 'Configure fee structure', 'start');
-            logS('configure_fees', 'start', { orderBook });
+            laneLog('A', 'Configure fee structure', 'start', `taker=${takerFeeBps} maker=${makerFeeBps} share=${protocolFeeShareBps}`);
+            logS('configure_fees', 'start', { orderBook, takerFeeBps, makerFeeBps, protocolFeeShareBps });
             const obFee = new ethers.Contract(orderBook,
               ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
-            const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
+            const feeTx = await obFee.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps, await nonceMgr.nextOverrides());
             const sentAt = Date.now();
             laneLog('A', 'Configure fee structure', 'start', `tx sent ${shortTx(feeTx.hash)} +${sentAt - laneAStart}ms`);
             logS('configure_fees_sent', 'success', { tx: feeTx.hash, elapsedMs: sentAt - laneAStart });

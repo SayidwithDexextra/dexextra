@@ -17,6 +17,66 @@ type Engine = 'direct' | 'default' | 'browser';
 const ENGINE_ORDER: Engine[] = ['direct', 'browser'];
 const MIN_CONTENT_LENGTH = 50;
 
+// ---------------------------------------------------------------------------
+// Wayback URL Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a Wayback URL to its "raw" format (id_ suffix removes toolbar).
+ * Example: https://web.archive.org/web/20260412033835/https://example.com
+ *       -> https://web.archive.org/web/20260412033835id_/https://example.com
+ */
+function toRawWaybackUrl(url: string): string {
+  const waybackMatch = url.match(/^(https:\/\/web\.archive\.org\/web\/\d+)(\/)(https?:\/\/.+)$/);
+  if (waybackMatch) {
+    return `${waybackMatch[1]}id_/${waybackMatch[3]}`;
+  }
+  return url;
+}
+
+/**
+ * Extract the original URL from a Wayback URL.
+ */
+function extractOriginalUrl(waybackUrl: string): string | null {
+  const match = waybackUrl.match(/^https:\/\/web\.archive\.org\/web\/\d+(?:id_)?\/(https?:\/\/.+)$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Check if a URL is a Wayback Machine URL.
+ */
+function isWaybackUrl(url: string): boolean {
+  return url.includes('web.archive.org/web/');
+}
+
+/**
+ * Get URLs to try for Jina, with Wayback fallbacks.
+ * For Wayback URLs, tries: raw format -> original URL -> regular format
+ */
+function getUrlsToTry(url: string, options: { fallbackToOriginal?: boolean } = {}): string[] {
+  const urls: string[] = [];
+  
+  if (isWaybackUrl(url)) {
+    // Try raw Wayback URL first (removes the Wayback toolbar)
+    const rawUrl = toRawWaybackUrl(url);
+    if (rawUrl !== url) {
+      urls.push(rawUrl);
+    }
+    urls.push(url);
+    // Fallback to original URL if enabled
+    if (options.fallbackToOriginal !== false) {
+      const originalUrl = extractOriginalUrl(url);
+      if (originalUrl) {
+        urls.push(originalUrl);
+      }
+    }
+  } else {
+    urls.push(url);
+  }
+  
+  return urls;
+}
+
 export interface JinaReaderResult {
   success: boolean;
   title?: string;
@@ -46,10 +106,15 @@ export interface JinaScreenshotResult {
 /**
  * Fetch text content. When `engine` is provided, only that engine is tried
  * (single-shot). When omitted, falls back through ENGINE_ORDER automatically.
+ * 
+ * For Wayback URLs, automatically tries:
+ * 1. Raw Wayback URL (removes toolbar)
+ * 2. Regular Wayback URL
+ * 3. Original URL (if fallbackToOriginal is true)
  */
 export async function fetchWithJina(
   url: string,
-  options: { timeoutMs?: number; format?: 'text' | 'markdown'; engine?: Engine } = {},
+  options: { timeoutMs?: number; format?: 'text' | 'markdown'; engine?: Engine; fallbackToOriginal?: boolean } = {},
 ): Promise<JinaReaderResult> {
   const apiKey = process.env.JINA_API_KEY || '';
   const timeoutMs = options.timeoutMs || 30_000;
@@ -57,30 +122,36 @@ export async function fetchWithJina(
   const startTime = Date.now();
 
   const engines = options.engine ? [options.engine] : ENGINE_ORDER;
+  const urlsToTry = getUrlsToTry(url, { fallbackToOriginal: options.fallbackToOriginal });
   let lastError = '';
 
-  for (const engine of engines) {
-    const isRetry = engine !== engines[0];
-    if (isRetry) {
-      console.log(`[JinaReader] ⟳ Retrying ${url} with engine=${engine}`);
-    }
-
-    try {
-      const result = await _fetchText(url, { apiKey, timeoutMs, format, engine });
-
-      if (result.success && result.content && result.content.length >= MIN_CONTENT_LENGTH) {
-        result.durationMs = Date.now() - startTime;
-        return result;
+  for (const targetUrl of urlsToTry) {
+    for (const engine of engines) {
+      const isRetry = engine !== engines[0] || targetUrl !== urlsToTry[0];
+      if (isRetry) {
+        console.log(`[JinaReader] ⟳ Trying ${targetUrl} with engine=${engine}`);
       }
 
-      lastError = result.error
-        || `Engine "${engine}" returned ${result.content?.length ?? 0} chars (below ${MIN_CONTENT_LENGTH} threshold)`;
-      console.log(`[JinaReader] ✗ ${lastError}`);
-    } catch (err: any) {
-      lastError = err?.name === 'AbortError'
-        ? `Jina timed out after ${timeoutMs}ms (engine=${engine})`
-        : `Jina fetch failed (engine=${engine}): ${err?.message || err}`;
-      console.log(`[JinaReader] ✗ ${lastError}`);
+      try {
+        const result = await _fetchText(targetUrl, { apiKey, timeoutMs, format, engine });
+
+        if (result.success && result.content && result.content.length >= MIN_CONTENT_LENGTH) {
+          result.durationMs = Date.now() - startTime;
+          if (targetUrl !== url) {
+            console.log(`[JinaReader] ✓ Text fetch succeeded using fallback URL: ${targetUrl}`);
+          }
+          return result;
+        }
+
+        lastError = result.error
+          || `Engine "${engine}" returned ${result.content?.length ?? 0} chars (below ${MIN_CONTENT_LENGTH} threshold)`;
+        console.log(`[JinaReader] ✗ ${lastError}`);
+      } catch (err: any) {
+        lastError = err?.name === 'AbortError'
+          ? `Jina timed out after ${timeoutMs}ms (engine=${engine})`
+          : `Jina fetch failed (engine=${engine}): ${err?.message || err}`;
+        console.log(`[JinaReader] ✗ ${lastError}`);
+      }
     }
   }
 
@@ -233,39 +304,50 @@ const SCREENSHOT_ENGINES: Engine[] = ['direct', 'browser'];
 /**
  * Capture a viewport screenshot. When `engine` is provided, only that engine
  * is tried (single-shot). When omitted, falls back through engines automatically.
+ * 
+ * For Wayback URLs, automatically tries:
+ * 1. Raw Wayback URL (removes toolbar)
+ * 2. Regular Wayback URL
+ * 3. Original URL (if fallbackToOriginal is true)
  */
 export async function screenshotWithJina(
   url: string,
-  options: { timeoutMs?: number; engine?: Engine } = {},
+  options: { timeoutMs?: number; engine?: Engine; fallbackToOriginal?: boolean } = {},
 ): Promise<JinaScreenshotResult> {
   const apiKey = process.env.JINA_API_KEY || '';
   const timeoutMs = options.timeoutMs || 45_000;
   const startTime = Date.now();
 
   const engines = options.engine ? [options.engine] : SCREENSHOT_ENGINES;
+  const urlsToTry = getUrlsToTry(url, { fallbackToOriginal: options.fallbackToOriginal });
   let lastError = '';
 
-  for (let i = 0; i < engines.length; i++) {
-    const engine = engines[i];
-    if (i > 0) {
-      console.log(`[JinaCapture] ⟳ Falling back to screenshot with engine=${engine} for ${url}`);
-    }
-
-    try {
-      const result = await _fetchScreenshot(url, { apiKey, timeoutMs, engine, format: 'screenshot' });
-
-      if (result.success && result.base64 && result.base64.length > 0) {
-        result.captureTimeMs = Date.now() - startTime;
-        return result;
+  for (const targetUrl of urlsToTry) {
+    for (let i = 0; i < engines.length; i++) {
+      const engine = engines[i];
+      if (i > 0 || targetUrl !== urlsToTry[0]) {
+        console.log(`[JinaCapture] ⟳ Trying screenshot with engine=${engine} for ${targetUrl}`);
       }
 
-      lastError = result.error || `screenshot via engine="${engine}" returned no image data`;
-      console.log(`[JinaCapture] ✗ ${lastError}`);
-    } catch (err: any) {
-      lastError = err?.name === 'AbortError'
-        ? `Jina screenshot timed out after ${timeoutMs}ms (engine=${engine})`
-        : `Jina screenshot failed (engine=${engine}): ${err?.message || err}`;
-      console.log(`[JinaCapture] ✗ ${lastError}`);
+      try {
+        const result = await _fetchScreenshot(targetUrl, { apiKey, timeoutMs, engine, format: 'screenshot' });
+
+        if (result.success && result.base64 && result.base64.length > 0) {
+          result.captureTimeMs = Date.now() - startTime;
+          if (targetUrl !== url) {
+            console.log(`[JinaCapture] ✓ Screenshot succeeded using fallback URL: ${targetUrl}`);
+          }
+          return result;
+        }
+
+        lastError = result.error || `screenshot via engine="${engine}" returned no image data`;
+        console.log(`[JinaCapture] ✗ ${lastError}`);
+      } catch (err: any) {
+        lastError = err?.name === 'AbortError'
+          ? `Jina screenshot timed out after ${timeoutMs}ms (engine=${engine})`
+          : `Jina screenshot failed (engine=${engine}): ${err?.message || err}`;
+        console.log(`[JinaCapture] ✗ ${lastError}`);
+      }
     }
   }
 

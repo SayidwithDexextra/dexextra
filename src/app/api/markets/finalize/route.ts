@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
-import { archivePage } from '@/lib/archivePage';
+import { archiveUrl, type ArchiveResult, type ProviderResult } from '@/lib/archive';
 import { getPusherServer } from '@/lib/pusher-server';
 import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
@@ -52,13 +52,19 @@ async function checkpointFinalize(
 
 async function archiveWithTimeout(
   url: string,
-  opts: Parameters<typeof archivePage>[1],
-  timeoutMs = 4500
-) {
+  opts: {
+    userAgent?: string;
+  },
+  timeoutMs = 8000
+): Promise<ArchiveResult> {
   return await Promise.race([
-    archivePage(url, opts),
-    new Promise<Awaited<ReturnType<typeof archivePage>>>((resolve) =>
-      setTimeout(() => resolve({ success: false, error: 'timeout' }), timeoutMs)
+    archiveUrl(url, {
+      providerTimeoutMs: timeoutMs - 500,
+      totalTimeoutMs: timeoutMs,
+      userAgent: opts.userAgent,
+    }),
+    new Promise<ArchiveResult>((resolve) =>
+      setTimeout(() => resolve({ success: false, archives: [], error: 'timeout' }), timeoutMs)
     ),
   ]);
 }
@@ -158,33 +164,68 @@ export async function POST(req: Request) {
 
     logS('save_market', 'start');
 
-    // Wayback archive
+    // Multi-archive (belt and suspenders: Internet Archive + Archive.today)
     let archivedWaybackUrl: string | null = null;
     let archivedWaybackTs: string | null = null;
+    let archiveSnapshots: Array<{
+      provider: 'internet_archive' | 'archive_today';
+      url: string;
+      timestamp?: string;
+      success: boolean;
+    }> = [];
+    let primaryArchiveUrl: string | null = null;
+    let primaryArchiveProvider: 'internet_archive' | 'archive_today' | null = null;
+
     try {
-      const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
-      const secret = process.env.WAYBACK_API_SECRET as string | undefined;
-      const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
       const archiveRes = await archiveWithTimeout(metricUrl, {
-        captureOutlinks: false,
-        captureScreenshot: true,
-        skipIfRecentlyArchived: true,
-        headers: {
-          ...(authHeader ? { Authorization: authHeader } : {}),
-          'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
-        },
-      }, 4500);
-      if (archiveRes?.success && archiveRes.waybackUrl) {
-        archivedWaybackUrl = String(archiveRes.waybackUrl);
-        archivedWaybackTs = archiveRes.timestamp ? String(archiveRes.timestamp) : null;
+        userAgent: `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
+      }, 8000);
+
+      if (archiveRes?.success) {
+        primaryArchiveUrl = archiveRes.primaryUrl || null;
+        primaryArchiveProvider = archiveRes.primaryProvider || null;
+        
+        // Convert to storage format
+        archiveSnapshots = archiveRes.archives
+          .filter((a: ProviderResult) => a.success && a.url)
+          .map((a: ProviderResult) => ({
+            provider: a.provider,
+            url: a.url!,
+            timestamp: a.timestamp,
+            success: true,
+          }));
+
+        // For backward compatibility, also set wayback_url if IA succeeded
+        const iaResult = archiveRes.archives.find(
+          (a: ProviderResult) => a.provider === 'internet_archive' && a.success
+        );
+        if (iaResult?.url) {
+          archivedWaybackUrl = iaResult.url;
+          archivedWaybackTs = iaResult.timestamp || null;
+        } else if (primaryArchiveUrl) {
+          // Fallback to primary if IA failed
+          archivedWaybackUrl = primaryArchiveUrl;
+        }
+
+        logS('archive_multi', 'success', {
+          providers: archiveSnapshots.map((s) => s.provider),
+          primaryProvider: primaryArchiveProvider,
+          timeToFirstMs: archiveRes.timeToFirstSuccessMs,
+        });
+      } else {
+        logS('archive_multi', 'error', { error: archiveRes?.error || 'All providers failed' });
       }
     } catch (e: any) {
-      console.warn('[finalize] Wayback archive error', e?.message || String(e));
+      console.warn('[finalize] Multi-archive error', e?.message || String(e));
+      logS('archive_multi', 'error', { error: e?.message || String(e) });
     }
 
     await checkpointFinalize(supabase, draftId, {
       wayback_url: archivedWaybackUrl,
       wayback_ts: archivedWaybackTs,
+      archive_snapshots: archiveSnapshots,
+      primary_archive_url: primaryArchiveUrl,
+      primary_archive_provider: primaryArchiveProvider,
     });
 
     const derivedName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
@@ -233,6 +274,13 @@ export async function POST(req: Request) {
         wayback_snapshot: archivedWaybackUrl
           ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl }
           : null,
+        archive_snapshots: archiveSnapshots.length > 0 ? {
+          snapshots: archiveSnapshots,
+          primary_url: primaryArchiveUrl,
+          primary_provider: primaryArchiveProvider,
+          source_url: metricUrl,
+          archived_at: new Date().toISOString(),
+        } : null,
         ...(isRollover ? {
           rollover_lineage: {
             parent_market_id: parentMarketId,

@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 import path from 'path';
 import { readFileSync } from 'node:fs';
-import { archivePage } from '@/lib/archivePage';
+import { archiveUrl } from '@/lib/archive';
 import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
 import {
@@ -25,15 +25,12 @@ function getSupabase() {
 
 async function archiveWithTimeout(
   url: string,
-  opts: Parameters<typeof archivePage>[1],
   timeoutMs = 4500
 ) {
-  return await Promise.race([
-    archivePage(url, opts),
-    new Promise<Awaited<ReturnType<typeof archivePage>>>((resolve) =>
-      setTimeout(() => resolve({ success: false, error: 'timeout' }), timeoutMs)
-    ),
-  ]);
+  return await archiveUrl(url, {
+    totalTimeoutMs: timeoutMs,
+    userAgent: 'Dexextra/1.0',
+  });
 }
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
@@ -274,26 +271,19 @@ export async function POST(req: Request) {
     try {
       const metricUrl: string | null = (initialOrder && (initialOrder as any).metricUrl) ? String((initialOrder as any).metricUrl) : null;
       if (metricUrl) {
-        const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
-        const secret = process.env.WAYBACK_API_SECRET as string | undefined;
-        const appUrl = (process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)) as string | undefined;
-        const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
-        const res = await archiveWithTimeout(metricUrl, {
-          captureOutlinks: false,
-          captureScreenshot: true,
-          skipIfRecentlyArchived: true,
-          headers: {
-            ...(authHeader ? { Authorization: authHeader } : {}),
-            ...(appUrl ? { 'User-Agent': `Dexextra/1.0 (+${appUrl})` } : { 'User-Agent': 'Dexextra/1.0' }),
-          },
-          debug: true,
-        }, 4500);
-        if (res?.success && res.waybackUrl) {
-          archivedWaybackUrl = String(res.waybackUrl);
-          archivedWaybackTs = res.timestamp ? String(res.timestamp) : null;
-          logStep('wayback_snapshot', 'success', { waybackUrl: archivedWaybackUrl, timestamp: archivedWaybackTs });
+        const res = await archiveWithTimeout(metricUrl, 4500);
+        if (res?.success && res.primaryUrl) {
+          archivedWaybackUrl = String(res.primaryUrl);
+          // Try to get timestamp from Internet Archive if available
+          const iaResult = res.archives?.find(a => a.provider === 'internet_archive' && a.success);
+          archivedWaybackTs = iaResult?.timestamp ? String(iaResult.timestamp) : null;
+          logStep('multi_archive', 'success', { 
+            primaryUrl: archivedWaybackUrl, 
+            timestamp: archivedWaybackTs,
+            providers: res.archives?.filter(a => a.success).map(a => a.provider),
+          });
         } else {
-          logStep('wayback_snapshot', 'error', { reason: res?.error || 'unknown', metricUrl });
+          logStep('multi_archive', 'error', { reason: res?.error || 'unknown', metricUrl });
         }
       } else {
         logStep('wayback_snapshot', 'error', { reason: 'missing_metric_url' });

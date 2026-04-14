@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import path from 'path';
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
-import { archivePage } from '@/lib/archivePage';
+import { archiveUrl } from '@/lib/archive';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -14,6 +14,7 @@ import {
   OBSettlementFacetABI,
   CoreVaultABI,
   resolveFactoryVault,
+  FeeRegistryABI,
 } from '@/lib/contracts';
 import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
@@ -179,15 +180,12 @@ function getSupabase() {
 
 async function archiveWithTimeout(
   url: string,
-  opts: Parameters<typeof archivePage>[1],
   timeoutMs = 4500
 ) {
-  return await Promise.race([
-    archivePage(url, opts),
-    new Promise<Awaited<ReturnType<typeof archivePage>>>((resolve) =>
-      setTimeout(() => resolve({ success: false, error: 'timeout' }), timeoutMs)
-    ),
-  ]);
+  return await archiveUrl(url, {
+    totalTimeoutMs: timeoutMs,
+    userAgent: `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
+  });
 }
 
 function selectorsFromAbi(abi: any[]): string[] {
@@ -1281,18 +1279,41 @@ export async function POST(req: Request) {
       }
     }
 
-    // 3. Configure fees (fire with pre-allocated nonces, no intermediate waits)
-    const defaultProtocolRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-    const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
-      ? feeRecipient : defaultProtocolRecipient;
+    // 3. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
+    const feeRegistryAddress = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS || '';
+    let takerFeeBps = 7;
+    let makerFeeBps = 3;
+    let protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+    let protocolFeeShareBps = 8000;
+
+    // Read from FeeRegistry if configured
+    if (feeRegistryAddress && ethers.isAddress(feeRegistryAddress)) {
+      try {
+        logS('read_fee_registry', 'start', { feeRegistry: feeRegistryAddress });
+        const feeRegistry = new ethers.Contract(feeRegistryAddress, FeeRegistryABI, provider);
+        const [regTakerBps, regMakerBps, regProtocolRecipient, regProtocolShareBps] = await feeRegistry.getFeeStructure();
+        takerFeeBps = Number(regTakerBps);
+        makerFeeBps = Number(regMakerBps);
+        protocolFeeRecipient = regProtocolRecipient;
+        protocolFeeShareBps = Number(regProtocolShareBps);
+        logS('read_fee_registry', 'success', { takerFeeBps, makerFeeBps, protocolFeeRecipient: shortAddr(protocolFeeRecipient), protocolFeeShareBps });
+      } catch (e: any) {
+        logS('read_fee_registry', 'error', { error: e?.message || String(e), fallback: 'using defaults' });
+      }
+    }
+
+    // For rollovers, use the existing feeRecipient if provided
+    if (isRollover && feeRecipient && ethers.isAddress(feeRecipient)) {
+      protocolFeeRecipient = feeRecipient;
+    }
     const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
       ? feeRecipient : (creatorWalletAddress || ownerAddress);
 
     if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
       try {
-        logS('configure_fees', 'start', { orderBook, isRollover });
+        logS('configure_fees', 'start', { orderBook, isRollover, takerFeeBps, makerFeeBps, protocolFeeShareBps });
         const obFee = new ethers.Contract(orderBook!, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
-        const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
+        const feeTx = await obFee.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps, await nonceMgr.nextOverrides());
         logS('configure_fees_sent', 'success', { tx: feeTx.hash });
         pending.push({ stepSent: 'configure_fees_sent', stepMined: 'configure_fees_mined', tx: feeTx });
       } catch (e: any) {
@@ -1496,26 +1517,17 @@ export async function POST(req: Request) {
       if (supabase) {
         const network = await provider.getNetwork();
         try {
-          const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
-          const secret = process.env.WAYBACK_API_SECRET as string | undefined;
-          const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
-          const archiveRes = await archiveWithTimeout(metricUrl, {
-            captureOutlinks: false,
-            captureScreenshot: true,
-            skipIfRecentlyArchived: true,
-            headers: {
-              ...(authHeader ? { Authorization: authHeader } : {}),
-              'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
-            },
-          }, 4500);
-          if (archiveRes?.success && archiveRes.waybackUrl) {
-            archivedWaybackUrl = String(archiveRes.waybackUrl);
-            archivedWaybackTs = archiveRes.timestamp ? String(archiveRes.timestamp) : null;
+          const archiveRes = await archiveWithTimeout(metricUrl, 4500);
+          if (archiveRes?.success && archiveRes.primaryUrl) {
+            archivedWaybackUrl = String(archiveRes.primaryUrl);
+            // Try to get timestamp from Internet Archive if available
+            const iaResult = archiveRes.archives?.find(a => a.provider === 'internet_archive' && a.success);
+            archivedWaybackTs = iaResult?.timestamp ? String(iaResult.timestamp) : null;
           } else {
-            try { console.warn('[markets/create] Wayback archive failed', archiveRes?.error); } catch {}
+            try { console.warn('[markets/create] Multi-archive failed', archiveRes?.error); } catch {}
           }
         } catch (e: any) {
-          try { console.warn('[markets/create] Wayback archive error', e?.message || String(e)); } catch {}
+          try { console.warn('[markets/create] Multi-archive error', e?.message || String(e)); } catch {}
         }
         // Use derived display name from naming utility, or fall back to simple format
         const fallbackName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;

@@ -12,6 +12,7 @@ import {
   CoreVaultABI,
   MarketLifecycleFacetABI,
   resolveFactoryVault,
+  FeeRegistryABI,
 } from '@/lib/contracts';
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
@@ -636,14 +637,36 @@ export async function deployMarket(
       }
     }
 
-    // 4. Configure fees (fire both with pre-allocated nonces, no intermediate waits)
-    const defaultProtocolRecipient =
-      process.env.PROTOCOL_FEE_RECIPIENT ||
-      (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-    const protocolFeeRecipient =
-      isRollover && feeRecipient && ethers.isAddress(feeRecipient)
-        ? feeRecipient
-        : defaultProtocolRecipient;
+    // 4. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
+    const feeRegistryAddress = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS || '';
+    let takerFeeBps = 7;
+    let makerFeeBps = 3;
+    let protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+    let protocolFeeShareBps = 8000;
+
+    // Read from FeeRegistry if configured
+    if (feeRegistryAddress && ethers.isAddress(feeRegistryAddress)) {
+      try {
+        laneLog('A', 'Read fee registry', 'start', shortAddr(feeRegistryAddress));
+        log('read_fee_registry', 'start', { feeRegistry: feeRegistryAddress });
+        const feeRegistry = new ethers.Contract(feeRegistryAddress, FeeRegistryABI, provider);
+        const [regTakerBps, regMakerBps, regProtocolRecipient, regProtocolShareBps] = await feeRegistry.getFeeStructure();
+        takerFeeBps = Number(regTakerBps);
+        makerFeeBps = Number(regMakerBps);
+        protocolFeeRecipient = regProtocolRecipient;
+        protocolFeeShareBps = Number(regProtocolShareBps);
+        laneLog('A', 'Read fee registry', 'success', `taker=${takerFeeBps} maker=${makerFeeBps} share=${protocolFeeShareBps}`);
+        log('read_fee_registry', 'success', { takerFeeBps, makerFeeBps, protocolFeeRecipient: shortAddr(protocolFeeRecipient), protocolFeeShareBps });
+      } catch (e: any) {
+        laneLog('A', 'Read fee registry', 'error', `${e?.message || String(e)} — using defaults`);
+        log('read_fee_registry', 'error', { error: e?.message || String(e), fallback: 'using defaults' });
+      }
+    }
+
+    // For rollovers, use the existing feeRecipient if provided
+    if (isRollover && feeRecipient && ethers.isAddress(feeRecipient)) {
+      protocolFeeRecipient = feeRecipient;
+    }
     const creatorAddr =
       isRollover && feeRecipient && ethers.isAddress(feeRecipient)
         ? feeRecipient
@@ -651,9 +674,9 @@ export async function deployMarket(
 
     if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
       try {
-        laneLog('A', 'Configure fee structure', 'start');
+        laneLog('A', 'Configure fee structure', 'start', `taker=${takerFeeBps} maker=${makerFeeBps} share=${protocolFeeShareBps}`);
         const obFee = new ethers.Contract(orderBook!, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
-        const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
+        const feeTx = await obFee.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps, await nonceMgr.nextOverrides());
         laneLog('A', 'Configure fee structure', 'start', `tx sent ${shortTx(feeTx.hash)}`);
         pending.push({ label: 'Configure fee structure', logKey: 'configure_fees', tx: feeTx });
       } catch (e: any) {

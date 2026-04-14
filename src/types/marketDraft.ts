@@ -91,10 +91,24 @@ export interface PipelineConfigureState {
   completed_at?: string;
 }
 
+export interface ArchiveSnapshot {
+  provider: 'internet_archive' | 'archive_today';
+  url: string;
+  timestamp?: string;
+  success: boolean;
+}
+
 export interface PipelineFinalizeState {
   market_uuid?: string;
   qstash_ids?: Record<string, string | undefined>;
+  /** @deprecated Use archive_snapshots instead */
   wayback_url?: string;
+  /** All archive snapshots from multi-provider archiving */
+  archive_snapshots?: ArchiveSnapshot[];
+  /** Primary archive URL (first successful) */
+  primary_archive_url?: string;
+  /** Which provider returned the primary URL */
+  primary_archive_provider?: 'internet_archive' | 'archive_today';
   completed_at?: string;
 }
 

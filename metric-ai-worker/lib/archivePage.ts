@@ -23,6 +23,40 @@ function buildWaybackUrl(ts: string, url: string): string {
   return `https://web.archive.org/web/${ts}/${url}`;
 }
 
+/**
+ * Check if a Wayback timestamp is fresh (within maxAgeMs of now).
+ * Wayback timestamps are in format: YYYYMMDDHHmmss (UTC)
+ */
+function isTimestampFresh(timestamp: string | undefined, maxAgeMs: number = 2 * 60 * 1000): boolean {
+  if (!timestamp || timestamp.length < 14) return false;
+  
+  try {
+    const year = parseInt(timestamp.slice(0, 4));
+    const month = parseInt(timestamp.slice(4, 6)) - 1; // JS months are 0-indexed
+    const day = parseInt(timestamp.slice(6, 8));
+    const hour = parseInt(timestamp.slice(8, 10));
+    const minute = parseInt(timestamp.slice(10, 12));
+    const second = parseInt(timestamp.slice(12, 14));
+    
+    const archiveDate = new Date(Date.UTC(year, month, day, hour, minute, second));
+    const ageMs = Date.now() - archiveDate.getTime();
+    
+    console.log(`[archivePage] Timestamp ${timestamp} is ${Math.round(ageMs / 1000)}s old (max: ${maxAgeMs / 1000}s)`);
+    
+    return ageMs <= maxAgeMs;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract timestamp from a Wayback URL.
+ */
+function extractTimestamp(waybackUrl: string): string | undefined {
+  const match = waybackUrl.match(/web\.archive\.org\/web\/(\d{14})/);
+  return match?.[1];
+}
+
 function isWaybackUrl(url: string | undefined | null): boolean {
   return typeof url === 'string' && url.includes('web.archive.org/web/');
 }
@@ -57,26 +91,39 @@ async function pollStatus(
   deadlineMs: number,
 ): Promise<{ waybackUrl?: string; timestamp?: string } | null> {
   const pollEvery = 2_000;
+  let pollCount = 0;
   while (Date.now() < deadlineMs) {
     await sleep(pollEvery);
     if (Date.now() >= deadlineMs) break;
+    pollCount++;
     try {
       const resp = await fetch(SAVE_STATUS(jobId), {
         method: 'GET',
         headers: { Accept: 'application/json', ...headers },
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) {
+        console.log(`[archivePage] Poll ${pollCount}: status ${resp.status}`);
+        continue;
+      }
       const data: any = await resp.json().catch(() => ({}));
 
       const result = extractArchiveUrl(data, originalUrl);
-      if (result.waybackUrl) return result;
+      if (result.waybackUrl) {
+        console.log(`[archivePage] Poll ${pollCount}: SUCCESS → ${result.waybackUrl}`);
+        return result;
+      }
 
       const status = String(data?.status || data?.state || '').toLowerCase();
-      if (['error', 'failed'].includes(status)) return null;
-    } catch {
-      /* transient */
+      console.log(`[archivePage] Poll ${pollCount}: status="${status}"`);
+      if (['error', 'failed'].includes(status)) {
+        console.log(`[archivePage] Poll ${pollCount}: FAILED - ${data?.message || 'unknown'}`);
+        return null;
+      }
+    } catch (err: any) {
+      console.log(`[archivePage] Poll ${pollCount}: error - ${err?.message || 'unknown'}`);
     }
   }
+  console.log(`[archivePage] Polling timed out after ${pollCount} polls`);
   return null;
 }
 
@@ -109,12 +156,17 @@ async function findExistingSnapshot(
  * Archive a URL via Internet Archive's SavePageNow API.
  * Retries on transient errors (rate limits, host-crawling-paused).
  * Static files (images, PNGs) typically complete in under 10s.
+ * 
+ * @param options.timeoutMs - Overall timeout in milliseconds
+ * @param options.maxAgeMs - Maximum age of an acceptable existing archive (default: 2 minutes)
+ *                          Set to 0 to accept any existing archive, or a high value to force new.
  */
 export async function archivePage(
   urlToArchive: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; maxAgeMs?: number } = {},
 ): Promise<ArchiveResult> {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const maxAgeMs = options.maxAgeMs ?? 2 * 60 * 1000; // Default: 2 minutes
   const deadline = Date.now() + timeoutMs;
 
   let parsed: URL;
@@ -142,9 +194,13 @@ export async function archivePage(
 
   const maxAttempts = 3;
   let lastError = '';
+  
+  const hasAuth = !!authHeaders['Authorization'];
+  console.log(`[archivePage] Starting archive for ${urlToArchive} (timeout=${timeoutMs}ms, auth=${hasAuth})`);
 
   for (let attempt = 1; attempt <= maxAttempts && Date.now() < deadline; attempt++) {
     try {
+      console.log(`[archivePage] Attempt ${attempt}/${maxAttempts} - POST to ${SAVE_ENDPOINT}`);
       const resp = await fetch(SAVE_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -154,6 +210,8 @@ export async function archivePage(
         },
         body: form.toString(),
       });
+
+      console.log(`[archivePage] Response: ${resp.status} ${resp.statusText}`);
 
       if (!resp.ok) {
         lastError = `HTTP ${resp.status}: ${resp.statusText}`;
@@ -218,6 +276,8 @@ export async function archivePage(
       }
 
       if (!waybackUrl && jobId && Date.now() < deadline) {
+        const remainingMs = deadline - Date.now();
+        console.log(`[archivePage] Got job_id=${jobId}, polling for ${remainingMs}ms...`);
         const polled = await pollStatus(jobId, parsed.toString(), authHeaders, deadline);
         if (polled?.waybackUrl) {
           waybackUrl = polled.waybackUrl;
@@ -225,7 +285,17 @@ export async function archivePage(
         }
       }
 
-      if (waybackUrl) return { success: true, waybackUrl, timestamp };
+      if (waybackUrl) {
+        // Validate freshness - reject stale archives
+        const ts = timestamp || extractTimestamp(waybackUrl);
+        if (maxAgeMs > 0 && !isTimestampFresh(ts, maxAgeMs)) {
+          console.warn(`[archivePage] Rejecting stale archive: ${waybackUrl} (timestamp: ${ts})`);
+          lastError = `Archive returned is stale (older than ${maxAgeMs / 1000}s)`;
+          // Don't return - continue to try again or fail
+        } else {
+          return { success: true, waybackUrl, timestamp: ts };
+        }
+      }
     } catch (err: any) {
       lastError = err?.message || 'Network error';
       console.warn(`[archivePage] Network error (${attempt}/${maxAttempts}): ${lastError}`);
@@ -236,10 +306,17 @@ export async function archivePage(
     }
   }
 
-  // Fallback: check CDX for existing snapshot (more reliable than /wayback/available)
+  // Fallback: check CDX for existing snapshot - but validate freshness
   if (Date.now() < deadline) {
     const existing = await findExistingSnapshot(parsed.toString(), authHeaders);
     if (existing) {
+      if (maxAgeMs > 0 && !isTimestampFresh(existing.timestamp, maxAgeMs)) {
+        console.warn(`[archivePage] CDX fallback rejected - stale: ${existing.waybackUrl}`);
+        return { 
+          success: false, 
+          error: `No fresh archive available. Latest is from ${existing.timestamp} (too old, max age: ${maxAgeMs / 1000}s)` 
+        };
+      }
       return { success: true, waybackUrl: existing.waybackUrl, timestamp: existing.timestamp };
     }
   }

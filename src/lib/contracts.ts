@@ -277,6 +277,28 @@ export const OBAdminFacetABI = [
   "function updateMaxSlippage(uint256 _maxSlippageBps) external"
 ];
 
+// FeeRegistry - centralized fee configuration for all markets
+export const FeeRegistryABI = [
+  // View functions
+  "function getFeeStructure() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps)",
+  "function getAllFeeParameters() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps, uint256 legacyTradingFeeBps)",
+  "function takerFeeBps() external view returns (uint256)",
+  "function makerFeeBps() external view returns (uint256)",
+  "function protocolFeeRecipient() external view returns (address)",
+  "function protocolFeeShareBps() external view returns (uint256)",
+  "function legacyTradingFeeBps() external view returns (uint256)",
+  "function admin() external view returns (address)",
+  // Admin functions
+  "function updateFeeStructure(uint256 _takerFeeBps, uint256 _makerFeeBps, address _protocolFeeRecipient, uint256 _protocolFeeShareBps) external",
+  "function updateProtocolFeeRecipient(address _protocolFeeRecipient) external",
+  "function updateLegacyFee(uint256 _legacyTradingFeeBps) external",
+  "function updateAdmin(address newAdmin) external",
+  // Events
+  "event FeeStructureUpdated(uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps)",
+  "event LegacyFeeUpdated(uint256 legacyTradingFeeBps)",
+  "event AdminUpdated(address indexed oldAdmin, address indexed newAdmin)"
+];
+
 // Liquidation facet - operational controls and entrypoint
 export const OBLiquidationFacetABI = [
   "function setConfigLiquidationScanOnTrade(bool enable) external",

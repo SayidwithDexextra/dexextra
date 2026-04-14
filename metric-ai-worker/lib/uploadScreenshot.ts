@@ -52,9 +52,11 @@ export async function uploadScreenshot(
   try {
     const supabase = getSupabaseClient();
     
-    // Generate storage path: {jobId}/{urlHash}.png
+    // Generate storage path: {jobId}/{urlHash}-{timestamp}.png
+    // Include timestamp to ensure each screenshot is unique (no stale data)
     const urlHash = hashUrl(sourceUrl);
-    const storagePath = `${jobId}/${urlHash}.png`;
+    const timestamp = Date.now();
+    const storagePath = `${jobId}/${urlHash}-${timestamp}.png`;
     
     // Convert base64 to buffer
     const buffer = Buffer.from(base64Data, 'base64');
@@ -64,8 +66,8 @@ export async function uploadScreenshot(
       .from(BUCKET_NAME)
       .upload(storagePath, buffer, {
         contentType: 'image/png',
-        cacheControl: '3600',
-        upsert: true, // Overwrite if exists
+        cacheControl: '0',    // No caching - always serve fresh
+        upsert: false,        // Don't overwrite - each screenshot is unique
       });
     
     if (error) {

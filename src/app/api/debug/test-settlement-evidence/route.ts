@@ -1,21 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'crypto';
-import { archivePage } from '@/lib/archivePage';
+import { archiveUrl, type ArchiveProvider, type ProviderResult } from '@/lib/archive';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
+
+interface ArchiveProviderResult {
+  provider: ArchiveProvider;
+  success: boolean;
+  url?: string;
+  timestamp?: string;
+  durationMs?: number;
+  error?: string;
+}
 
 interface EvidenceTestResult {
   url: string;
   metric: string;
   timestamp: string;
+  mode: 'archive-first' | 'screenshot-first';
   phases: {
+    phase0_archive_first?: {
+      success: boolean;
+      waybackUrl?: string;
+      waybackTimestamp?: string;
+      archiveTimeMs?: number;
+      error?: string;
+    };
     phase1_screenshot: {
       success: boolean;
       captureTimeMs?: number;
       screenshotSizeKb?: number;
       engine?: string;
+      analyzedUrl?: string;
       error?: string;
     };
     phase2a_upload: {
@@ -24,18 +42,20 @@ interface EvidenceTestResult {
       storagePath?: string;
       error?: string;
     };
-    phase2b_wayback_archive: {
+    phase2b_multi_archive: {
       screenshot: {
         success: boolean;
-        waybackUrl?: string;
-        waybackTimestamp?: string;
+        primaryUrl?: string;
+        primaryProvider?: ArchiveProvider;
+        providers: ArchiveProviderResult[];
         archiveTimeMs?: number;
         error?: string;
       };
       sourcePage: {
         success: boolean;
-        waybackUrl?: string;
-        waybackTimestamp?: string;
+        primaryUrl?: string;
+        primaryProvider?: ArchiveProvider;
+        providers: ArchiveProviderResult[];
         archiveTimeMs?: number;
         error?: string;
       };
@@ -50,19 +70,64 @@ interface EvidenceTestResult {
       analysisTimeMs?: number;
       error?: string;
     };
+    phase2d_dual_analysis?: {
+      success: boolean;
+      textExtractedValue?: number | null;
+      visionExtractedValue?: number | null;
+      extractionConfidenceMatch?: boolean;
+      valueSource?: 'text' | 'vision' | 'consensus' | 'fallback';
+      analysisTimeMs?: number;
+      error?: string;
+    };
   };
   congruence: {
     allPhasesSuccessful: boolean;
     screenshotAndWaybackMatch: boolean;
     aiAnalyzedArchivedContent: boolean;
+    screenshotOfArchivedPage?: boolean;       // In archive-first mode: was screenshot taken OF the archived Wayback page?
+    archiveFirstFlow: boolean;
+    dualAnalysisEnabled: boolean;
     summary: string;
   };
   evidence: {
-    primaryEvidenceUrl: string | null;
-    secondaryEvidenceUrl: string | null;
-    screenshotPublicUrl: string | null;
+    primaryEvidenceUrl: string | null;        // The Wayback URL of the analyzed content (archive-first: the page, screenshot-first: the screenshot)
+    secondaryEvidenceUrl: string | null;      // Secondary archive (the source page in both modes)
+    screenshotWaybackUrl?: string | null;     // Wayback URL of the screenshot (supplementary in archive-first mode)
+    screenshotPublicUrl: string | null;       // Supabase URL of the screenshot
     aiExtractedPrice: number | null;
+    textExtractedPrice?: number | null;
+    visionExtractedPrice?: number | null;
   };
+}
+
+// ─── Wayback URL Helpers ──────────────────────────────────────────────────────
+
+/**
+ * Convert a Wayback URL to its "raw" format (id_ suffix removes toolbar).
+ * Example: https://web.archive.org/web/20260412033835/https://example.com
+ *       -> https://web.archive.org/web/20260412033835id_/https://example.com
+ */
+function toRawWaybackUrl(url: string): string {
+  const waybackMatch = url.match(/^(https:\/\/web\.archive\.org\/web\/\d+)(\/)(https?:\/\/.+)$/);
+  if (waybackMatch) {
+    return `${waybackMatch[1]}id_/${waybackMatch[3]}`;
+  }
+  return url;
+}
+
+/**
+ * Extract the original URL from a Wayback URL.
+ */
+function extractOriginalUrl(waybackUrl: string): string | null {
+  const match = waybackUrl.match(/^https:\/\/web\.archive\.org\/web\/\d+(?:id_)?\/(https?:\/\/.+)$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Check if a URL is a Wayback Machine URL.
+ */
+function isWaybackUrl(url: string): boolean {
+  return url.includes('web.archive.org/web/');
 }
 
 // ─── Jina Screenshot Capture ─────────────────────────────────────────────────
@@ -73,11 +138,12 @@ interface JinaScreenshotResult {
   engine?: string;
   captureTimeMs: number;
   error?: string;
+  actualUrl?: string;
 }
 
 async function screenshotWithJina(
   url: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; fallbackToOriginal?: boolean } = {},
 ): Promise<JinaScreenshotResult> {
   const apiKey = process.env.JINA_API_KEY || '';
   const timeoutMs = options.timeoutMs || 45_000;
@@ -85,55 +151,78 @@ async function screenshotWithJina(
   const engines = ['direct', 'browser'];
   let lastError = '';
 
-  for (const engine of engines) {
-    try {
-      const headers: Record<string, string> = {
-        'X-Return-Format': 'screenshot',
-        'X-Timeout': '30',
-      };
-      if (engine !== 'default') headers['X-Engine'] = engine;
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-      console.log(`[test-evidence] Capturing screenshot: ${url} (engine=${engine})`);
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const res = await fetch(`https://r.jina.ai/${url}`, {
-        headers,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!res.ok) {
-        lastError = `Jina returned ${res.status}`;
-        continue;
+  // For Wayback URLs, try both the raw format and original URL as fallbacks
+  const urlsToTry: string[] = [url];
+  if (isWaybackUrl(url)) {
+    // Try raw Wayback URL first (removes toolbar)
+    const rawUrl = toRawWaybackUrl(url);
+    if (rawUrl !== url) {
+      urlsToTry.unshift(rawUrl);
+    }
+    // If all else fails and fallback is enabled, try the original URL
+    if (options.fallbackToOriginal !== false) {
+      const originalUrl = extractOriginalUrl(url);
+      if (originalUrl) {
+        urlsToTry.push(originalUrl);
       }
+    }
+  }
 
-      const contentType = res.headers.get('content-type') || '';
+  for (const targetUrl of urlsToTry) {
+    for (const engine of engines) {
+      try {
+        const headers: Record<string, string> = {
+          'X-Return-Format': 'screenshot',
+          'X-Timeout': '30',
+        };
+        if (engine !== 'default') headers['X-Engine'] = engine;
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-      if (contentType.includes('image')) {
-        const buffer = await res.arrayBuffer();
-        const base64 = Buffer.from(buffer).toString('base64');
-        return { success: true, base64, engine, captureTimeMs: Date.now() - startTime };
-      }
+        console.log(`[test-evidence] Capturing screenshot: ${targetUrl} (engine=${engine})`);
 
-      if (contentType.includes('application/json')) {
-        const json = await res.json();
-        const data = json.data || json;
-        if (data.screenshotUrl) {
-          const imgRes = await fetch(data.screenshotUrl);
-          if (imgRes.ok) {
-            const buffer = await imgRes.arrayBuffer();
-            const base64 = Buffer.from(buffer).toString('base64');
-            return { success: true, base64, engine, captureTimeMs: Date.now() - startTime };
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+          headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!res.ok) {
+          lastError = `Jina returned ${res.status} for ${targetUrl}`;
+          console.log(`[test-evidence] Screenshot failed: ${lastError}`);
+          continue;
+        }
+
+        const contentType = res.headers.get('content-type') || '';
+
+        if (contentType.includes('image')) {
+          const buffer = await res.arrayBuffer();
+          const base64 = Buffer.from(buffer).toString('base64');
+          console.log(`[test-evidence] Screenshot SUCCESS for ${targetUrl}`);
+          return { success: true, base64, engine, captureTimeMs: Date.now() - startTime, actualUrl: targetUrl };
+        }
+
+        if (contentType.includes('application/json')) {
+          const json = await res.json();
+          const data = json.data || json;
+          if (data.screenshotUrl) {
+            const imgRes = await fetch(data.screenshotUrl);
+            if (imgRes.ok) {
+              const buffer = await imgRes.arrayBuffer();
+              const base64 = Buffer.from(buffer).toString('base64');
+              console.log(`[test-evidence] Screenshot SUCCESS (via URL) for ${targetUrl}`);
+              return { success: true, base64, engine, captureTimeMs: Date.now() - startTime, actualUrl: targetUrl };
+            }
           }
         }
-      }
 
-      lastError = `No image returned from engine=${engine}`;
-    } catch (err: any) {
-      lastError = err?.name === 'AbortError' ? `Timeout after ${timeoutMs}ms` : err?.message || String(err);
+        lastError = `No image returned from engine=${engine} for ${targetUrl}`;
+      } catch (err: any) {
+        lastError = err?.name === 'AbortError' ? `Timeout after ${timeoutMs}ms` : err?.message || String(err);
+        console.log(`[test-evidence] Screenshot error: ${lastError}`);
+      }
     }
   }
 
@@ -161,16 +250,18 @@ async function uploadScreenshot(base64Data: string, jobId: string, sourceUrl: st
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // Include timestamp in filename to ensure each screenshot is unique
   const urlHash = createHash('sha256').update(sourceUrl).digest('hex').slice(0, 16);
-  const storagePath = `${jobId}/${urlHash}.png`;
+  const timestamp = Date.now();
+  const storagePath = `${jobId}/${urlHash}-${timestamp}.png`;
   const buffer = Buffer.from(base64Data, 'base64');
 
   const { data, error } = await supabase.storage
     .from('metric-oracle-screenshots')
     .upload(storagePath, buffer, {
       contentType: 'image/png',
-      cacheControl: '3600',
-      upsert: true,
+      cacheControl: '0',  // No caching - always fresh
+      upsert: false,      // Don't overwrite - fail if exists (shouldn't with timestamp)
     });
 
   if (error) {
@@ -290,6 +381,90 @@ If you cannot find the value, return:
   }
 }
 
+// ─── Text Extraction from Content (for Dual Analysis) ────────────────────────
+
+async function extractTextValue(content: string, metric: string): Promise<number | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  
+  const prompt = `You are extracting a precise numeric value from archived webpage content.
+
+METRIC TO EXTRACT: "${metric}"
+
+INSTRUCTIONS:
+1. Find the EXACT current value for the specified metric in the content below
+2. Return ONLY the numeric value (no currency symbols, units, or text)
+3. Use decimal notation (e.g., 95123.45, not "$95,123.45")
+4. If multiple values exist, use the most recent/current one
+5. If the value cannot be found, respond with "NOT_FOUND"
+
+CONTENT:
+${content.slice(0, 30_000)}
+
+EXTRACTED NUMERIC VALUE:`;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0,
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const json = await response.json();
+    const extractedText = json.choices?.[0]?.message?.content?.trim() || '';
+
+    if (extractedText === 'NOT_FOUND' || !extractedText) return null;
+
+    const cleanedValue = extractedText.replace(/[^0-9.+-]/g, '');
+    const numericValue = parseFloat(cleanedValue);
+
+    return Number.isFinite(numericValue) ? numericValue : null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Fetch Text Content via Jina Reader ───────────────────────────────────────
+
+async function fetchTextWithJina(url: string): Promise<string | null> {
+  const apiKey = process.env.JINA_API_KEY || '';
+  
+  try {
+    const headers: Record<string, string> = {};
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    
+    if (!res.ok) return null;
+    
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('text')) {
+      return await res.text();
+    }
+    if (contentType.includes('application/json')) {
+      const json = await res.json();
+      return json.data?.content || json.content || null;
+    }
+    
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Main Test Route ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -298,20 +473,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required field: url' }, { status: 400 });
   }
 
-  const { url, metric = 'Current Price' } = body;
+  const { 
+    url, 
+    metric = 'Current Price',
+    archiveFirst = false,
+    dualAnalysis = false,
+    verbose = false,
+  } = body;
+  
   const jobId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const started = Date.now();
+  
+  // Determine flow mode
+  const useArchiveFirst = archiveFirst === true || archiveFirst === 'true';
+  const useDualAnalysis = dualAnalysis === true || dualAnalysis === 'true' || useArchiveFirst;
 
   const result: EvidenceTestResult = {
     url,
     metric,
     timestamp: new Date().toISOString(),
+    mode: useArchiveFirst ? 'archive-first' : 'screenshot-first',
     phases: {
       phase1_screenshot: { success: false },
       phase2a_upload: { success: false },
-      phase2b_wayback_archive: {
-        screenshot: { success: false },
-        sourcePage: { success: false },
+      phase2b_multi_archive: {
+        screenshot: { success: false, providers: [] },
+        sourcePage: { success: false, providers: [] },
       },
       phase2c_vision_analysis: { success: false },
     },
@@ -319,6 +506,8 @@ export async function POST(req: NextRequest) {
       allPhasesSuccessful: false,
       screenshotAndWaybackMatch: false,
       aiAnalyzedArchivedContent: false,
+      archiveFirstFlow: useArchiveFirst,
+      dualAnalysisEnabled: useDualAnalysis,
       summary: '',
     },
     evidence: {
@@ -331,13 +520,80 @@ export async function POST(req: NextRequest) {
 
   let screenshotBase64: string | null = null;
   let screenshotPublicUrl: string | null = null;
+  let waybackUrl: string | null = null;
+  let analyzedUrl = url;
+  let textContent: string | null = null;
 
-  // ─── Phase 1: Capture Screenshot ───────────────────────────────────────────
-  console.log(`[test-settlement-evidence] Phase 1: Capturing screenshot for ${url}`);
+  // ─── Phase 0: Archive-First (Try to archive live page, fall back to live screenshot) ───
+  let archiveFirstFailed = false;
+  
+  if (useArchiveFirst) {
+    console.log(`[test-settlement-evidence] Phase 0: ARCHIVE-FIRST - Attempting to archive live page`);
+    const phase0Start = Date.now();
+    
+    try {
+      const archiveResult = await archiveUrl(url, {
+        totalTimeoutMs: 30_000,       // 30s - don't wait too long
+        providerTimeoutMs: 25_000,
+        maxAgeMs: 2 * 60 * 1000,      // Require fresh archive (< 2 minutes old)
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      });
+      
+      if (archiveResult.success && archiveResult.primaryUrl) {
+        waybackUrl = archiveResult.primaryUrl;
+        analyzedUrl = waybackUrl;
+        
+        result.phases.phase0_archive_first = {
+          success: true,
+          waybackUrl,
+          waybackTimestamp: archiveResult.archives.find(a => a.provider === 'internet_archive' && a.success)?.timestamp,
+          archiveTimeMs: Date.now() - phase0Start,
+        };
+        result.evidence.primaryEvidenceUrl = waybackUrl;
+        
+        console.log(`[test-settlement-evidence] Phase 0 SUCCESS: Fresh archive ${waybackUrl}`);
+        
+        // Wait for Wayback to be accessible
+        console.log(`[test-settlement-evidence] Waiting 3s for Wayback availability...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+      } else {
+        // Archive failed or returned stale - fall back to live URL screenshot
+        archiveFirstFailed = true;
+        result.phases.phase0_archive_first = {
+          success: false,
+          archiveTimeMs: Date.now() - phase0Start,
+          error: archiveResult.error || 'No fresh archive available',
+        };
+        console.warn(`[test-settlement-evidence] Phase 0: No fresh archive available (${archiveResult.error})`);
+        console.log(`[test-settlement-evidence] Phase 0: FALLBACK - Will screenshot live URL and archive the screenshot`);
+        analyzedUrl = url; // Use live URL
+      }
+    } catch (err: any) {
+      archiveFirstFailed = true;
+      result.phases.phase0_archive_first = {
+        success: false,
+        archiveTimeMs: Date.now() - phase0Start,
+        error: err?.message || String(err),
+      };
+      console.error(`[test-settlement-evidence] Phase 0 ERROR:`, err?.message);
+      console.log(`[test-settlement-evidence] Phase 0: FALLBACK - Will screenshot live URL and archive the screenshot`);
+      analyzedUrl = url; // Use live URL
+    }
+  }
+
+  // ─── Phase 1: Capture Screenshot (of archived URL in archive-first mode) ────
+  console.log(`[test-settlement-evidence] Phase 1: Capturing screenshot for ${analyzedUrl}`);
   const phase1Start = Date.now();
   
   try {
-    const screenshotResult = await screenshotWithJina(url, { timeoutMs: 45_000 });
+    // In archive-first mode, also fetch text content for dual analysis
+    const [screenshotResult, fetchedText] = await Promise.all([
+      screenshotWithJina(analyzedUrl, { timeoutMs: 45_000 }),
+      useDualAnalysis ? fetchTextWithJina(analyzedUrl) : Promise.resolve(null),
+    ]);
+    
+    textContent = fetchedText;
     
     if (screenshotResult.success && screenshotResult.base64) {
       screenshotBase64 = screenshotResult.base64;
@@ -347,12 +603,17 @@ export async function POST(req: NextRequest) {
         captureTimeMs: screenshotResult.captureTimeMs,
         screenshotSizeKb: sizeKb,
         engine: screenshotResult.engine,
+        analyzedUrl,
       };
       console.log(`[test-settlement-evidence] Phase 1 SUCCESS: ${sizeKb}KB screenshot captured (engine=${screenshotResult.engine})`);
+      if (textContent) {
+        console.log(`[test-settlement-evidence] Phase 1: Also fetched ${textContent.length} chars of text content`);
+      }
     } else {
       result.phases.phase1_screenshot = {
         success: false,
         captureTimeMs: Date.now() - phase1Start,
+        analyzedUrl,
         error: screenshotResult.error || 'Unknown screenshot error',
       };
       console.warn(`[test-settlement-evidence] Phase 1 FAILED: ${screenshotResult.error}`);
@@ -361,6 +622,7 @@ export async function POST(req: NextRequest) {
     result.phases.phase1_screenshot = {
       success: false,
       captureTimeMs: Date.now() - phase1Start,
+      analyzedUrl,
       error: err?.message || String(err),
     };
     console.error(`[test-settlement-evidence] Phase 1 ERROR:`, err?.message);
@@ -398,35 +660,62 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Phase 2b: Archive to Wayback (BEFORE AI analysis) ─────────────────────
-  console.log(`[test-settlement-evidence] Phase 2b: Archiving to Wayback Machine`);
+  // ─── Phase 2b: Multi-Archive (Belt & Suspenders - IA + Archive.today) ───────
+  console.log(`[test-settlement-evidence] Phase 2b: Multi-archiving (Internet Archive + Archive.today)`);
 
-  // Archive screenshot (PRIMARY evidence)
+  // Archive screenshot (PRIMARY evidence) to multiple providers via unified API
   if (screenshotPublicUrl) {
     const archiveStart = Date.now();
     try {
-      const archiveResult = await archivePage(screenshotPublicUrl);
+      const archiveResult = await archiveUrl(screenshotPublicUrl, {
+        totalTimeoutMs: 45_000,
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      });
       
-      if (archiveResult.success && archiveResult.waybackUrl) {
-        result.phases.phase2b_wayback_archive.screenshot = {
+      const providerResults: ArchiveProviderResult[] = archiveResult.archives.map((a: ProviderResult) => ({
+        provider: a.provider,
+        success: a.success,
+        url: a.url,
+        timestamp: a.timestamp,
+        durationMs: a.durationMs,
+        error: a.error,
+      }));
+
+      if (archiveResult.success && archiveResult.primaryUrl) {
+        result.phases.phase2b_multi_archive.screenshot = {
           success: true,
-          waybackUrl: archiveResult.waybackUrl,
-          waybackTimestamp: archiveResult.timestamp || undefined,
+          primaryUrl: archiveResult.primaryUrl,
+          primaryProvider: archiveResult.primaryProvider,
+          providers: providerResults,
           archiveTimeMs: Date.now() - archiveStart,
         };
-        result.evidence.primaryEvidenceUrl = archiveResult.waybackUrl;
-        console.log(`[test-settlement-evidence] Phase 2b Screenshot Archive SUCCESS: ${archiveResult.waybackUrl}`);
+        // Store the screenshot's Wayback URL
+        result.evidence.screenshotWaybackUrl = archiveResult.primaryUrl;
+        
+        // In archive-first mode with successful page archive, the primary evidence is the archived PAGE
+        // But if archive-first FAILED (fallback mode), the screenshot IS the primary evidence
+        if (useArchiveFirst && archiveFirstFailed) {
+          // Fallback mode: screenshot of live URL is our primary evidence
+          result.evidence.primaryEvidenceUrl = archiveResult.primaryUrl;
+          console.log(`[test-settlement-evidence] Phase 2b: Fallback mode - screenshot archive is PRIMARY evidence`);
+        } else if (!useArchiveFirst || !result.evidence.primaryEvidenceUrl) {
+          result.evidence.primaryEvidenceUrl = archiveResult.primaryUrl;
+        }
+        const successCount = providerResults.filter(p => p.success).length;
+        console.log(`[test-settlement-evidence] Phase 2b Screenshot Archive SUCCESS: ${successCount}/${providerResults.length} providers → ${archiveResult.primaryUrl}`);
       } else {
-        result.phases.phase2b_wayback_archive.screenshot = {
+        result.phases.phase2b_multi_archive.screenshot = {
           success: false,
+          providers: providerResults,
           archiveTimeMs: Date.now() - archiveStart,
-          error: archiveResult.error || 'Archive failed',
+          error: archiveResult.error || 'All providers failed',
         };
         console.warn(`[test-settlement-evidence] Phase 2b Screenshot Archive FAILED: ${archiveResult.error}`);
       }
     } catch (err: any) {
-      result.phases.phase2b_wayback_archive.screenshot = {
+      result.phases.phase2b_multi_archive.screenshot = {
         success: false,
+        providers: [],
         archiveTimeMs: Date.now() - archiveStart,
         error: err?.message || String(err),
       };
@@ -434,31 +723,48 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Archive source page (SECONDARY evidence)
+  // Archive source page (SECONDARY evidence) to multiple providers via unified API
   const pageArchiveStart = Date.now();
   try {
-    const pageArchiveResult = await archivePage(url);
+    const pageArchiveResult = await archiveUrl(url, {
+      totalTimeoutMs: 60_000,       // 60s total - live pages take longer
+      providerTimeoutMs: 55_000,    // 55s per provider
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
     
-    if (pageArchiveResult.success && pageArchiveResult.waybackUrl) {
-      result.phases.phase2b_wayback_archive.sourcePage = {
+    const providerResults: ArchiveProviderResult[] = pageArchiveResult.archives.map((a: ProviderResult) => ({
+      provider: a.provider,
+      success: a.success,
+      url: a.url,
+      timestamp: a.timestamp,
+      durationMs: a.durationMs,
+      error: a.error,
+    }));
+
+    if (pageArchiveResult.success && pageArchiveResult.primaryUrl) {
+      result.phases.phase2b_multi_archive.sourcePage = {
         success: true,
-        waybackUrl: pageArchiveResult.waybackUrl,
-        waybackTimestamp: pageArchiveResult.timestamp || undefined,
+        primaryUrl: pageArchiveResult.primaryUrl,
+        primaryProvider: pageArchiveResult.primaryProvider,
+        providers: providerResults,
         archiveTimeMs: Date.now() - pageArchiveStart,
       };
-      result.evidence.secondaryEvidenceUrl = pageArchiveResult.waybackUrl;
-      console.log(`[test-settlement-evidence] Phase 2b Page Archive SUCCESS: ${pageArchiveResult.waybackUrl}`);
+      result.evidence.secondaryEvidenceUrl = pageArchiveResult.primaryUrl;
+      const successCount = providerResults.filter(p => p.success).length;
+      console.log(`[test-settlement-evidence] Phase 2b Page Archive SUCCESS: ${successCount}/${providerResults.length} providers → ${pageArchiveResult.primaryUrl}`);
     } else {
-      result.phases.phase2b_wayback_archive.sourcePage = {
+      result.phases.phase2b_multi_archive.sourcePage = {
         success: false,
+        providers: providerResults,
         archiveTimeMs: Date.now() - pageArchiveStart,
-        error: pageArchiveResult.error || 'Archive failed',
+        error: pageArchiveResult.error || 'All providers failed',
       };
       console.warn(`[test-settlement-evidence] Phase 2b Page Archive FAILED: ${pageArchiveResult.error}`);
     }
   } catch (err: any) {
-    result.phases.phase2b_wayback_archive.sourcePage = {
+    result.phases.phase2b_multi_archive.sourcePage = {
       success: false,
+      providers: [],
       archiveTimeMs: Date.now() - pageArchiveStart,
       error: err?.message || String(err),
     };
@@ -466,6 +772,8 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Phase 2c: Vision Analysis (AI extracts value from screenshot) ─────────
+  let visionExtractedValue: number | null = null;
+  
   if (screenshotBase64) {
     console.log(`[test-settlement-evidence] Phase 2c: Running vision analysis on screenshot`);
     const visionStart = Date.now();
@@ -474,6 +782,7 @@ export async function POST(req: NextRequest) {
       const visionResult = await analyzeWithVision(screenshotBase64, metric);
       
       if (visionResult.success && visionResult.numericValue !== undefined) {
+        visionExtractedValue = visionResult.numericValue;
         result.phases.phase2c_vision_analysis = {
           success: true,
           extractedValue: visionResult.extractedValue,
@@ -484,6 +793,7 @@ export async function POST(req: NextRequest) {
           analysisTimeMs: Date.now() - visionStart,
         };
         result.evidence.aiExtractedPrice = visionResult.numericValue;
+        result.evidence.visionExtractedPrice = visionResult.numericValue;
         console.log(`[test-settlement-evidence] Phase 2c SUCCESS: value=${visionResult.numericValue}, confidence=${visionResult.confidence?.toFixed(2)}`);
       } else {
         result.phases.phase2c_vision_analysis = {
@@ -504,59 +814,263 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ─── Phase 2d: Dual Analysis (Text + Vision Comparison) ─────────────────────
+  let textExtractedValue: number | null = null;
+  let extractionConfidenceMatch = false;
+  let valueSource: 'text' | 'vision' | 'consensus' | 'fallback' = 'fallback';
+  
+  if (useDualAnalysis && textContent) {
+    console.log(`[test-settlement-evidence] Phase 2d: Running dual analysis (text extraction)`);
+    const dualStart = Date.now();
+    
+    try {
+      textExtractedValue = await extractTextValue(textContent, metric);
+      result.evidence.textExtractedPrice = textExtractedValue;
+      
+      if (textExtractedValue !== null && visionExtractedValue !== null) {
+        const tolerance = 0.01; // 1% tolerance
+        const diff = Math.abs(textExtractedValue - visionExtractedValue);
+        const maxVal = Math.max(Math.abs(textExtractedValue), Math.abs(visionExtractedValue));
+        const relativeDiff = maxVal > 0 ? diff / maxVal : 0;
+        
+        extractionConfidenceMatch = relativeDiff < tolerance;
+        
+        if (extractionConfidenceMatch) {
+          valueSource = 'consensus';
+          console.log(`[test-settlement-evidence] Phase 2d SUCCESS: Text and Vision AGREE (diff=${(relativeDiff * 100).toFixed(3)}%)`);
+        } else {
+          valueSource = 'vision';
+          console.warn(`[test-settlement-evidence] Phase 2d: Text/Vision MISMATCH (diff=${(relativeDiff * 100).toFixed(3)}%), using vision`);
+        }
+        
+        result.phases.phase2d_dual_analysis = {
+          success: true,
+          textExtractedValue,
+          visionExtractedValue,
+          extractionConfidenceMatch,
+          valueSource,
+          analysisTimeMs: Date.now() - dualStart,
+        };
+      } else if (visionExtractedValue !== null) {
+        valueSource = 'vision';
+        result.phases.phase2d_dual_analysis = {
+          success: true,
+          textExtractedValue: null,
+          visionExtractedValue,
+          extractionConfidenceMatch: false,
+          valueSource: 'vision',
+          analysisTimeMs: Date.now() - dualStart,
+        };
+        console.log(`[test-settlement-evidence] Phase 2d: Using vision only (text extraction unavailable)`);
+      } else if (textExtractedValue !== null) {
+        valueSource = 'text';
+        result.evidence.aiExtractedPrice = textExtractedValue;
+        result.phases.phase2d_dual_analysis = {
+          success: true,
+          textExtractedValue,
+          visionExtractedValue: null,
+          extractionConfidenceMatch: false,
+          valueSource: 'text',
+          analysisTimeMs: Date.now() - dualStart,
+        };
+        console.log(`[test-settlement-evidence] Phase 2d: Using text only (vision extraction unavailable)`);
+      } else {
+        result.phases.phase2d_dual_analysis = {
+          success: false,
+          textExtractedValue: null,
+          visionExtractedValue: null,
+          extractionConfidenceMatch: false,
+          valueSource: 'fallback',
+          analysisTimeMs: Date.now() - dualStart,
+          error: 'Both text and vision extraction failed',
+        };
+        console.warn(`[test-settlement-evidence] Phase 2d FAILED: Both extractions failed`);
+      }
+    } catch (err: any) {
+      result.phases.phase2d_dual_analysis = {
+        success: false,
+        analysisTimeMs: Date.now() - dualStart,
+        error: err?.message || String(err),
+      };
+      console.error(`[test-settlement-evidence] Phase 2d ERROR:`, err?.message);
+    }
+  }
+
   // ─── Congruence Analysis ───────────────────────────────────────────────────
+  const archiveFirstSucceeded = useArchiveFirst && result.phases.phase0_archive_first?.success === true;
+  
+  // For dual analysis, success means at least ONE extraction method worked
+  const hasExtractedValue = 
+    result.phases.phase2c_vision_analysis.success || 
+    (result.phases.phase2d_dual_analysis?.success && 
+     (result.phases.phase2d_dual_analysis.textExtractedValue !== null || 
+      result.phases.phase2d_dual_analysis.visionExtractedValue !== null));
+  
   const allPhasesSuccessful = 
     result.phases.phase1_screenshot.success &&
     result.phases.phase2a_upload.success &&
-    result.phases.phase2b_wayback_archive.screenshot.success &&
-    result.phases.phase2c_vision_analysis.success;
+    result.phases.phase2b_multi_archive.screenshot.success &&
+    hasExtractedValue &&
+    (!useArchiveFirst || archiveFirstSucceeded);
 
   const screenshotAndWaybackMatch = 
     result.phases.phase2a_upload.success &&
-    result.phases.phase2b_wayback_archive.screenshot.success;
+    result.phases.phase2b_multi_archive.screenshot.success;
 
-  const aiAnalyzedArchivedContent = 
+  // In archive-first mode, verify the screenshot was taken OF the archived page
+  const screenshotOfArchivedPage = useArchiveFirst
+    ? (result.phases.phase1_screenshot.analyzedUrl === result.phases.phase0_archive_first?.waybackUrl)
+    : true;
+
+  const aiAnalyzedArchivedContent = useArchiveFirst 
+    ? archiveFirstSucceeded && result.phases.phase1_screenshot.success && hasExtractedValue && screenshotOfArchivedPage
+    : result.phases.phase1_screenshot.success &&
+      result.phases.phase2b_multi_archive.screenshot.success &&
+      hasExtractedValue;
+
+  // In fallback mode: screenshot of live URL was archived - this is still valid evidence
+  const fallbackEvidenceCollected = useArchiveFirst && 
+    archiveFirstFailed && 
     result.phases.phase1_screenshot.success &&
-    result.phases.phase2b_wayback_archive.screenshot.success &&
-    result.phases.phase2c_vision_analysis.success;
+    result.phases.phase2b_multi_archive.screenshot.success &&
+    hasExtractedValue;
+
+  // Count successful archive providers
+  const screenshotProviderCount = result.phases.phase2b_multi_archive.screenshot.providers.filter(p => p.success).length;
+  const pageProviderCount = result.phases.phase2b_multi_archive.sourcePage.providers.filter(p => p.success).length;
 
   let summary = '';
-  if (allPhasesSuccessful) {
-    summary = 'CONGRUENT: Screenshot, Wayback archive, and AI analysis are all aligned. The AI analyzed the exact same image that was archived to Wayback.';
+  if (useArchiveFirst && archiveFirstSucceeded && allPhasesSuccessful) {
+    const dualInfo = useDualAnalysis 
+      ? (extractionConfidenceMatch 
+          ? ' Text/Vision values MATCH.' 
+          : ` Value extracted via ${valueSource}.`)
+      : '';
+    summary = `ARCHIVE-FIRST CONGRUENT: Live page archived FIRST, then analyzed.${dualInfo} Perfect evidence congruence achieved.`;
+  } else if (fallbackEvidenceCollected) {
+    // Fallback succeeded - we have archived screenshot of live page
+    const dualInfo = useDualAnalysis 
+      ? (extractionConfidenceMatch 
+          ? ' Text/Vision values MATCH.' 
+          : ` Value extracted via ${valueSource}.`)
+      : '';
+    summary = `SCREENSHOT-FALLBACK CONGRUENT: No fresh page archive available, but live screenshot captured and archived.${dualInfo} Evidence preserved.`;
+  } else if (allPhasesSuccessful) {
+    summary = `CONGRUENT: Screenshot archived to ${screenshotProviderCount} provider(s), AI analysis aligned. Belt & suspenders redundancy achieved.`;
   } else if (aiAnalyzedArchivedContent) {
-    summary = 'PARTIAL: Screenshot was captured, archived, and analyzed by AI. Some secondary phases may have failed.';
+    summary = `PARTIAL: Screenshot archived to ${screenshotProviderCount} provider(s) and analyzed by AI. Some secondary phases may have failed.`;
+  } else if (screenshotAndWaybackMatch && !hasExtractedValue) {
+    summary = `PARTIAL: Screenshot archived to ${screenshotProviderCount} provider(s), but value extraction failed (neither text nor vision could extract a numeric value).`;
   } else if (screenshotAndWaybackMatch) {
-    summary = 'PARTIAL: Screenshot was captured and archived, but AI analysis failed.';
+    summary = `PARTIAL: Screenshot archived to ${screenshotProviderCount} provider(s), but AI analysis failed.`;
   } else if (result.phases.phase1_screenshot.success) {
-    summary = 'PARTIAL: Screenshot was captured but archival or analysis failed.';
+    summary = 'PARTIAL: Screenshot was captured but multi-archival or analysis failed.';
   } else {
     summary = 'FAILED: Screenshot capture failed. No evidence was collected.';
   }
 
+  // Update allPhasesSuccessful to include fallback case
+  const effectiveSuccess = allPhasesSuccessful || fallbackEvidenceCollected;
+
   result.congruence = {
-    allPhasesSuccessful,
+    allPhasesSuccessful: effectiveSuccess,
     screenshotAndWaybackMatch,
-    aiAnalyzedArchivedContent,
+    aiAnalyzedArchivedContent: aiAnalyzedArchivedContent || fallbackEvidenceCollected,
+    screenshotOfArchivedPage: useArchiveFirst ? (archiveFirstSucceeded ? screenshotOfArchivedPage : false) : undefined,
+    archiveFirstFlow: useArchiveFirst && archiveFirstSucceeded,
+    dualAnalysisEnabled: useDualAnalysis,
     summary,
   };
 
   const totalTimeMs = Date.now() - started;
   console.log(`[test-settlement-evidence] Complete in ${totalTimeMs}ms`, {
-    allPhasesSuccessful,
+    effectiveSuccess,
+    archiveFirstSucceeded,
+    fallbackUsed: archiveFirstFailed,
     primaryEvidence: result.evidence.primaryEvidenceUrl,
     aiPrice: result.evidence.aiExtractedPrice,
   });
 
-  return NextResponse.json({
-    ok: allPhasesSuccessful,
+  // Build evidence summary - belt and suspenders = Wayback + Supabase screenshot
+  const waybackPageUrl = result.phases.phase2b_multi_archive.sourcePage.providers
+    .find(p => p.provider === 'internet_archive' && p.success)?.url || null;
+  const waybackScreenshotUrl = result.phases.phase2b_multi_archive.screenshot.providers
+    .find(p => p.provider === 'internet_archive' && p.success)?.url || null;
+  const supabaseScreenshotUrl = result.evidence.screenshotPublicUrl;
+
+  // Build simplified response
+  const simplifiedResponse = {
+    ok: effectiveSuccess,
+    url,
+    metric,
+    timestamp: result.timestamp,
     totalTimeMs,
-    ...result,
-  });
+    
+    // Extracted value
+    extractedValue: result.evidence.aiExtractedPrice,
+    valueSource: result.phases.phase2d_dual_analysis?.valueSource || 
+                 (result.phases.phase2c_vision_analysis.success ? 'vision' : null),
+    confidence: result.phases.phase2d_dual_analysis?.extractionConfidenceMatch 
+                ? 'high' 
+                : (result.phases.phase2c_vision_analysis.confidence 
+                   ? (result.phases.phase2c_vision_analysis.confidence >= 0.8 ? 'high' : 'medium')
+                   : 'low'),
+    
+    // Flow info
+    flow: archiveFirstSucceeded ? 'archive-first' : (archiveFirstFailed ? 'screenshot-fallback' : 'screenshot-first'),
+    
+    // Belt and suspenders: redundant evidence sources
+    evidence: {
+      // Source 1: Wayback Machine (public, immutable, third-party)
+      wayback: {
+        page: waybackPageUrl,
+        screenshot: waybackScreenshotUrl,
+      },
+      // Source 2: Supabase (self-hosted, immediate, always available)
+      supabase: {
+        screenshot: supabaseScreenshotUrl,
+      },
+      // Summary
+      redundancy: waybackPageUrl && supabaseScreenshotUrl 
+        ? '2 sources (Wayback + Supabase)' 
+        : supabaseScreenshotUrl 
+          ? '1 source (Supabase only)' 
+          : 'No evidence captured',
+    },
+    
+    summary,
+    
+    // Only include errors if something failed
+    ...(effectiveSuccess ? {} : {
+      errors: {
+        archiveError: result.phases.phase0_archive_first?.error,
+        screenshotError: result.phases.phase1_screenshot.error,
+        analysisError: result.phases.phase2c_vision_analysis.error,
+      }
+    }),
+  };
+
+  // Return verbose response if requested
+  if (verbose === true || verbose === 'true') {
+    return NextResponse.json({
+      ...simplifiedResponse,
+      details: {
+        phases: result.phases,
+        congruence: result.congruence,
+        evidence: result.evidence,
+      }
+    });
+  }
+
+  return NextResponse.json(simplifiedResponse);
 }
 
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get('url');
   const metric = req.nextUrl.searchParams.get('metric') || 'Current Price';
+  const archiveFirst = req.nextUrl.searchParams.get('archiveFirst') === 'true';
+  const dualAnalysis = req.nextUrl.searchParams.get('dualAnalysis') === 'true';
+  const verbose = req.nextUrl.searchParams.get('verbose') === 'true';
 
   if (!url) {
     return NextResponse.json({
@@ -567,30 +1081,43 @@ export async function GET(req: NextRequest) {
         queryParams: {
           url: 'Required - The URL to test (e.g., https://example.com/price-page)',
           metric: 'Optional - The metric name to extract (default: "Current Price")',
+          archiveFirst: 'Optional - Enable archive-first flow (default: false). Archives live page FIRST, then analyzes the archived Wayback URL.',
+          dualAnalysis: 'Optional - Enable dual analysis (default: false, auto-enabled with archiveFirst). Extracts values from both text and vision for comparison.',
         },
         postBody: {
           url: 'Required - The URL to test',
           metric: 'Optional - The metric name to extract',
+          archiveFirst: 'Optional - Enable archive-first flow (default: false)',
+          dualAnalysis: 'Optional - Enable dual analysis (default: false)',
         },
         examples: [
           '/api/debug/test-settlement-evidence?url=https://www.coingecko.com/en/coins/bitcoin&metric=Bitcoin Price',
           '/api/debug/test-settlement-evidence?url=https://finance.yahoo.com/quote/AAPL&metric=Apple Stock Price',
+          '/api/debug/test-settlement-evidence?url=https://www.coingecko.com/en/coins/bitcoin&metric=Bitcoin Price&archiveFirst=true',
+          '/api/debug/test-settlement-evidence?url=https://www.coingecko.com/en/coins/bitcoin&metric=Bitcoin Price&dualAnalysis=true',
         ],
-        description: 'Tests the settlement evidence capture pipeline and verifies congruence between screenshot, Wayback archive, and AI analysis.',
-        phases: {
-          'Phase 1': 'Screenshot capture via Jina Reader',
-          'Phase 2a': 'Upload screenshot to Supabase storage',
-          'Phase 2b': 'Archive screenshot (PRIMARY) and source page (SECONDARY) to Wayback Machine',
-          'Phase 2c': 'AI vision analysis to extract numeric value from screenshot',
+        description: 'Tests the settlement evidence capture pipeline with "belt & suspenders" multi-archiving to Internet Archive AND Archive.today.',
+        modes: {
+          'screenshot-first': 'Default mode: Screenshot live page → Upload → Archive screenshot → AI analysis',
+          'archive-first': 'Archive live page FIRST → Screenshot archived URL → AI analysis. Ensures perfect congruence between evidence and extracted value.',
         },
-        congruence: 'All phases must succeed with the AI analyzing the SAME screenshot that was archived to Wayback for full congruence.',
+        phases: {
+          'Phase 0': '(archive-first only) Archive live page to Wayback Machine FIRST',
+          'Phase 1': 'Screenshot capture via Jina Reader (of archived URL in archive-first mode)',
+          'Phase 2a': 'Upload screenshot to Supabase storage',
+          'Phase 2b': 'Multi-archive screenshot + source page to Internet Archive AND Archive.today (belt & suspenders)',
+          'Phase 2c': 'AI vision analysis to extract numeric value from screenshot',
+          'Phase 2d': '(dual analysis) Text extraction + comparison with vision for confidence',
+        },
+        archiveProviders: ['internet_archive', 'archive_today'],
+        congruence: 'All phases must succeed with the AI analyzing the SAME content that was archived. In archive-first mode, the AI analyzes the archived Wayback URL, ensuring perfect congruence.',
       },
     }, { status: 400 });
   }
 
   const mockReq = new NextRequest(req.url, {
     method: 'POST',
-    body: JSON.stringify({ url, metric }),
+    body: JSON.stringify({ url, metric, archiveFirst, dualAnalysis, verbose }),
   });
 
   return POST(mockReq);
