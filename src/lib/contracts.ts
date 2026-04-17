@@ -299,6 +299,29 @@ export const FeeRegistryABI = [
   "event AdminUpdated(address indexed oldAdmin, address indexed newAdmin)"
 ];
 
+// FacetRegistry - centralized facet addresses for DiamondRegistry markets
+export const FacetRegistryABI = [
+  // View functions
+  "function getFacet(bytes4 _selector) external view returns (address)",
+  "function getAllSelectors() external view returns (bytes4[] memory)",
+  "function selectorToFacet(bytes4) external view returns (address)",
+  "function selectorCount() external view returns (uint256)",
+  "function getSelectorsForFacet(address _facet) external view returns (bytes4[] memory)",
+  "function selectors(uint256) external view returns (bytes4)",
+  "function selectorExists(bytes4) external view returns (bool)",
+  "function admin() external view returns (address)",
+  "function version() external view returns (uint256)",
+  // Admin functions
+  "function updateFacets(bytes4[] calldata _selectors, address[] calldata _facets) external",
+  "function registerFacet(address _facet, bytes4[] calldata _selectors) external",
+  "function removeSelectors(bytes4[] calldata _selectors) external",
+  "function updateAdmin(address _newAdmin) external",
+  // Events
+  "event FacetsUpdated(uint256 indexed version, uint256 selectorCount)",
+  "event FacetRegistered(address indexed facet, uint256 selectorCount)",
+  "event AdminUpdated(address indexed oldAdmin, address indexed newAdmin)"
+];
+
 // Liquidation facet - operational controls and entrypoint
 export const OBLiquidationFacetABI = [
   "function setConfigLiquidationScanOnTrade(bool enable) external",

@@ -601,6 +601,7 @@ export async function POST(req: Request) {
       }
       const nonce = BigInt(nonceStr);
       const deadline = BigInt(deadlineStr);
+      const useV2 = body?.v2 === true;
 
       // Must match src/lib/createMarketOnChain.ts: env FACTORY_DIAMOND_OWNER / NEXT_PUBLIC_* else feeRecipient||signer
       const envDiamondOwner =
@@ -616,158 +617,305 @@ export async function POST(req: Request) {
       let domainChainId = Number(net.chainId);
       let domainVerifying = factoryAddress;
 
-      let tagsHash: string;
-      let cutHash: string;
+      // Get EIP-712 domain info from factory
       try {
         const helper = new ethers.Contract(factoryAddress, [
           'function computeTagsHash(string[] tags) view returns (bytes32)',
-          'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
           'function eip712DomainInfo() view returns (string name,string version,uint256 chainId,address verifyingContract,bytes32 domainSeparator)',
         ], wallet);
-        try {
-          const info = await helper.eip712DomainInfo();
-          if (info?.name) domainName = String(info.name);
-          if (info?.version) domainVersion = String(info.version);
-          if (info?.chainId) domainChainId = Number(info.chainId);
-          if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
-        } catch {}
-        tagsHash = await helper.computeTagsHash(tags);
-        cutHash = await helper.computeCutHash(cutArg);
-      } catch {
-        tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
-        const perCutHashes: string[] = [];
-        for (const c of cutArg) {
-          const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
-          const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [c?.[0], c?.[1], selectorsHash]);
-          perCutHashes.push(ethers.keccak256(enc));
-        }
-        cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
-      }
-
-      const domain = { name: domainName, version: domainVersion, chainId: domainChainId, verifyingContract: domainVerifying } as const;
-      const types = {
-        MetaCreate: [
-          { name: 'marketSymbol', type: 'string' }, { name: 'metricUrl', type: 'string' },
-          { name: 'settlementDate', type: 'uint256' }, { name: 'startPrice', type: 'uint256' },
-          { name: 'dataSource', type: 'string' }, { name: 'tagsHash', type: 'bytes32' },
-          { name: 'diamondOwner', type: 'address' }, { name: 'cutHash', type: 'bytes32' },
-          { name: 'initFacet', type: 'address' }, { name: 'creator', type: 'address' },
-          { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
-        ],
-      } as const;
-      const message = {
-        marketSymbol: symbol, metricUrl, settlementDate: settlementTs,
-        startPrice: startPrice6.toString(), dataSource, tagsHash,
-        diamondOwner: diamondOwnerMeta, cutHash, initFacet,
-        creator, nonce: nonce.toString(), deadline: deadline.toString(),
-      };
-
-      // Verify signature
-      try {
-        const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
-        if (!recovered || recovered.toLowerCase() !== creator.toLowerCase()) {
-          return NextResponse.json({ error: 'bad_sig', recovered, expected: creator }, { status: 400 });
-        }
-      } catch (e: any) {
-        return NextResponse.json({ error: 'verify_failed', details: e?.message || String(e) }, { status: 400 });
-      }
-
-      // Nonce check
-      try {
-        const onchainNonce = await factory.metaCreateNonce(creator);
-        if (String(onchainNonce) !== String(nonce)) {
-          return NextResponse.json({ error: 'bad_nonce', expected: String(onchainNonce), got: String(nonce) }, { status: 400 });
-        }
+        const info = await helper.eip712DomainInfo();
+        if (info?.name) domainName = String(info.name);
+        if (info?.version) domainVersion = String(info.version);
+        if (info?.chainId) domainChainId = Number(info.chainId);
+        if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
       } catch {}
 
-      // Static call
-      logS('factory_static_call_meta', 'start');
-      try {
-        await factory.getFunction('metaCreateFuturesMarketDiamond').staticCall(
+      const domain = { name: domainName, version: domainVersion, chainId: domainChainId, verifyingContract: domainVerifying } as const;
+
+      if (useV2) {
+        // ========== V2 GASLESS: No facet cuts, uses FacetRegistry ==========
+        logS('gasless_v2_start', 'start');
+
+        // Compute tagsHash
+        let tagsHash: string;
+        try {
+          const helper = new ethers.Contract(factoryAddress, ['function computeTagsHash(string[] tags) view returns (bytes32)'], wallet);
+          tagsHash = await helper.computeTagsHash(tags);
+        } catch {
+          let packed = '0x';
+          for (const tag of tags) {
+            packed += Buffer.from(tag).toString('hex');
+          }
+          tagsHash = ethers.keccak256(packed || '0x');
+        }
+
+        // V2 types - NO cutHash or initFacet
+        const typesV2 = {
+          MetaCreateV2: [
+            { name: 'marketSymbol', type: 'string' }, { name: 'metricUrl', type: 'string' },
+            { name: 'settlementDate', type: 'uint256' }, { name: 'startPrice', type: 'uint256' },
+            { name: 'dataSource', type: 'string' }, { name: 'tagsHash', type: 'bytes32' },
+            { name: 'diamondOwner', type: 'address' }, { name: 'creator', type: 'address' },
+            { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
+          ],
+        } as const;
+        const messageV2 = {
+          marketSymbol: symbol, metricUrl, settlementDate: settlementTs,
+          startPrice: startPrice6.toString(), dataSource, tagsHash,
+          diamondOwner: diamondOwnerMeta,
+          creator, nonce: nonce.toString(), deadline: deadline.toString(),
+        };
+
+        // Verify signature
+        try {
+          const recovered = ethers.verifyTypedData(domain as any, typesV2 as any, messageV2 as any, signature);
+          if (!recovered || recovered.toLowerCase() !== creator.toLowerCase()) {
+            return NextResponse.json({ error: 'bad_sig_v2', recovered, expected: creator }, { status: 400 });
+          }
+          logS('gasless_v2_sig_verified', 'success');
+        } catch (e: any) {
+          return NextResponse.json({ error: 'verify_failed_v2', details: e?.message || String(e) }, { status: 400 });
+        }
+
+        // Nonce check
+        try {
+          const onchainNonce = await factory.metaCreateNonce(creator);
+          if (String(onchainNonce) !== String(nonce)) {
+            return NextResponse.json({ error: 'bad_nonce', expected: String(onchainNonce), got: String(nonce) }, { status: 400 });
+          }
+        } catch {}
+
+        // Static call
+        logS('factory_static_call_meta_v2', 'start');
+        try {
+          await factory.getFunction('metaCreateFuturesMarketV2').staticCall(
+            messageV2.marketSymbol, messageV2.metricUrl, Number(messageV2.settlementDate),
+            BigInt(messageV2.startPrice), dataSource, tags, diamondOwnerMeta,
+            creator, nonce, deadline, signature
+          );
+          logS('factory_static_call_meta_v2', 'success');
+        } catch (e: any) {
+          const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+            e, factoryIface, 'static call failed',
+          );
+          logS('factory_static_call_meta_v2', 'error', {
+            error: raw, customError, selector, rawData,
+            hint: hintForAccessControlRawData(rawData),
+            rpcDetail: dug.rpcDetail,
+            ethersCode: dug.ethersCode,
+            rpcMethod: dug.payloadMethod,
+          });
+          return revertJsonBody(400, raw, customError, rawData, dug);
+        }
+
+        // Send tx
+        logS('factory_send_tx_meta_v2', 'start');
+        const overrides = await nonceMgr.nextOverrides();
+        const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT_V2 || '4000000'); // V2 uses less gas
+        const metaArgsV2 = [
+          messageV2.marketSymbol, messageV2.metricUrl, Number(messageV2.settlementDate),
+          BigInt(messageV2.startPrice), dataSource, tags, diamondOwnerMeta,
+          creator, nonce, deadline, signature,
+        ];
+        let gasLimit: bigint;
+        try {
+          const estimated = await factory.getFunction('metaCreateFuturesMarketV2').estimateGas(...metaArgsV2);
+          gasLimit = (estimated * 130n) / 100n;
+          logS('factory_estimate_gas_meta_v2', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
+        } catch {
+          gasLimit = fallbackGasLimit;
+          logS('factory_estimate_gas_meta_v2', 'error', { fallback: String(gasLimit) });
+        }
+
+        // Pre-send balance check
+        const gasPrice = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+        const requiredBalance = gasLimit * BigInt(gasPrice);
+        const balance = await provider.getBalance(ownerAddress);
+        if (balance < requiredBalance) {
+          const balEth = ethers.formatEther(balance);
+          const reqEth = ethers.formatEther(requiredBalance);
+          logS('factory_send_tx_meta_v2', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+          return NextResponse.json({
+            error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
+            wallet: ownerAddress, balance: balEth, required: reqEth,
+          }, { status: 503 });
+        }
+
+        try {
+          tx = await factory.getFunction('metaCreateFuturesMarketV2')(
+            ...metaArgsV2,
+            { ...overrides, gasLimit } as any
+          );
+        } catch (e: any) {
+          const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+            e, factoryIface, 'send tx failed',
+          );
+          logS('factory_send_tx_meta_v2', 'error', {
+            error: raw, customError, selector, rawData,
+            hint: hintForAccessControlRawData(rawData),
+            rpcDetail: dug.rpcDetail,
+            ethersCode: dug.ethersCode,
+            rpcMethod: dug.payloadMethod,
+          });
+          return revertJsonBody(500, raw, customError, rawData, dug);
+        }
+        logS('factory_send_tx_meta_v2_sent', 'success', { hash: tx.hash });
+        await checkpointDraft(supabase, draftId, {
+          transaction_hash: tx.hash,
+          pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString(), v2: true } },
+        });
+        logS('factory_confirm_meta_v2', 'start');
+        receipt = await tx.wait();
+        logS('factory_confirm_meta_v2_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+        await checkpointDraft(supabase, draftId, {
+          block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
+          pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },
+        });
+
+      } else {
+        // ========== V1 GASLESS: With facet cuts ==========
+        let tagsHash: string;
+        let cutHash: string;
+        try {
+          const helper = new ethers.Contract(factoryAddress, [
+            'function computeTagsHash(string[] tags) view returns (bytes32)',
+            'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
+          ], wallet);
+          tagsHash = await helper.computeTagsHash(tags);
+          cutHash = await helper.computeCutHash(cutArg);
+        } catch {
+          tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
+          const perCutHashes: string[] = [];
+          for (const c of cutArg) {
+            const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
+            const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [c?.[0], c?.[1], selectorsHash]);
+            perCutHashes.push(ethers.keccak256(enc));
+          }
+          cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+        }
+
+        const types = {
+          MetaCreate: [
+            { name: 'marketSymbol', type: 'string' }, { name: 'metricUrl', type: 'string' },
+            { name: 'settlementDate', type: 'uint256' }, { name: 'startPrice', type: 'uint256' },
+            { name: 'dataSource', type: 'string' }, { name: 'tagsHash', type: 'bytes32' },
+            { name: 'diamondOwner', type: 'address' }, { name: 'cutHash', type: 'bytes32' },
+            { name: 'initFacet', type: 'address' }, { name: 'creator', type: 'address' },
+            { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
+          ],
+        } as const;
+        const message = {
+          marketSymbol: symbol, metricUrl, settlementDate: settlementTs,
+          startPrice: startPrice6.toString(), dataSource, tagsHash,
+          diamondOwner: diamondOwnerMeta, cutHash, initFacet,
+          creator, nonce: nonce.toString(), deadline: deadline.toString(),
+        };
+
+        // Verify signature
+        try {
+          const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
+          if (!recovered || recovered.toLowerCase() !== creator.toLowerCase()) {
+            return NextResponse.json({ error: 'bad_sig', recovered, expected: creator }, { status: 400 });
+          }
+        } catch (e: any) {
+          return NextResponse.json({ error: 'verify_failed', details: e?.message || String(e) }, { status: 400 });
+        }
+
+        // Nonce check
+        try {
+          const onchainNonce = await factory.metaCreateNonce(creator);
+          if (String(onchainNonce) !== String(nonce)) {
+            return NextResponse.json({ error: 'bad_nonce', expected: String(onchainNonce), got: String(nonce) }, { status: 400 });
+          }
+        } catch {}
+
+        // Static call
+        logS('factory_static_call_meta', 'start');
+        try {
+          await factory.getFunction('metaCreateFuturesMarketDiamond').staticCall(
+            message.marketSymbol, message.metricUrl, Number(message.settlementDate),
+            BigInt(message.startPrice), dataSource, tags, diamondOwnerMeta,
+            cutArg, initFacet, creator, nonce, deadline, signature
+          );
+          logS('factory_static_call_meta', 'success');
+        } catch (e: any) {
+          const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+            e, factoryIface, 'static call failed',
+          );
+          logS('factory_static_call_meta', 'error', {
+            error: raw, customError, selector, rawData,
+            hint: hintForAccessControlRawData(rawData),
+            rpcDetail: dug.rpcDetail,
+            ethersCode: dug.ethersCode,
+            rpcMethod: dug.payloadMethod,
+          });
+          return revertJsonBody(400, raw, customError, rawData, dug);
+        }
+
+        // Send tx
+        logS('factory_send_tx_meta', 'start');
+        const overrides = await nonceMgr.nextOverrides();
+        const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
+        const metaArgs = [
           message.marketSymbol, message.metricUrl, Number(message.settlementDate),
           BigInt(message.startPrice), dataSource, tags, diamondOwnerMeta,
-          cutArg, initFacet, creator, nonce, deadline, signature
-        );
-        logS('factory_static_call_meta', 'success');
-      } catch (e: any) {
-        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
-          e, factoryIface, 'static call failed',
-        );
-        logS('factory_static_call_meta', 'error', {
-          error: raw, customError, selector, rawData,
-          hint: hintForAccessControlRawData(rawData),
-          rpcDetail: dug.rpcDetail,
-          ethersCode: dug.ethersCode,
-          rpcMethod: dug.payloadMethod,
+          cutArg, initFacet, creator, nonce, deadline, signature,
+        ];
+        let gasLimit: bigint;
+        try {
+          const estimated = await factory.getFunction('metaCreateFuturesMarketDiamond').estimateGas(...metaArgs);
+          gasLimit = (estimated * 130n) / 100n;
+          logS('factory_estimate_gas_meta', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
+        } catch {
+          gasLimit = fallbackGasLimit;
+          logS('factory_estimate_gas_meta', 'error', { fallback: String(gasLimit) });
+        }
+
+        // Pre-send balance check
+        const gasPrice = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+        const requiredBalance = gasLimit * BigInt(gasPrice);
+        const balance = await provider.getBalance(ownerAddress);
+        if (balance < requiredBalance) {
+          const balEth = ethers.formatEther(balance);
+          const reqEth = ethers.formatEther(requiredBalance);
+          logS('factory_send_tx_meta', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+          return NextResponse.json({
+            error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
+            wallet: ownerAddress, balance: balEth, required: reqEth,
+          }, { status: 503 });
+        }
+
+        try {
+          tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
+            ...metaArgs,
+            { ...overrides, gasLimit } as any
+          );
+        } catch (e: any) {
+          const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+            e, factoryIface, 'send tx failed',
+          );
+          logS('factory_send_tx_meta', 'error', {
+            error: raw, customError, selector, rawData,
+            hint: hintForAccessControlRawData(rawData),
+            rpcDetail: dug.rpcDetail,
+            ethersCode: dug.ethersCode,
+            rpcMethod: dug.payloadMethod,
+          });
+          return revertJsonBody(500, raw, customError, rawData, dug);
+        }
+        logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
+        await checkpointDraft(supabase, draftId, {
+          transaction_hash: tx.hash,
+          pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString() } },
         });
-        return revertJsonBody(400, raw, customError, rawData, dug);
-      }
-
-      // Send tx — estimate gas with fallback for chains where estimateGas is unreliable
-      logS('factory_send_tx_meta', 'start');
-      const overrides = await nonceMgr.nextOverrides();
-      const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
-      const metaArgs = [
-        message.marketSymbol, message.metricUrl, Number(message.settlementDate),
-        BigInt(message.startPrice), dataSource, tags, diamondOwnerMeta,
-        cutArg, initFacet, creator, nonce, deadline, signature,
-      ];
-      let gasLimit: bigint;
-      try {
-        const estimated = await factory.getFunction('metaCreateFuturesMarketDiamond').estimateGas(...metaArgs);
-        gasLimit = (estimated * 130n) / 100n; // 30% buffer
-        logS('factory_estimate_gas_meta', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
-      } catch {
-        gasLimit = fallbackGasLimit;
-        logS('factory_estimate_gas_meta', 'error', { fallback: String(gasLimit) });
-      }
-
-      // Pre-send balance check
-      const gasPrice = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
-      const requiredBalance = gasLimit * BigInt(gasPrice);
-      const balance = await provider.getBalance(ownerAddress);
-      if (balance < requiredBalance) {
-        const balEth = ethers.formatEther(balance);
-        const reqEth = ethers.formatEther(requiredBalance);
-        logS('factory_send_tx_meta', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
-        return NextResponse.json({
-          error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
-          wallet: ownerAddress, balance: balEth, required: reqEth,
-        }, { status: 503 });
-      }
-
-      try {
-        tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
-          ...metaArgs,
-          { ...overrides, gasLimit } as any
-        );
-      } catch (e: any) {
-        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
-          e, factoryIface, 'send tx failed',
-        );
-        logS('factory_send_tx_meta', 'error', {
-          error: raw, customError, selector, rawData,
-          hint: hintForAccessControlRawData(rawData),
-          rpcDetail: dug.rpcDetail,
-          ethersCode: dug.ethersCode,
-          rpcMethod: dug.payloadMethod,
+        logS('factory_confirm_meta', 'start');
+        receipt = await tx.wait();
+        logS('factory_confirm_meta_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+        await checkpointDraft(supabase, draftId, {
+          block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
+          pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },
         });
-        return revertJsonBody(500, raw, customError, rawData, dug);
       }
-      logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
-      // Progressive checkpoint: tx hash available
-      await checkpointDraft(supabase, draftId, {
-        transaction_hash: tx.hash,
-        pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString() } },
-      });
-      logS('factory_confirm_meta', 'start');
-      receipt = await tx.wait();
-      logS('factory_confirm_meta_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
-      // Progressive checkpoint: block number available
-      await checkpointDraft(supabase, draftId, {
-        block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
-        pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },
-      });
     } else {
       // ---- LEGACY DIRECT CREATE ----
       logS('factory_static_call', 'start');

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./diamond/Diamond.sol";
+import "./diamond/DiamondRegistry.sol";
 import "./diamond/interfaces/IDiamondCut.sol";
 import "./CoreVault.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
@@ -135,6 +136,10 @@ contract FuturesMarketFactory is EIP712 {
     // Market creation settings
     uint256 internal marketCreationFee = 100 * 10**6; // 100 USDC fee to create market
     bool internal publicMarketCreation = true; // Allow anyone to create markets
+    
+    // V2: Centralized facet registry for automatic upgrades across all markets
+    address public facetRegistry;
+    address public initFacetAddress;
 
     // ============ Internal Helpers ============
 
@@ -735,6 +740,97 @@ contract FuturesMarketFactory is EIP712 {
     function setBondManager(address newBondManager) external onlyAdmin {
         bondManager = newBondManager;
         // event omitted to reduce bytecode size
+    }
+    
+    /**
+     * @dev Set the facet registry address for V2 market creation.
+     * @param _facetRegistry Address of the FacetRegistry contract
+     */
+    function setFacetRegistry(address _facetRegistry) external onlyAdmin {
+        if (_facetRegistry == address(0)) revert ZeroAddress();
+        facetRegistry = _facetRegistry;
+    }
+    
+    /**
+     * @dev Set the init facet address for V2 market creation.
+     * @param _initFacet Address of the OrderBookInit facet
+     */
+    function setInitFacet(address _initFacet) external onlyAdmin {
+        if (_initFacet == address(0)) revert ZeroAddress();
+        initFacetAddress = _initFacet;
+    }
+    
+    /**
+     * @dev V2: Create a new futures market using DiamondRegistry (centralized facet lookup).
+     *      All markets created with this function share the same facet addresses via the registry.
+     *      Upgrading a facet in the registry instantly upgrades all V2 markets.
+     * @param marketSymbol Human-readable market symbol
+     * @param metricUrl Source-of-truth URL
+     * @param settlementDate Settlement timestamp
+     * @param startPrice Initial mark price (6 decimals)
+     * @param dataSource Data source descriptor
+     * @param tags Discovery tags
+     * @param diamondOwner Owner of the Diamond (admin)
+     */
+    function createFuturesMarketV2(
+        string memory marketSymbol,
+        string memory metricUrl,
+        uint256 settlementDate,
+        uint256 startPrice,
+        string memory dataSource,
+        string[] memory tags,
+        address diamondOwner
+    ) external 
+        canCreateMarket 
+        validMarketSymbol(marketSymbol) 
+        validMetricUrl(metricUrl)
+        validSettlementDate(settlementDate)
+        returns (address orderBook, bytes32 marketId) 
+    {
+        if (startPrice == 0) revert InvalidOraclePrice();
+        if (bytes(dataSource).length == 0) revert InvalidInput();
+        if (tags.length > 10) revert InvalidInput();
+        if (diamondOwner == address(0)) revert ZeroAddress();
+        if (facetRegistry == address(0)) revert InvalidInput();
+        if (initFacetAddress == address(0)) revert InvalidInput();
+
+        if (marketCreationFee > 0 && msg.sender != admin) {
+            vault.deductFees(msg.sender, marketCreationFee, feeRecipient);
+        }
+        
+        marketId = keccak256(abi.encodePacked(marketSymbol, metricUrl, msg.sender, block.timestamp, block.number));
+        if (marketExists[marketId]) revert MarketIdCollision();
+
+        address bm = bondManager;
+        if (bm == address(0)) revert InvalidInput();
+        IMarketBondManager(bm).onMarketCreate(marketId, msg.sender);
+
+        // Build init calldata
+        bytes4 initSel = bytes4(keccak256("obInitialize(address,bytes32,address)"));
+        bytes memory initData = abi.encodeWithSelector(initSel, address(vault), marketId, feeRecipient);
+        
+        // Deploy DiamondRegistry instead of Diamond - uses centralized facet lookup
+        DiamondRegistry diamond = new DiamondRegistry(facetRegistry, diamondOwner, initFacetAddress, initData);
+        orderBook = address(diamond);
+
+        // Register with vault and assign market
+        vault.registerOrderBook(orderBook);
+        vault.assignMarketToOrderBook(marketId, orderBook);
+        
+        // Update tracking and metadata
+        marketToOrderBook[marketId] = orderBook;
+        orderBookToMarket[orderBook] = marketId;
+        marketExists[marketId] = true;
+        marketCreators[marketId] = msg.sender;
+        marketSymbols[marketId] = marketSymbol;
+        allMarkets.push(marketId);
+        marketMetricUrls[marketId] = metricUrl;
+        marketSettlementDates[marketId] = settlementDate;
+
+        vault.updateMarkPrice(marketId, startPrice);
+        
+        emit FuturesMarketCreated(orderBook, marketId, marketSymbol, msg.sender, marketCreationFee, metricUrl, settlementDate, startPrice);
+        return (orderBook, marketId);
     }
     
     // ============ View Functions ============

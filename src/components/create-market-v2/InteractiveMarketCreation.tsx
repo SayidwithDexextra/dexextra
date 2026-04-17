@@ -2109,99 +2109,110 @@ export function InteractiveMarketCreation({
 
   const pipelineMessages: string[] = gaslessEnabled
     ? [
-        'Fetch facet cut configuration',        // 0
-        'Build initializer and selectors',      // 1
-        'Prepare meta-create',                  // 2
-        'Sign meta request',                    // 3
-        'Submit deploy transaction',            // 4
-        'Awaiting on-chain confirmation',       // 5
-        'Verify market selectors',              // 6
-        'Configure market',                     // 7 (registry + roles + fees — parallel)
-        'Saving market metadata',               // 8
-        'Finalize deployment',                  // 9
+        'Prepare market request',               // 0
+        'Sign authorization',                   // 1
+        'Submit to relayer',                    // 2
+        'Awaiting on-chain confirmation',       // 3
+        'Configure market',                     // 4 (roles + fees)
+        'Saving market metadata',               // 5
+        'Finalize deployment',                  // 6
       ]
     : [
-        'Fetch facet cut configuration',        // 0
-        'Build initializer and selectors',      // 1
-        'Preflight validation (static call)',   // 2
-        'Submit create transaction',            // 3
-        'Wait for confirmation',                // 4
-        'Verify market selectors',              // 5
-        'Configure market',                     // 6 (registry + roles + fees)
-        'Saving market metadata',               // 7
-        'Finalize deployment',                  // 8
+        'Prepare market request',               // 0
+        'Sign authorization',                   // 1
+        'Submit to relayer',                    // 2
+        'Awaiting on-chain confirmation',       // 3
+        'Configure market',                     // 4
+        'Saving market metadata',               // 5
+        'Finalize deployment',                  // 6
       ];
 
   const stepIndexMap: Record<string, number> = gaslessEnabled
     ? {
         // Client-side events (createMarketOnChain onProgress)
-        cut_fetch: 0,
-        cut_build: 1,
-        meta_prepare: 2,
-        meta_signature: 3,
-        relayer_deploy: 4,
-        deploy_resumed: 5,
-        relayer_configure: 7,
-        configure_resumed: 7,
-        relayer_finalize: 9,
+        meta_prepare: 0,
+        meta_signature: 1,
+        relayer_deploy: 2,
+        deploy_resumed: 3,
+        relayer_configure: 4,
+        configure_resumed: 4,
+        relayer_finalize: 6,
 
         // Server deploy events (Pusher)
-        facet_cut_built: 1,
-        factory_static_call_meta: 4,
-        factory_send_tx_meta: 4,
-        factory_send_tx_meta_sent: 4,
-        factory_confirm_meta: 5,
-        factory_confirm_meta_mined: 5,
-        deploy_complete: 5,
+        gasless_v2_start: 0,
+        gasless_v2_sig_verified: 1,
+        factory_static_call_meta_v2: 2,
+        factory_send_tx_meta_v2: 2,
+        factory_send_tx_meta_v2_sent: 2,
+        factory_confirm_meta_v2: 3,
+        factory_confirm_meta_v2_mined: 3,
+        deploy_complete: 3,
+
+        // Legacy event compatibility
+        cut_fetch: 0,
+        cut_build: 0,
+        facet_cut_built: 0,
+        factory_static_call_meta: 2,
+        factory_send_tx_meta: 2,
+        factory_send_tx_meta_sent: 2,
+        factory_confirm_meta: 3,
+        factory_confirm_meta_mined: 3,
 
         // Server configure events (Pusher)
-        parallel_signers: 6,
-        parallel_reads: 6,
-        ensure_selectors: 6,
-        ensure_selectors_missing: 6,
-        ensure_selectors_diamondCut_sent: 6,
-        ensure_selectors_diamondCut_mined: 6,
-        attach_session_registry: 7,
-        attach_session_registry_sent: 7,
-        attach_session_registry_mined: 7,
-        grant_roles: 7,
-        grant_ORDERBOOK_ROLE_sent: 7,
-        grant_ORDERBOOK_ROLE_mined: 7,
-        grant_SETTLEMENT_ROLE_sent: 7,
-        grant_SETTLEMENT_ROLE_mined: 7,
-        configure_fees: 7,
-        configure_fees_sent: 7,
-        configure_fees_mined: 7,
-        set_fee_recipient: 7,
-        set_fee_recipient_sent: 7,
-        set_fee_recipient_mined: 7,
-        speed_run_testing_mode: 7,
-        recalculate_settlement: 7,
-        reschedule_qstash: 7,
-        configure_complete: 7,
+        parallel_signers: 4,
+        parallel_reads: 4,
+        ensure_selectors: 4,
+        ensure_selectors_missing: 4,
+        ensure_selectors_diamondCut_sent: 4,
+        ensure_selectors_diamondCut_mined: 4,
+        attach_session_registry: 4,
+        attach_session_registry_sent: 4,
+        attach_session_registry_mined: 4,
+        grant_roles: 4,
+        grant_roles_v2: 4,
+        grant_ORDERBOOK_ROLE_sent: 4,
+        grant_ORDERBOOK_ROLE_mined: 4,
+        grant_SETTLEMENT_ROLE_sent: 4,
+        grant_SETTLEMENT_ROLE_mined: 4,
+        configure_fees: 4,
+        configure_fees_v2: 4,
+        configure_fees_sent: 4,
+        configure_fees_mined: 4,
+        set_fee_recipient: 4,
+        set_fee_recipient_sent: 4,
+        set_fee_recipient_mined: 4,
+        speed_run_testing_mode: 4,
+        recalculate_settlement: 4,
+        reschedule_qstash: 4,
+        configure_complete: 4,
 
         // Server finalize events (Pusher)
-        save_market: 8,
-        qstash_schedule: 8,
+        save_market: 5,
+        qstash_schedule: 5,
       }
     : {
         // Client-side events
-        cut_fetch: 0,
-        cut_build: 1,
+        meta_prepare: 0,
+        meta_signature: 1,
+        relayer_deploy: 2,
         static_call: 2,
-        send_tx: 3,
-        confirm: 4,
-        parse_event: 4,
-        relayer_configure: 6,
-        configure_resumed: 6,
-        relayer_finalize: 8,
+        send_tx: 2,
+        confirm: 3,
+        parse_event: 3,
+        relayer_configure: 4,
+        configure_resumed: 4,
+        relayer_finalize: 6,
+
+        // Legacy fallback
+        cut_fetch: 0,
+        cut_build: 0,
 
         // Server deploy events (Pusher)
-        facet_cut_built: 1,
+        facet_cut_built: 0,
         factory_static_call: 2,
-        factory_send_tx: 3,
-        factory_send_tx_sent: 3,
-        factory_confirm: 4,
+        factory_send_tx: 2,
+        factory_send_tx_sent: 2,
+        factory_confirm: 3,
         factory_confirm_mined: 4,
         deploy_complete: 4,
 

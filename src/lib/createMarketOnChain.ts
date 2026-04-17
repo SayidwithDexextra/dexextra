@@ -370,70 +370,51 @@ export async function createMarketOnChain(params: {
     // Gasless path: sign typed data and submit via backend relayer
     onProgress?.({ step: 'meta_prepare', status: 'start' });
 
-    // Use pre-fetched hashes when available, otherwise compute live
+    // Compute tagsHash
     let tagsHash: string;
-    let cutHash: string;
-
     if (prefetchedCut?.emptyTagsHash && tags.length === 0) {
       tagsHash = prefetchedCut.emptyTagsHash;
     } else {
       try {
         tagsHash = await factory.computeTagsHash(tags);
       } catch {
-        tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
-      }
-    }
-
-    if (prefetchedCut?.cutHash) {
-      cutHash = prefetchedCut.cutHash;
-    } else {
-      try {
-        const helperCut = cutArg.map((c) => ({ facetAddress: c[0], action: c[1], functionSelectors: c[2] }));
-        cutHash = await factory.computeCutHash(helperCut as any);
-      } catch {
-        const perCutHashes: string[] = [];
-        for (const entry of cutArg) {
-          const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
-          const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
-          perCutHashes.push(ethers.keccak256(enc));
+        // Local fallback
+        let packed = '0x';
+        for (const tag of tags) {
+          packed += Buffer.from(tag).toString('hex');
         }
-        cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+        tagsHash = ethers.keccak256(packed || '0x');
       }
     }
 
-    // fetch meta nonce (always live — depends on signer address)
+    // Fetch meta nonce
     let nonceBn: bigint = 0n;
     try {
       nonceBn = await factory.metaCreateNonce(signerAddress);
     } catch {}
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 15 * 60); // 15 minutes
 
-    // Domain: use pre-fetched if available, otherwise fetch live
-    let domainName = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexeteraFactory');
-    let domainVersion = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION || '1');
+    // EIP-712 Domain
+    let domainName = 'DexeteraFactory';
+    let domainVersion = '1';
     let domainChainId = Number(network.chainId);
     let domainVerifying = factoryAddress;
-    if (prefetchedCut?.eip712Domain) {
-      domainName = prefetchedCut.eip712Domain.name;
-      domainVersion = prefetchedCut.eip712Domain.version;
-      domainChainId = prefetchedCut.eip712Domain.chainId;
-      domainVerifying = prefetchedCut.eip712Domain.verifyingContract;
-    } else {
-      try {
-        const info = await factory.eip712DomainInfo();
-        if (info?.name) domainName = info.name;
-        if (info?.version) domainVersion = info.version;
-        if (info?.chainId) domainChainId = Number(info.chainId);
-        if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
-      } catch {}
-    }
+    try {
+      const info = await factory.eip712DomainInfo();
+      if (info?.name) domainName = info.name;
+      if (info?.version) domainVersion = info.version;
+      if (info?.chainId) domainChainId = Number(info.chainId);
+      if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
+    } catch {}
+
     const domain = {
       name: domainName,
       version: domainVersion,
       chainId: domainChainId,
       verifyingContract: domainVerifying,
     } as const;
-    // Diamond owner must match what the server will pass to metaCreate (admin wallet by default)
+
+    // Diamond owner (admin wallet or user)
     const envDiamondOwner =
       (process.env as any).NEXT_PUBLIC_FACTORY_DIAMOND_OWNER ||
       (globalThis as any).process?.env?.NEXT_PUBLIC_FACTORY_DIAMOND_OWNER;
@@ -441,8 +422,9 @@ export async function createMarketOnChain(params: {
       (typeof envDiamondOwner === 'string' && ethers.isAddress(envDiamondOwner))
         ? envDiamondOwner
         : owner;
+
     const types = {
-      MetaCreate: [
+      MetaCreateV2: [
         { name: 'marketSymbol', type: 'string' },
         { name: 'metricUrl', type: 'string' },
         { name: 'settlementDate', type: 'uint256' },
@@ -450,13 +432,12 @@ export async function createMarketOnChain(params: {
         { name: 'dataSource', type: 'string' },
         { name: 'tagsHash', type: 'bytes32' },
         { name: 'diamondOwner', type: 'address' },
-        { name: 'cutHash', type: 'bytes32' },
-        { name: 'initFacet', type: 'address' },
         { name: 'creator', type: 'address' },
         { name: 'nonce', type: 'uint256' },
         { name: 'deadline', type: 'uint256' },
       ],
     } as const;
+
     const message = {
       marketSymbol: symbolNormalized,
       metricUrl: metricUrlNormalized,
@@ -465,48 +446,27 @@ export async function createMarketOnChain(params: {
       dataSource,
       tagsHash,
       diamondOwner,
-      cutHash,
-      initFacet,
       creator: signerAddress,
       nonce: nonceBn.toString(),
       deadline: deadline.toString(),
     };
-    // Debug: ensure signer === creator and domain/message are aligned
-    try {
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] signer', signerAddress);
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] creator', message.creator, 'equal?', String(message.creator).toLowerCase() === String(signerAddress).toLowerCase());
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] factory', factoryAddress);
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] chainId', Number(network.chainId));
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] domain', domain);
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] hashes', { tagsHash, cutHash });
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] diamondOwner', diamondOwner);
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] message', message);
-    } catch {}
+
+    // eslint-disable-next-line no-console
+    console.log('[GASLESS] Signing request', { domain, message });
+
     const signature = await (signer as any).signTypedData(domain as any, types as any, message as any);
-    // Local verification to ensure the signature matches the connected wallet
+    
+    // Verify signature locally
     try {
       const recoveredLocal = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
       if (recoveredLocal.toLowerCase() !== signerAddress.toLowerCase()) {
-      // eslint-disable-next-line no-console
-      console.warn('[LOCAL_SIG_MISMATCH]', { recoveredLocal, signerAddress, domain, message, signature });
-      throw new Error(`Signature recovered ${recoveredLocal} but expected ${signerAddress}`);
+        throw new Error(`Signature recovered ${recoveredLocal} but expected ${signerAddress}`);
       }
+      // eslint-disable-next-line no-console
+      console.log('[GASLESS] Signature verified locally');
     } catch (err: any) {
       throw new Error(`Signature self-check failed: ${err?.message || String(err)}`);
     }
-    try {
-      const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
-      // eslint-disable-next-line no-console
-      console.log('[SIGNCHECK][client] recovered', recovered);
-    } catch {}
     onProgress?.({ step: 'meta_signature', status: 'success' });
 
     // ---- STAGE 1: Deploy ----
@@ -540,7 +500,7 @@ export async function createMarketOnChain(params: {
           signature,
           nonce: message.nonce,
           deadline: message.deadline,
-          cutArg,
+          v2: true,
           pipelineId: pipelineId || null,
           draftId: draftId || null,
         }),
@@ -654,140 +614,9 @@ export async function createMarketOnChain(params: {
       receipt: undefined,
     };
   }
-  // Legacy direct on-chain tx — deploy on client, then configure + finalize via server
-  {
-    // Preflight static call (non-fatal)
-    try {
-      onProgress?.({ step: 'static_call', status: 'start' });
-      await factory.getFunction('createFuturesMarketDiamond').staticCall(
-        symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, owner, cutArg, initFacet, '0x'
-      );
-      onProgress?.({ step: 'static_call', status: 'success' });
-    } catch (_) {
-      onProgress?.({ step: 'static_call', status: 'error' });
-    }
 
-    // Send tx
-    onProgress?.({ step: 'send_tx', status: 'start' });
-    const tx = await factory.getFunction('createFuturesMarketDiamond')(
-      symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, owner, cutArg, initFacet, '0x'
-    );
-    onProgress?.({ step: 'send_tx', status: 'sent', data: { hash: tx.hash } });
-    onProgress?.({ step: 'confirm', status: 'start' });
-    const receipt = await tx.wait();
-    onProgress?.({ step: 'confirm', status: 'mined', data: { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber } });
-
-    // Parse event
-    const iface = new ethers.Interface(factoryAbi);
-    let orderBook: string | null = null;
-    let marketId: string | null = null;
-    for (const log of (receipt as any).logs || []) {
-      try {
-        const parsed = iface.parseLog(log);
-        if (parsed?.name === 'FuturesMarketCreated') {
-          orderBook = parsed.args?.orderBook as string;
-          marketId = parsed.args?.marketId as string;
-          break;
-        }
-      } catch {}
-    }
-    if (!orderBook || !marketId) throw new Error('Failed to parse FuturesMarketCreated event');
-    onProgress?.({ step: 'parse_event', status: 'success', data: { orderBook, marketId } });
-    logMarketIdentifiers(orderBook, marketId);
-
-    // Checkpoint deploy to drafts
-    if (draftId) {
-      try {
-        await fetch('/api/market-drafts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'checkpoint',
-            id: draftId,
-            wallet: signerAddress,
-            pipeline_stage: 'deployed',
-            orderbook_address: orderBook,
-            market_id_bytes32: marketId,
-            transaction_hash: receipt?.hash || tx.hash,
-            chain_id: Number(network.chainId),
-            block_number: (receipt as any)?.blockNumber ?? null,
-            pipeline_state: {
-              deploy: {
-                completed_at: new Date().toISOString(),
-                tx_hash: receipt?.hash || tx.hash,
-                block_number: (receipt as any)?.blockNumber ?? null,
-              },
-            },
-          }),
-        });
-      } catch {}
-    }
-
-    // ---- STAGE 2: Configure via server ----
-    onProgress?.({ step: 'relayer_configure', status: 'start' });
-    const configRes = await fetch('/api/markets/configure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        orderBook,
-        draftId: draftId || null,
-        pipelineId: pipelineId || null,
-        creatorWalletAddress: signerAddress,
-        feeRecipient: feeRecipient || signerAddress,
-        speedRunConfig: speedRunConfig || undefined,
-        settlementTs,
-      }),
-    });
-    if (!configRes.ok) {
-      const text = await configRes.text();
-      throw new Error(`configure http ${configRes.status}: ${text}`);
-    }
-    onProgress?.({ step: 'relayer_configure', status: 'success' });
-
-    // ---- STAGE 3: Finalize via server ----
-    onProgress?.({ step: 'relayer_finalize', status: 'start' });
-    const finalizeRes = await fetch('/api/markets/finalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        orderBook,
-        marketId,
-        transactionHash: receipt?.hash || tx.hash,
-        blockNumber: (receipt as any)?.blockNumber ?? null,
-        chainId: Number(network.chainId),
-        symbol: symbolNormalized,
-        metricUrl: metricUrlNormalized,
-        startPrice: String(startPrice),
-        dataSource,
-        tags,
-        name: typeof name === 'string' ? name : undefined,
-        description: typeof description === 'string' ? description : undefined,
-        bannerImageUrl: bannerImageUrl ?? null,
-        iconImageUrl: iconImageUrl ?? null,
-        aiSourceLocator: aiSourceLocator ?? null,
-        creatorWalletAddress: signerAddress,
-        settlementDate: settlementTs,
-        feeRecipient: feeRecipient || signerAddress,
-        speedRunConfig: speedRunConfig || undefined,
-        pipelineId: pipelineId || null,
-        draftId: draftId || null,
-      }),
-    });
-    if (!finalizeRes.ok) {
-      const text = await finalizeRes.text();
-      throw new Error(`finalize http ${finalizeRes.status}: ${text}`);
-    }
-    const finalJson = await finalizeRes.json();
-    onProgress?.({ step: 'relayer_finalize', status: 'success', data: { marketId: finalJson?.marketId } });
-
-    return {
-      orderBook,
-      marketId: finalJson?.marketId || marketId,
-      transactionHash: (receipt as any)?.hash || tx.hash,
-      chainId: Number(network.chainId),
-      receipt,
-    };
-  }
+  // Gasless mode is required - throw if somehow disabled
+  throw new Error('Gasless market creation is required. Enable NEXT_PUBLIC_GASLESS_CREATE_ENABLED.');
 }
 
 

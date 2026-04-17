@@ -45,19 +45,29 @@ const marketCache = new Map<string, Market>();
 const marketByAddressCache = new Map<string, Market>();
 const marketByIdentifierCache = new Map<string, Market>();
 
+// Explicit columns to fetch - avoids pulling large JSON columns unnecessarily
+const MARKET_COLUMNS = `
+  id, market_identifier, symbol, name, description, category,
+  market_id_bytes32, market_address, chain_id, network,
+  deployment_status, market_status, is_active,
+  created_at, updated_at, deployed_at, ai_source_locator
+`.replace(/\s+/g, ' ').trim();
+
 /**
  * Get all active markets
  */
-export async function getAllMarkets(includeInactive = false): Promise<Market[]> {
+export async function getAllMarkets(includeInactive = false, limit = 500): Promise<Market[]> {
   const query = supabase
     .from('markets')
-    .select('*');
+    .select(MARKET_COLUMNS);
   
   if (!includeInactive) {
     query.eq('is_active', true);
   }
   
-  const { data, error } = await query.order('created_at', { ascending: false });
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .limit(limit);
   
   if (error) {
     console.error('Error fetching markets:', error);
@@ -85,7 +95,7 @@ export async function getMarketById(id: string): Promise<Market | null> {
   
   const { data, error } = await supabase
     .from('markets')
-    .select('*')
+    .select(MARKET_COLUMNS)
     .eq('id', id)
     .single();
   
@@ -116,7 +126,7 @@ export async function getMarketByAddress(address: string): Promise<Market | null
   
   const { data, error } = await supabase
     .from('markets')
-    .select('*')
+    .select(MARKET_COLUMNS)
     .eq('market_address', address)
     .single();
   
@@ -144,7 +154,7 @@ export async function getMarketByIdentifier(identifier: string): Promise<Market 
   
   const { data, error } = await supabase
     .from('markets')
-    .select('*')
+    .select(MARKET_COLUMNS)
     .eq('market_identifier', identifier)
     .single();
   
@@ -192,7 +202,7 @@ export async function searchMarkets(searchTerm: string, category?: string, statu
     
     const query = supabase
       .from('markets')
-      .select('*')
+      .select(MARKET_COLUMNS)
       .eq('is_active', true)
       .limit(limit);
     
@@ -245,7 +255,7 @@ export async function getContractAddresses(identifier: string): Promise<Record<s
 export async function getMostActiveMarket(): Promise<Market | null> {
   const { data, error } = await supabase
     .from('markets')
-    .select('*')
+    .select(MARKET_COLUMNS)
     .eq('is_active', true)
     .eq('market_status', 'ACTIVE')
     .order('total_volume', { ascending: false })
@@ -256,7 +266,7 @@ export async function getMostActiveMarket(): Promise<Market | null> {
     // Fallback to any active market
     const { data: fallbackData, error: fallbackError } = await supabase
       .from('markets')
-      .select('*')
+      .select(MARKET_COLUMNS)
       .eq('is_active', true)
       .limit(1)
       .single();

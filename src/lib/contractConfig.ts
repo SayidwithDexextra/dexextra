@@ -94,6 +94,7 @@ export async function populateMarketInfoClient(symbolFilter?: string) {
         `id, market_identifier, symbol, name, market_id_bytes32, market_address, chain_id, network, is_active, market_status`
       )
       .order('created_at', { ascending: false })
+      .limit(500)
 
     if (symbolFilter) {
       const sf = String(symbolFilter);

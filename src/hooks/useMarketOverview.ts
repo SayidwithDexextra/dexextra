@@ -39,8 +39,8 @@ export function useMarketOverview({
   search, 
   autoRefresh = true, 
   refreshInterval = 5000, 
-  realtime = true,
-  realtimeDebounce = 1000 // Add debounce for realtime updates
+  realtime = false, // Disabled by default to reduce egress - polling every 5s is sufficient
+  realtimeDebounce = 1000
 }: {
   limit?: number;
   status?: string | string[];
@@ -167,13 +167,26 @@ export function useMarketOverview({
     return () => clearTimeout(timeoutId);
   }, [pendingUpdates, realtimeDebounce]);
 
-  // Realtime updates on market_tickers with debouncing
+  // Realtime updates on market_tickers with debouncing.
+  // NOTE: This subscribes to ALL ticker changes which causes significant egress.
+  // Only enable for specific use cases where sub-second updates are critical.
+  // For most cases, the 5-second polling interval is sufficient.
+  const dataMarketIds = useMemo(() => data.map(d => d.market_id), [data]);
+  
   useEffect(() => {
-    if (!realtime) return;
+    if (!realtime || dataMarketIds.length === 0) return;
+    
+    // Filter to only market IDs currently in view to reduce egress
+    const filterStr = `market_id=in.(${dataMarketIds.join(',')})`;
     
     const channel = supabase
-      .channel('market_tickers_overview')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'market_tickers' }, (payload: any) => {
+      .channel(`market_tickers_overview_${dataMarketIds.slice(0, 3).join('_')}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'market_tickers',
+        filter: filterStr
+      }, (payload: any) => {
         const row = payload.new || payload.old;
         if (!row?.market_id) return;
         
@@ -191,7 +204,7 @@ export function useMarketOverview({
     return () => {
       try { supabase.removeChannel(channel); } catch {}
     };
-  }, [realtime]);
+  }, [realtime, dataMarketIds]);
 
   return { data, isLoading, error, refetch: fetchOverview };
 }

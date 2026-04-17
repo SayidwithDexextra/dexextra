@@ -131,113 +131,134 @@ export function useOwnerEarnings(walletAddress: string | null, opts?: { disableR
     return () => { cancelled = true }
   }, [normalizedAddr, tick])
 
-  // Realtime: subscribe to new trading_fees rows and incrementally update
-  // when the wallet is the market_owner or protocol_fee_recipient
+  // Realtime: subscribe to new trading_fees rows filtered by wallet address.
+  // We use TWO separate channels with server-side filters to avoid receiving
+  // every fee insert globally (which was causing massive egress).
   const normalizedAddrRef = useRef(normalizedAddr)
   normalizedAddrRef.current = normalizedAddr
 
   useEffect(() => {
     if (!normalizedAddr || disableRealtime) return
 
-    const channel = supabase
-      .channel(`${channelIdRef.current}:${normalizedAddr}`)
+    const handleFeeInsert = (payload: any, isOwner: boolean) => {
+      const row = payload.new as any
+      const addr = normalizedAddrRef.current
+      if (!addr) return
+
+      const ownerShare = Number(row.owner_share) || 0
+      const protoShare = Number(row.protocol_share) || 0
+      const feeUsdc = Number(row.fee_amount_usdc) || 0
+      const volume = Number(row.trade_notional) || 0
+      const mktId = row.market_id || ''
+      const mktAddr = row.market_address || ''
+      const key = `${mktId}::${mktAddr}`
+      const ts = row.created_at || new Date().toISOString()
+
+      const markLive = (k: string) => {
+        setLiveMarketKeys((prev) => new Set([...prev, k]))
+        setTimeout(() => setLiveMarketKeys((prev) => { const s = new Set(prev); s.delete(k); return s }), 1500)
+      }
+
+      if (isOwner) {
+        markLive(key)
+        setMarkets((prev) => {
+          const existing = prev.find((m) => `${m.market_id}::${m.market_address}` === key)
+          if (existing) {
+            return prev.map((m) =>
+              `${m.market_id}::${m.market_address}` === key
+                ? {
+                    ...m,
+                    total_fee_events: m.total_fee_events + 1,
+                    total_owner_earnings_usdc: m.total_owner_earnings_usdc + ownerShare,
+                    total_protocol_earnings_usdc: m.total_protocol_earnings_usdc + protoShare,
+                    total_fees_collected_usdc: m.total_fees_collected_usdc + feeUsdc,
+                    total_volume_usdc: m.total_volume_usdc + volume,
+                    last_fee_at: ts,
+                  }
+                : m
+            )
+          }
+          return [...prev, {
+            market_owner_address: addr,
+            market_id: mktId,
+            market_address: mktAddr,
+            total_fee_events: 1,
+            total_owner_earnings_usdc: ownerShare,
+            total_protocol_earnings_usdc: protoShare,
+            total_fees_collected_usdc: feeUsdc,
+            total_volume_usdc: volume,
+            first_fee_at: ts,
+            last_fee_at: ts,
+          }]
+        })
+      } else {
+        markLive(`proto::${key}`)
+        setProtocolMarkets((prev) => {
+          const existing = prev.find((m) => `${m.market_id}::${m.market_address}` === key)
+          if (existing) {
+            return prev.map((m) =>
+              `${m.market_id}::${m.market_address}` === key
+                ? {
+                    ...m,
+                    total_fee_events: m.total_fee_events + 1,
+                    total_protocol_earnings_usdc: m.total_protocol_earnings_usdc + protoShare,
+                    total_owner_earnings_usdc: m.total_owner_earnings_usdc + ownerShare,
+                    total_fees_collected_usdc: m.total_fees_collected_usdc + feeUsdc,
+                    total_volume_usdc: m.total_volume_usdc + volume,
+                    last_fee_at: ts,
+                  }
+                : m
+            )
+          }
+          return [...prev, {
+            protocol_fee_recipient: addr,
+            market_id: mktId,
+            market_address: mktAddr,
+            total_fee_events: 1,
+            total_protocol_earnings_usdc: protoShare,
+            total_owner_earnings_usdc: ownerShare,
+            total_fees_collected_usdc: feeUsdc,
+            total_volume_usdc: volume,
+            first_fee_at: ts,
+            last_fee_at: ts,
+          }]
+        })
+      }
+    }
+
+    // Channel for market owner fees - filtered server-side
+    const ownerChannel = supabase
+      .channel(`${channelIdRef.current}:owner:${normalizedAddr}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'trading_fees' },
-        (payload) => {
-          const row = payload.new as any
-          const addr = normalizedAddrRef.current
-          if (!addr) return
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'trading_fees',
+          filter: `market_owner_address=eq.${normalizedAddr}`
+        },
+        (payload) => handleFeeInsert(payload, true)
+      )
+      .subscribe()
 
-          const ownerAddr = (row.market_owner_address || '').toLowerCase()
-          const protoAddr = (row.protocol_fee_recipient || '').toLowerCase()
-          const ownerShare = Number(row.owner_share) || 0
-          const protoShare = Number(row.protocol_share) || 0
-          const feeUsdc = Number(row.fee_amount_usdc) || 0
-          const volume = Number(row.trade_notional) || 0
-          const mktId = row.market_id || ''
-          const mktAddr = row.market_address || ''
-          const key = `${mktId}::${mktAddr}`
-          const ts = row.created_at || new Date().toISOString()
-
-          const markLive = (k: string) => {
-            setLiveMarketKeys((prev) => new Set([...prev, k]))
-            setTimeout(() => setLiveMarketKeys((prev) => { const s = new Set(prev); s.delete(k); return s }), 1500)
-          }
-
-          if (ownerAddr === addr) {
-            markLive(key)
-            setMarkets((prev) => {
-              const existing = prev.find((m) => `${m.market_id}::${m.market_address}` === key)
-              if (existing) {
-                return prev.map((m) =>
-                  `${m.market_id}::${m.market_address}` === key
-                    ? {
-                        ...m,
-                        total_fee_events: m.total_fee_events + 1,
-                        total_owner_earnings_usdc: m.total_owner_earnings_usdc + ownerShare,
-                        total_protocol_earnings_usdc: m.total_protocol_earnings_usdc + protoShare,
-                        total_fees_collected_usdc: m.total_fees_collected_usdc + feeUsdc,
-                        total_volume_usdc: m.total_volume_usdc + volume,
-                        last_fee_at: ts,
-                      }
-                    : m
-                )
-              }
-              return [...prev, {
-                market_owner_address: ownerAddr,
-                market_id: mktId,
-                market_address: mktAddr,
-                total_fee_events: 1,
-                total_owner_earnings_usdc: ownerShare,
-                total_protocol_earnings_usdc: protoShare,
-                total_fees_collected_usdc: feeUsdc,
-                total_volume_usdc: volume,
-                first_fee_at: ts,
-                last_fee_at: ts,
-              }]
-            })
-          }
-
-          if (protoAddr === addr) {
-            markLive(`proto::${key}`)
-            setProtocolMarkets((prev) => {
-              const existing = prev.find((m) => `${m.market_id}::${m.market_address}` === key)
-              if (existing) {
-                return prev.map((m) =>
-                  `${m.market_id}::${m.market_address}` === key
-                    ? {
-                        ...m,
-                        total_fee_events: m.total_fee_events + 1,
-                        total_protocol_earnings_usdc: m.total_protocol_earnings_usdc + protoShare,
-                        total_owner_earnings_usdc: m.total_owner_earnings_usdc + ownerShare,
-                        total_fees_collected_usdc: m.total_fees_collected_usdc + feeUsdc,
-                        total_volume_usdc: m.total_volume_usdc + volume,
-                        last_fee_at: ts,
-                      }
-                    : m
-                )
-              }
-              return [...prev, {
-                protocol_fee_recipient: protoAddr,
-                market_id: mktId,
-                market_address: mktAddr,
-                total_fee_events: 1,
-                total_protocol_earnings_usdc: protoShare,
-                total_owner_earnings_usdc: ownerShare,
-                total_fees_collected_usdc: feeUsdc,
-                total_volume_usdc: volume,
-                first_fee_at: ts,
-                last_fee_at: ts,
-              }]
-            })
-          }
-        }
+    // Channel for protocol fee recipient - filtered server-side
+    const protoChannel = supabase
+      .channel(`${channelIdRef.current}:proto:${normalizedAddr}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'trading_fees',
+          filter: `protocol_fee_recipient=eq.${normalizedAddr}`
+        },
+        (payload) => handleFeeInsert(payload, false)
       )
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      supabase.removeChannel(ownerChannel)
+      supabase.removeChannel(protoChannel)
     }
   }, [normalizedAddr, disableRealtime])
 

@@ -637,6 +637,298 @@ export async function POST(req: Request) {
       logS('wallet_ready', 'success', { ownerAddress });
     }
 
+    // =========================================================================
+    // V2 FAST PATH: Use FacetRegistry for simpler market creation (no facet cuts)
+    // When FACET_REGISTRY_ADDRESS is configured, use createFuturesMarketV2
+    // =========================================================================
+    const facetRegistryAddress = process.env.FACET_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FACET_REGISTRY_ADDRESS;
+    const gaslessEnabled = String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+    // V2 is used when FacetRegistry is configured and gasless is not enabled
+    // Rollovers also use V2 for simpler deployment with auto-upgrades
+    const useV2 = facetRegistryAddress && ethers.isAddress(facetRegistryAddress) && !gaslessEnabled;
+    
+    if (useV2) {
+      logS('v2_fast_path', 'start', { facetRegistry: facetRegistryAddress });
+      try {
+        const factoryArtifact = await import('@/lib/abis/FuturesMarketFactory.json');
+        const factoryAbi = (factoryArtifact as any)?.default?.abi || (factoryArtifact as any)?.abi || [];
+        const factory = new ethers.Contract(factoryAddress, factoryAbi, wallet);
+        const factoryIface = new ethers.Interface(factoryAbi);
+        const diamondOwner = process.env.FACTORY_DIAMOND_OWNER || (process.env as any).NEXT_PUBLIC_FACTORY_DIAMOND_OWNER || ownerAddress;
+
+        // Preflight: check bondManager
+        try {
+          const bm = await factory.bondManager();
+          if (!bm || bm === ethers.ZeroAddress) {
+            return NextResponse.json({ error: 'Factory bondManager is unset', code: 'bond_manager_zero' }, { status: 503 });
+          }
+        } catch (e: any) {
+          console.warn('[create/v2] bondManager check failed', e?.message);
+        }
+
+        // Static call
+        logS('factory_static_call_v2', 'start');
+        try {
+          await factory.getFunction('createFuturesMarketV2').staticCall(
+            symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, diamondOwner
+          );
+          logS('factory_static_call_v2', 'success');
+        } catch (e: any) {
+          const decoded = decodeRevert(factoryIface, e);
+          logS('factory_static_call_v2', 'error', { error: e?.message, customError: decoded?.name });
+          return NextResponse.json({ error: e?.shortMessage || e?.message, customError: decoded?.name }, { status: 400 });
+        }
+
+        // Send tx
+        logS('factory_send_tx_v2', 'start');
+        const overrides = await nonceMgr.nextOverrides();
+        const tx = await factory.getFunction('createFuturesMarketV2')(
+          symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, diamondOwner, overrides
+        );
+        logS('factory_send_tx_v2_sent', 'success', { hash: tx.hash });
+
+        const receipt = await tx.wait();
+        logS('factory_confirm_v2', 'success', { hash: receipt?.hash, block: receipt?.blockNumber });
+
+        // Parse event
+        let orderBook: string | null = null;
+        let marketId: string | null = null;
+        for (const log of receipt?.logs || []) {
+          try {
+            const parsed = factoryIface.parseLog(log);
+            if (parsed?.name === 'FuturesMarketCreated') {
+              orderBook = parsed.args?.orderBook;
+              marketId = parsed.args?.marketId;
+              break;
+            }
+          } catch {}
+        }
+        if (!orderBook || !marketId) {
+          return NextResponse.json({ error: 'Could not parse V2 market creation event' }, { status: 500 });
+        }
+
+        // V2 markets still need role grants - continue to the post-creation flow
+        // Jump to the post-factory configuration section with these values
+        logS('v2_fast_path', 'success', { orderBook: shortAddr(orderBook), marketId: marketId.slice(0, 12) });
+        
+        // Set variables needed for post-creation configuration
+        const gaslessDiamondOwner = diamondOwner;
+        const feeRecipient = creatorWalletAddress || ownerAddress;
+        
+        // ── V2 Post-creation: Grant roles and save to DB ──
+        // Resync nonce after factory tx
+        await nonceMgr.resync();
+
+        // Setup secondary signer for vault ops
+        const secondaryPk = process.env.ROLE_GRANTER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY;
+        const normalizedSecondaryPk = secondaryPk ? normalizePk(secondaryPk) : null;
+        const normalizedPrimaryPk = normalizePk(pk);
+        const useParallelSigners = normalizedSecondaryPk && /^0x[a-fA-F0-9]{64}$/.test(normalizedSecondaryPk) && normalizedSecondaryPk.toLowerCase() !== normalizedPrimaryPk.toLowerCase();
+
+        let vaultWallet: ethers.Wallet;
+        let vaultNonceMgr: Awaited<ReturnType<typeof createNonceManager>>;
+        if (useParallelSigners) {
+          vaultWallet = new ethers.Wallet(normalizedSecondaryPk, provider);
+          vaultNonceMgr = await createNonceManager(vaultWallet);
+        } else {
+          vaultWallet = wallet;
+          vaultNonceMgr = nonceMgr;
+        }
+        if (useParallelSigners) await vaultNonceMgr.resync();
+
+        // Grant CoreVault roles
+        logS('grant_roles_v2', 'start', { coreVault: coreVaultAddress, orderBook });
+        const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, vaultWallet);
+        const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
+        const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
+
+        try {
+          const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, await vaultNonceMgr.nextOverrides());
+          const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, await vaultNonceMgr.nextOverrides());
+          await Promise.all([tx1.wait(), tx2.wait()]);
+          logS('grant_roles_v2', 'success');
+        } catch (e: any) {
+          logS('grant_roles_v2', 'error', { error: e?.message });
+          return NextResponse.json({ error: 'Role grant failed', details: e?.message }, { status: 500 });
+        }
+
+        // Configure fees from FeeRegistry
+        const feeRegistryAddr = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS;
+        if (feeRegistryAddr && ethers.isAddress(feeRegistryAddr)) {
+          try {
+            const feeRegistry = new ethers.Contract(feeRegistryAddr, FeeRegistryABI, provider);
+            const [takerBps, makerBps, protocolRecipient, protocolShareBps] = await feeRegistry.getFeeStructure();
+            const obFee = new ethers.Contract(orderBook, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
+            const feeTx = await obFee.updateFeeStructure(takerBps, makerBps, protocolRecipient, protocolShareBps, await nonceMgr.nextOverrides());
+            await feeTx.wait();
+            logS('configure_fees_v2', 'success', { takerBps: Number(takerBps), makerBps: Number(makerBps) });
+          } catch (e: any) {
+            logS('configure_fees_v2', 'error', { error: e?.message });
+          }
+        }
+
+        // Save to Supabase
+        logS('save_market_v2', 'start');
+        try {
+          const supabase = getSupabase();
+          if (supabase) {
+            const network = await provider.getNetwork();
+            const networkName = String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || '').slice(0, 50);
+            const fallbackName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
+            const safeName = (providedName || derivedDisplayName || fallbackName).slice(0, 100);
+            const safeDescription = (providedDescription || `OrderBook market for ${symbol}`).slice(0, 280);
+
+            let resolvedCategory: string[];
+            if (Array.isArray(tags) && tags.length) {
+              resolvedCategory = tags;
+            } else {
+              try {
+                resolvedCategory = await suggestCategories(safeName, safeDescription, { timeoutMs: 5000 });
+              } catch {
+                resolvedCategory = ['Custom'];
+              }
+            }
+
+            const insertPayload: any = {
+              market_identifier: marketIdentifier,
+              symbol: marketIdentifier,
+              name: safeName,
+              description: safeDescription,
+              category: resolvedCategory,
+              decimals: 6,
+              minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
+              tick_size: Number(process.env.DEFAULT_TICK_SIZE || 0.01),
+              requires_kyc: false,
+              settlement_date: new Date(settlementTs * 1000).toISOString(),
+              data_request_window_seconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
+              auto_settle: true,
+              initial_order: { metricUrl, startPrice: String(startPrice), dataSource, tags },
+              market_config: {
+                v2_market: true,
+                facet_registry: facetRegistryAddress,
+                ...(isRollover ? {
+                  rollover_lineage: {
+                    parent_market_id: parentMarketId,
+                    parent_market_address: parentMarketAddress,
+                    rolled_over_at: new Date().toISOString(),
+                  },
+                } : {}),
+                ...(speedRunConfig ? {
+                  speed_run: true,
+                  challenge_window_seconds: speedRunConfig.challengeWindowSeconds,
+                  rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
+                } : {}),
+              },
+              chain_id: Number(network.chainId),
+              network: networkName,
+              creator_wallet_address: creatorWalletAddress,
+              banner_image_url: bannerImageUrl || iconImageUrl || null,
+              icon_image_url: iconImageUrl,
+              market_address: orderBook,
+              market_id_bytes32: marketId,
+              deployment_transaction_hash: receipt?.hash || tx.hash,
+              deployment_block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
+              deployment_status: 'DEPLOYED',
+              market_status: 'ACTIVE',
+              deployed_at: new Date().toISOString(),
+            };
+
+            // Rollover markets use insert (unique identifier), non-rollover use upsert
+            const { data: dbRow, error: saveErr } = isRollover
+              ? await supabase.from('markets').insert([insertPayload]).select('id').limit(1).maybeSingle()
+              : await supabase.from('markets').upsert([insertPayload], { onConflict: 'market_identifier' }).select('id').limit(1).maybeSingle();
+
+            if (saveErr) throw saveErr;
+
+            // Rollover: update parent and link on-chain
+            if (isRollover && dbRow?.id && parentMarketId) {
+              try {
+                const { data: parentRow } = await supabase.from('markets').select('market_config').eq('id', parentMarketId).maybeSingle();
+                const existingCfg = (typeof parentRow?.market_config === 'object' && parentRow?.market_config) || {};
+                await supabase.from('markets').update({
+                  market_config: {
+                    ...(existingCfg as any),
+                    rollover: {
+                      child_market_id: dbRow.id,
+                      child_address: orderBook,
+                      child_settlement_date: new Date(settlementTs * 1000).toISOString(),
+                      rolled_over_at: new Date().toISOString(),
+                    },
+                  },
+                  updated_at: new Date().toISOString(),
+                }).eq('id', parentMarketId);
+                logS('rollover_update_parent_v2', 'success', { parentMarketId });
+              } catch (e: any) {
+                logS('rollover_update_parent_v2', 'error', { error: e?.message });
+              }
+
+              // Link on-chain
+              if (parentMarketAddress && orderBook) {
+                try {
+                  const lifecycleAbi = ['function linkRolloverChildByAddress(address,uint256) external'];
+                  const parentContract = new ethers.Contract(parentMarketAddress, lifecycleAbi, wallet);
+                  const linkTx = await parentContract.linkRolloverChildByAddress(orderBook, settlementTs);
+                  await linkTx.wait();
+                  logS('rollover_link_onchain_v2', 'success', { tx: linkTx.hash });
+                } catch (e: any) {
+                  logS('rollover_link_onchain_v2', 'error', { error: e?.message });
+                }
+              }
+            }
+
+            // Schedule lifecycle
+            if (dbRow?.id && settlementTs > Math.floor(Date.now() / 1000)) {
+              try {
+                const scheduleIds = await scheduleMarketLifecycle(dbRow.id, settlementTs, {
+                  marketAddress: orderBook,
+                  symbol,
+                });
+                logS('qstash_schedule_v2', 'success', { scheduleIds });
+              } catch (e: any) {
+                logS('qstash_schedule_v2', 'error', { error: e?.message });
+              }
+            }
+
+            logS('save_market_v2', 'success', { marketId: dbRow?.id });
+            return NextResponse.json({
+              ok: true,
+              v2: true,
+              symbol,
+              orderBook,
+              marketId: dbRow?.id || marketId,
+              transactionHash: receipt?.hash || tx.hash,
+              feeRecipient,
+            });
+          }
+        } catch (e: any) {
+          logS('save_market_v2', 'error', { error: e?.message });
+          return NextResponse.json({
+            error: 'Save market failed',
+            details: e?.message,
+            orderBook,
+            marketId,
+            transactionHash: receipt?.hash || tx.hash,
+          }, { status: 500 });
+        }
+
+        return NextResponse.json({
+          ok: true,
+          v2: true,
+          symbol,
+          orderBook,
+          marketId,
+          transactionHash: receipt?.hash || tx.hash,
+        });
+      } catch (e: any) {
+        logS('v2_fast_path', 'error', { error: e?.message });
+        // Fall through to V1 path on error
+        console.warn('[create] V2 fast path failed, falling back to V1:', e?.message);
+      }
+    }
+    // =========================================================================
+    // END V2 FAST PATH - Continue with V1 facet cut flow below
+    // =========================================================================
+
     // Load ABIs (prefer compiled artifacts to prevent selector drift)
     const adminAbi = loadFacetAbi('OBAdminFacet', OBAdminFacetABI as any[]);
     const pricingAbi = loadFacetAbi('OBPricingFacet', OBPricingFacetABI as any[]);
@@ -714,7 +1006,7 @@ export async function POST(req: Request) {
     // Resolve factory
     const factoryArtifact = await import('@/lib/abis/FuturesMarketFactory.json');
     const baseFactoryAbi = (factoryArtifact as any)?.default?.abi || (factoryArtifact as any)?.abi || (factoryArtifact as any)?.default || (factoryArtifact as any);
-    const gaslessEnabled = String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+    // gaslessEnabled already defined above in V2 check
     const metaAbi = [
       'function metaCreateFuturesMarketDiamond(string,string,uint256,uint256,string,string[],address,(address,uint8,bytes4[])[],address,address,uint256,uint256,bytes) returns (address,bytes32)',
       'function metaCreateNonce(address) view returns (uint256)',
