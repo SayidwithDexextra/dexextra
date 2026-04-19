@@ -503,6 +503,139 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     });
   }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice, enhancedTokenData?.marketStatus]);
 
+  // Subscribe to real-time trade and order events to trigger mark price refresh
+  // This is event-driven (no polling) - price updates when market activity occurs
+  const lastEventRefreshRef = useRef<number>(0);
+  const eventRefreshTimeoutRef = useRef<any>(null);
+  
+  useEffect(() => {
+    const symbolUpper = String(symbol || '').toUpperCase();
+    if (!symbolUpper) return;
+    
+    // Fetch mark price from contract (single RPC call)
+    const fetchMarkPriceOnEvent = async () => {
+      const now = Date.now();
+      // Debounce rapid events (e.g., multiple fills in same block)
+      if (now - lastEventRefreshRef.current < 500) return;
+      lastEventRefreshRef.current = now;
+      
+      const orderBookAddressCandidate =
+        ((md as any)?.orderBookAddress as string | null | undefined) ||
+        ((marketData as any)?.market_address as string | null | undefined) ||
+        null;
+      const orderBookAddress =
+        orderBookAddressCandidate &&
+        typeof orderBookAddressCandidate === 'string' &&
+        orderBookAddressCandidate.startsWith('0x') &&
+        orderBookAddressCandidate.length === 42
+          ? (orderBookAddressCandidate as Address)
+          : null;
+      
+      if (!orderBookAddress) return;
+      
+      const ORDERBOOK_ABI = [
+        { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+      ] as const as any[];
+      
+      try {
+        const obRaw = await publicClient.readContract({
+          address: orderBookAddress,
+          abi: ORDERBOOK_ABI,
+          functionName: 'calculateMarkPrice',
+          args: [],
+        }) as bigint;
+        
+        const OB_DEFAULT_RAW = 1_000_000n;
+        const ob = Number(obRaw) / 1e6;
+        
+        // If OB returns default (1.0), try vault price
+        if (obRaw === OB_DEFAULT_RAW) {
+          const marketIdBytes32FromDb = (marketData as any)?.market_id_bytes32 as string | undefined;
+          const vaultAddrFromConfig = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
+          
+          if (marketIdBytes32FromDb && vaultAddrFromConfig && 
+              /^0x[0-9a-fA-F]{64}$/.test(marketIdBytes32FromDb) &&
+              vaultAddrFromConfig.startsWith('0x') && vaultAddrFromConfig.length === 42) {
+            const VAULT_ABI = [
+              { type: 'function', name: 'getMarkPrice', stateMutability: 'view', inputs: [{ name: 'marketId', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
+            ] as const as any[];
+            
+            const vaultRaw = await publicClient.readContract({
+              address: vaultAddrFromConfig as Address,
+              abi: VAULT_ABI,
+              functionName: 'getMarkPrice',
+              args: [marketIdBytes32FromDb as `0x${string}`],
+            }) as bigint;
+            
+            const vault = Number(vaultRaw) / 1e6;
+            if (Number.isFinite(vault) && vault > 0) {
+              setEffectiveMarkPrice(vault);
+              setCoreVaultMarkPrice(vault);
+              setMarkPricesLoading(false);
+              return;
+            }
+          }
+        }
+        
+        if (Number.isFinite(ob) && ob > 0 && obRaw !== OB_DEFAULT_RAW) {
+          setEffectiveMarkPrice(ob);
+          setOrderBookMarkPrice(ob);
+          setMarkPricesLoading(false);
+        }
+      } catch (e) {
+        // Silently fail - we'll get the price on the next event
+      }
+    };
+    
+    // Handler for trade events (price definitely changed)
+    const handleTradeEvent = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        if (!detail) return;
+        const eventSymbol = String(detail.symbol || '').toUpperCase();
+        if (eventSymbol !== symbolUpper) return;
+        
+        // Small delay to let the blockchain state settle
+        if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+        eventRefreshTimeoutRef.current = setTimeout(() => {
+          void fetchMarkPriceOnEvent();
+        }, 150);
+      } catch {}
+    };
+    
+    // Handler for order events (orderbook changed, may affect mark price)
+    const handleOrderEvent = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        if (!detail) return;
+        const eventSymbol = String(detail.symbol || '').toUpperCase();
+        if (eventSymbol !== symbolUpper) return;
+        
+        // Trades dispatched via ordersUpdated have eventType TradeExecutionCompleted
+        const eventType = String(detail.eventType || '');
+        if (eventType === 'TradeExecutionCompleted') {
+          // This is a trade, refresh mark price
+          if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+          eventRefreshTimeoutRef.current = setTimeout(() => {
+            void fetchMarkPriceOnEvent();
+          }, 150);
+        }
+      } catch {}
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('positionsRefreshRequested', handleTradeEvent as EventListener);
+      window.addEventListener('ordersUpdated', handleOrderEvent as EventListener);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('positionsRefreshRequested', handleTradeEvent as EventListener);
+        window.removeEventListener('ordersUpdated', handleOrderEvent as EventListener);
+      }
+      if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+    };
+  }, [symbol, md, marketData]);
+
   // Keep browser tab title in sync with the same effectiveMarkPrice shown in the header
   const symbolUpper = String(symbol || '').toUpperCase();
   useEffect(() => {

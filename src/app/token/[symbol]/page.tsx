@@ -333,7 +333,99 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       setHasLoadedOnce(true);
     }
   }, [hasLoadedOnce, md.error, tokenData]);
-  const currentPrice = (md.markPrice ?? md.resolvedPrice) || 0;
+  
+  // Event-driven mark price state (no polling - updates on trade events)
+  const [liveMarkPrice, setLiveMarkPrice] = useState<number | null>(null);
+  const lastEventRefreshRef = useRef<number>(0);
+  const eventRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Subscribe to trade events and fetch mark price via RPC (no polling)
+  useEffect(() => {
+    const symUpper = symbolUpper;
+    if (!symUpper) return;
+    
+    const fetchMarkPriceOnEvent = async () => {
+      const now = Date.now();
+      if (now - lastEventRefreshRef.current < 500) return;
+      lastEventRefreshRef.current = now;
+      
+      const obAddr =
+        ((md as any)?.orderBookAddress as string | null) ||
+        ((md.market as any)?.market_address as string | null) ||
+        null;
+      
+      if (!obAddr || typeof obAddr !== 'string' || !obAddr.startsWith('0x') || obAddr.length !== 42) return;
+      
+      const ORDERBOOK_ABI = [
+        { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+      ] as const;
+      
+      try {
+        const obRaw = await publicClient.readContract({
+          address: obAddr as `0x${string}`,
+          abi: ORDERBOOK_ABI,
+          functionName: 'calculateMarkPrice',
+          args: [],
+        });
+        
+        const ob = Number(obRaw) / 1e6;
+        const OB_DEFAULT = 1.0;
+        
+        if (Number.isFinite(ob) && ob > 0 && Math.abs(ob - OB_DEFAULT) > 0.0001) {
+          setLiveMarkPrice(ob);
+        }
+      } catch {
+        // Silently fail - next event will retry
+      }
+    };
+    
+    const handleTradeEvent = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        if (!detail) return;
+        const eventSymbol = String(detail.symbol || '').toUpperCase();
+        if (eventSymbol !== symUpper) return;
+        
+        if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+        eventRefreshTimeoutRef.current = setTimeout(() => {
+          void fetchMarkPriceOnEvent();
+        }, 150);
+      } catch {}
+    };
+    
+    const handleOrderEvent = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        if (!detail) return;
+        const eventSymbol = String(detail.symbol || '').toUpperCase();
+        if (eventSymbol !== symUpper) return;
+        
+        const eventType = String(detail.eventType || '');
+        if (eventType === 'TradeExecutionCompleted') {
+          if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+          eventRefreshTimeoutRef.current = setTimeout(() => {
+            void fetchMarkPriceOnEvent();
+          }, 150);
+        }
+      } catch {}
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('positionsRefreshRequested', handleTradeEvent as EventListener);
+      window.addEventListener('ordersUpdated', handleOrderEvent as EventListener);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('positionsRefreshRequested', handleTradeEvent as EventListener);
+        window.removeEventListener('ordersUpdated', handleOrderEvent as EventListener);
+      }
+      if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+    };
+  }, [symbolUpper, md]);
+  
+  // Use live mark price if available, otherwise fall back to context
+  const contextPrice = (md.markPrice ?? md.resolvedPrice) || 0;
+  const currentPrice = liveMarkPrice ?? contextPrice;
   const markPrice = currentPrice;
   const fundingRate = 0;
   const priceChange24h = 0;
