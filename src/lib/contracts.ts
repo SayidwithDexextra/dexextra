@@ -133,15 +133,13 @@ export const OBPricingFacetABI = [
   // Note: bestBid/bestAsk are not part of current OBPricingFacet deployments; they exist on OBViewFacet
 ];
 
-// OBOrderPlacementFacet - order placement functions (aligned with Solidity facet)
+// OBOrderPlacementFacet - order placement functions (margin-only, spot functions removed)
 export const OBOrderPlacementFacetABI = [
-  "function placeLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
   "function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
-  "function placeMarketOrder(uint256 amount, bool isBuy) external returns (uint256)",
   "function placeMarginMarketOrder(uint256 amount, bool isBuy) external returns (uint256)",
-  "function placeMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256)",
   "function placeMarginMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256)",
   "function cancelOrder(uint256 orderId) external",
+  "function modifyOrder(uint256 orderId, uint256 price, uint256 amount) external returns (uint256)",
   "event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)",
   "event OrderRested(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)",
   "event OrderCancelled(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy)",
@@ -599,6 +597,7 @@ export async function initializeContracts(options?: ContractInitOptions): Promis
         obLiquidityProvision: createSafeProxy(obLiquidityProvision),
         obSettlement: createSafeProxy(obSettlement),
         vault: coreVault, // Alias for compatibility
+        orderBookAddress, // Needed for liquidation detection
         isPlaceholderMode: true
       };
     }
@@ -614,6 +613,7 @@ export async function initializeContracts(options?: ContractInitOptions): Promis
       obLiquidityProvision,
       obSettlement,
       vault: coreVault, // Alias for compatibility
+      orderBookAddress, // Needed for liquidation detection
       isPlaceholderMode: false
     };
   } catch (error) {

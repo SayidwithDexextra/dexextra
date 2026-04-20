@@ -1360,8 +1360,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       let addressForReads: string | undefined;
       try {
         addressForReads = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
-      } catch {}
+      } catch (e) {
+        console.warn('[ALTKN][useOrderBook] Failed to get OrderBook address for liquidation detection:', e);
+      }
       const orderBookAddressLower = addressForReads?.toLowerCase() || '';
+      
+      // Log for debugging liquidation detection
+      console.log('[ALTKN][useOrderBook] OrderBook address for liquidation detection:', {
+        fromContracts: contracts.orderBookAddress,
+        resolved: addressForReads,
+        lower: orderBookAddressLower,
+      });
 
       // Helper: map trade tuple to TradeHistoryItem
       const mapTrade = (t: any): TradeHistoryItem => {

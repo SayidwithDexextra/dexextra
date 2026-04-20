@@ -3254,7 +3254,25 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const feePerUnit = trade.amount > 0 ? fee / trade.amount : 0;
       
       // Check if this trade was a liquidation
-      const isLiquidationTrade = Boolean(trade.isLiquidation);
+      // Also detect liquidation by checking if counterparty is the OrderBook
+      const orderBookAddr = trade.orderBookAddress?.toLowerCase() || '';
+      const counterparty = isBuyer ? trade.seller : trade.buyer;
+      const counterpartyLower = String(counterparty || '').toLowerCase();
+      const isLiquidationTrade = Boolean(trade.isLiquidation) || 
+        (orderBookAddr !== '' && counterpartyLower === orderBookAddr);
+      
+      // Debug logging for liquidation detection
+      if (isLiquidationTrade) {
+        console.log('[LIQ DEBUG] Liquidation trade detected:', {
+          tradeId: trade.tradeId,
+          side,
+          price: trade.price,
+          amount: trade.amount,
+          isLiquidation: trade.isLiquidation,
+          orderBookAddr,
+          counterparty: counterpartyLower,
+        });
+      }
 
       while (remaining > 0) {
         const matchIdx = openLots.findIndex((l) => l.side === oppositeSide);
@@ -3269,9 +3287,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         const entryValue = entryPrice * matched;
         const exitValue = exitPrice * matched;
         
-        // Calculate margin locked for this portion
-        const marginMultiplier = isLong ? LONG_MARGIN_MULTIPLIER : SHORT_MARGIN_MULTIPLIER;
-        const marginLockedPortion = (lot.marginLocked / (lot.remaining + matched)) * matched;
+        // Calculate margin locked for this portion (proportional to matched amount)
+        const marginLockedPortion = lot.remaining > 0 
+          ? (lot.marginLocked * matched) / lot.remaining 
+          : 0;
         
         let rawPnl: number;
         let pnl: number;
@@ -3279,26 +3298,41 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         
         if (isLiquidationTrade) {
           // LIQUIDATION: User loses their margin + liquidation penalty
-          // The raw price PnL is negative (that's why they got liquidated)
-          // But they also lose their margin as collateral
+          // For liquidation, the PnL should ALWAYS be negative
+          // The user loses their margin that was locked for this position
+          
           const pricePnl = isLong
             ? (exitPrice - entryPrice) * matched
             : (entryPrice - exitPrice) * matched;
           
-          // In liquidation, user loses up to their margin locked
-          // The loss is typically the negative price PnL + liquidation penalty
-          // But capped at their margin (can't lose more than margin + penalty)
+          // The notional value for penalty calculation
           const notional = entryValue;
           const penalty = notional * LIQUIDATION_PENALTY_BPS;
-          const tradingLoss = Math.abs(Math.min(0, pricePnl)); // Only count negative
-          const totalLoss = tradingLoss + penalty;
           
-          // Loss is capped at margin + any additional penalty
-          const actualLoss = Math.min(totalLoss, marginLockedPortion + penalty);
+          // For liquidation: if price PnL appears positive (shouldn't happen normally),
+          // still count it as a loss of margin
+          const tradingLoss = pricePnl < 0 ? Math.abs(pricePnl) : 0;
           
-          rawPnl = -actualLoss; // Always negative for liquidation
-          pnl = rawPnl; // Fees are already included in the liquidation penalty
+          // Total loss is at minimum the margin locked (user loses collateral)
+          // Plus any additional trading loss and penalty
+          const marginLoss = marginLockedPortion > 0 ? marginLockedPortion : (notional * 0.10);
+          const actualLoss = Math.max(marginLoss, tradingLoss + penalty);
+          
+          rawPnl = -Math.abs(actualLoss); // ALWAYS negative for liquidation
+          pnl = rawPnl;
           wasLiquidated = true;
+          
+          console.log('[LIQ DEBUG] Closed position via liquidation:', {
+            direction: isLong ? 'LONG' : 'SHORT',
+            entryPrice,
+            exitPrice,
+            matched,
+            pricePnl,
+            marginLocked: marginLockedPortion,
+            penalty,
+            actualLoss,
+            pnl,
+          });
         } else {
           // Normal close: standard PnL calculation
           rawPnl = isLong
