@@ -77,6 +77,10 @@ interface Trade {
   buyerIsMargin: boolean;
   sellerIsMargin: boolean;
   timestamp: number;
+  /** True if this trade was part of a liquidation (counterparty is the OrderBook contract) */
+  isLiquidation?: boolean;
+  /** The OrderBook contract address - used for liquidation detection */
+  orderBookAddress?: Address;
 }
 
 interface ClosedPosition {
@@ -92,6 +96,10 @@ interface ClosedPosition {
   entryTime: number;
   exitTime: number;
   settledViaSettlement?: boolean;
+  /** True if position was closed via liquidation */
+  wasLiquidated?: boolean;
+  /** The margin that was locked for this position (for liquidation loss calculation) */
+  marginLocked?: number;
 }
 
 export interface SettlementPnLSummary {
@@ -2498,10 +2506,21 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                           (positionsIsLoading || (markets || []).length === 0);
 
                         const isSettling = settlingSymbols.has(String(position.symbol || '').toUpperCase());
+                        
+                        // Check if position is at risk of liquidation (mark price crossed liq price)
+                        const isAtRiskOfLiquidation = !position.isUnderLiquidation && 
+                          position.liquidationPrice > 0 && 
+                          position.markPrice > 0 &&
+                          (position.side === 'SHORT' 
+                            ? position.markPrice >= position.liquidationPrice
+                            : position.markPrice <= position.liquidationPrice);
+                        
                         const rowClass = `${isSettling ? 'position-row-slide-out' : 'mat-slide-rtl'} group/row transition-colors duration-200 ${
                           position.isUnderLiquidation
                             ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
-                            : 'hover:bg-t-card-hover'
+                            : isAtRiskOfLiquidation
+                              ? 'bg-red-400/5 hover:bg-red-400/10 border-red-400/20'
+                              : 'hover:bg-t-card-hover'
                         } ${index !== displayedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`;
 
                         if (showSkeleton) {
@@ -2568,9 +2587,13 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                         {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
                                       </span>
                                     </div>
-                                    {position.isUnderLiquidation && (
+                                    {position.isUnderLiquidation ? (
                                       <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
                                         <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
+                                      </div>
+                                    ) : isAtRiskOfLiquidation && (
+                                      <div className="shrink-0 px-1 py-0.5 bg-red-400/10 rounded animate-pulse">
+                                        <span className="text-[8px] font-medium text-red-400">⚠ AT RISK</span>
                                       </div>
                                     )}
                                   </Link>
@@ -2619,26 +2642,39 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                               <div className={`flex items-center justify-end gap-1.5 ${
                                 position.isUnderLiquidation 
                                   ? 'bg-yellow-400/10 px-2 py-1 rounded border border-yellow-400/20'
-                                  : ''
+                                  : isAtRiskOfLiquidation
+                                    ? 'bg-red-400/10 px-2 py-1 rounded border border-red-400/20'
+                                    : ''
                               }`}>
-                                {position.isUnderLiquidation && (
-                                  <>
-                                    <svg className="w-2.5 h-2.5 text-yellow-400 animate-pulse" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                      <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                                    </svg>
-                                  </>
+                                {(position.isUnderLiquidation || isAtRiskOfLiquidation) && (
+                                  <svg 
+                                    className={`w-2.5 h-2.5 animate-pulse ${
+                                      position.isUnderLiquidation ? 'text-yellow-400' : 'text-red-400'
+                                    }`} 
+                                    viewBox="0 0 24 24" 
+                                    fill="none" 
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                  </svg>
                                 )}
                                 <span className={`text-[11px] font-mono ${
                                   position.isUnderLiquidation 
                                     ? 'text-yellow-400 font-bold'
-                                    : 'text-t-fg'
+                                    : isAtRiskOfLiquidation
+                                      ? 'text-red-400 font-bold'
+                                      : 'text-t-fg'
                                 }`}>
                                   ${formatPrice(position.liquidationPrice)}
                                 </span>
                               </div>
-                              {position.isUnderLiquidation && (
+                              {position.isUnderLiquidation ? (
                                 <span className="text-[8px] font-medium text-yellow-400 animate-pulse">
                                   UNDER LIQUIDATION
+                                </span>
+                              ) : isAtRiskOfLiquidation && (
+                                <span className="text-[8px] font-medium text-red-400 animate-pulse">
+                                  LIQUIDATION IMMINENT
                                 </span>
                               )}
                             </div>
@@ -2670,7 +2706,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                               <div className="flex flex-col gap-1">
                                 <span className="text-[9px] text-t-fg-label">Margin</span>
                                 <span className={`text-[10px] font-medium font-mono ${
-                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-t-fg'
+                                  position.isUnderLiquidation 
+                                    ? 'text-yellow-400' 
+                                    : isAtRiskOfLiquidation 
+                                      ? 'text-red-400'
+                                      : 'text-t-fg'
                                 }`}>
                                   ${position.margin.toFixed(2)}
                                 </span>
@@ -2678,11 +2718,28 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                               <div className="flex flex-col gap-1">
                                 <span className="text-[9px] text-t-fg-label">Leverage</span>
                                 <span className={`text-[10px] font-medium font-mono ${
-                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-t-fg'
+                                  position.isUnderLiquidation 
+                                    ? 'text-yellow-400' 
+                                    : isAtRiskOfLiquidation 
+                                      ? 'text-red-400'
+                                      : 'text-t-fg'
                                 }`}>
                                   {position.leverage}x
                                 </span>
                               </div>
+                              {isAtRiskOfLiquidation && !position.isUnderLiquidation && (
+                                <div className="flex flex-col gap-1">
+                                  <div className="bg-red-400/10 border border-red-400/20 rounded-md px-2.5 py-1.5">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <svg className="w-2.5 h-2.5 text-red-400 animate-pulse" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                      </svg>
+                                      <span className="text-[9px] font-medium text-red-400 uppercase tracking-wide">Liquidation Imminent</span>
+                                    </div>
+                                    <span className="text-[8px] text-red-400/80">Add margin to avoid liquidation</span>
+                                  </div>
+                                </div>
+                              )}
                               {position.isUnderLiquidation && (
                                 <div className="flex flex-col gap-1">
                                   <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-md px-2.5 py-1.5">
@@ -3178,8 +3235,15 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       remaining: number;
       feePerUnit: number;
       timestamp: number;
+      marginLocked: number;
     }> = [];
     const results: ClosedPosition[] = [];
+
+    // Margin requirements: 10% for longs, 15% for shorts (matching contract logic)
+    const LONG_MARGIN_MULTIPLIER = 0.10;
+    const SHORT_MARGIN_MULTIPLIER = 0.15;
+    // Liquidation penalty from contract: 10%
+    const LIQUIDATION_PENALTY_BPS = 0.10;
 
     for (const trade of sorted) {
       const isBuyer = trade.buyer.toLowerCase() === walletAddress.toLowerCase();
@@ -3188,6 +3252,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const oppositeSide = side === 'BUY' ? 'SELL' : 'BUY';
       let remaining = trade.amount;
       const feePerUnit = trade.amount > 0 ? fee / trade.amount : 0;
+      
+      // Check if this trade was a liquidation
+      const isLiquidationTrade = Boolean(trade.isLiquidation);
 
       while (remaining > 0) {
         const matchIdx = openLots.findIndex((l) => l.side === oppositeSide);
@@ -3201,12 +3268,48 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         const exitPrice = isLong ? trade.price : lot.price;
         const entryValue = entryPrice * matched;
         const exitValue = exitPrice * matched;
-        const rawPnl = isLong
-          ? (exitPrice - entryPrice) * matched
-          : (entryPrice - exitPrice) * matched;
-        const matchedFees = lot.feePerUnit * matched + feePerUnit * matched;
-        const pnl = rawPnl - matchedFees;
+        
+        // Calculate margin locked for this portion
+        const marginMultiplier = isLong ? LONG_MARGIN_MULTIPLIER : SHORT_MARGIN_MULTIPLIER;
+        const marginLockedPortion = (lot.marginLocked / (lot.remaining + matched)) * matched;
+        
+        let rawPnl: number;
+        let pnl: number;
+        let wasLiquidated = false;
+        
+        if (isLiquidationTrade) {
+          // LIQUIDATION: User loses their margin + liquidation penalty
+          // The raw price PnL is negative (that's why they got liquidated)
+          // But they also lose their margin as collateral
+          const pricePnl = isLong
+            ? (exitPrice - entryPrice) * matched
+            : (entryPrice - exitPrice) * matched;
+          
+          // In liquidation, user loses up to their margin locked
+          // The loss is typically the negative price PnL + liquidation penalty
+          // But capped at their margin (can't lose more than margin + penalty)
+          const notional = entryValue;
+          const penalty = notional * LIQUIDATION_PENALTY_BPS;
+          const tradingLoss = Math.abs(Math.min(0, pricePnl)); // Only count negative
+          const totalLoss = tradingLoss + penalty;
+          
+          // Loss is capped at margin + any additional penalty
+          const actualLoss = Math.min(totalLoss, marginLockedPortion + penalty);
+          
+          rawPnl = -actualLoss; // Always negative for liquidation
+          pnl = rawPnl; // Fees are already included in the liquidation penalty
+          wasLiquidated = true;
+        } else {
+          // Normal close: standard PnL calculation
+          rawPnl = isLong
+            ? (exitPrice - entryPrice) * matched
+            : (entryPrice - exitPrice) * matched;
+          const matchedFees = lot.feePerUnit * matched + feePerUnit * matched;
+          pnl = rawPnl - matchedFees;
+        }
+        
         const pnlPercent = entryValue > 0 ? (pnl / entryValue) * 100 : 0;
+        const matchedFees = lot.feePerUnit * matched + feePerUnit * matched;
 
         results.push({
           direction: isLong ? 'LONG' : 'SHORT',
@@ -3217,9 +3320,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           exitValue,
           pnl,
           pnlPercent,
-          totalFees: matchedFees,
+          totalFees: wasLiquidated ? 0 : matchedFees, // Fees are part of liquidation penalty
           entryTime: isLong ? lot.timestamp : trade.timestamp,
           exitTime: isLong ? trade.timestamp : lot.timestamp,
+          wasLiquidated,
+          marginLocked: marginLockedPortion,
         });
 
         lot.remaining -= matched;
@@ -3228,7 +3333,20 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       }
 
       if (remaining > 0) {
-        openLots.push({ side, price: trade.price, remaining, feePerUnit, timestamp: trade.timestamp });
+        // Opening a new position - calculate margin required
+        const isLongPosition = side === 'BUY';
+        const notional = trade.price * remaining;
+        const marginMultiplier = isLongPosition ? LONG_MARGIN_MULTIPLIER : SHORT_MARGIN_MULTIPLIER;
+        const marginLocked = notional * marginMultiplier;
+        
+        openLots.push({ 
+          side, 
+          price: trade.price, 
+          remaining, 
+          feePerUnit, 
+          timestamp: trade.timestamp,
+          marginLocked 
+        });
       }
     }
 
@@ -3572,15 +3690,23 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
               onClick={() => setShowClosedSummary(!showClosedSummary)}
               className="w-full flex items-center justify-between p-2 hover:bg-t-elevated transition-colors rounded-md"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h4 className="text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Closed Positions</h4>
                 <span className="text-[10px] text-t-fg-label bg-t-skeleton px-1.5 py-0.5 rounded">{closedPositions.length}</span>
                 {(() => {
                   const totalPnl = closedPositions.reduce((sum, p) => sum + p.pnl, 0);
+                  const liquidatedCount = closedPositions.filter(p => p.wasLiquidated).length;
                   return (
-                    <span className={`text-[10px] font-medium font-mono ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {totalPnl >= 0 ? '+' : ''}{formatPrice(totalPnl)} USD
-                    </span>
+                    <>
+                      <span className={`text-[10px] font-medium font-mono ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {totalPnl >= 0 ? '+' : ''}{formatPrice(totalPnl)} USD
+                      </span>
+                      {liquidatedCount > 0 && (
+                        <span className="text-[9px] font-medium text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded border border-red-400/20">
+                          {liquidatedCount} liquidated
+                        </span>
+                      )}
+                    </>
                   );
                 })()}
               </div>
@@ -3619,13 +3745,24 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         : durationHr > 0
                           ? `${durationHr}h ${durationMin % 60}m`
                           : `${durationMin}m`;
+                      
+                      // For liquidated positions, PnL should always display as negative/loss
+                      const displayPnl = pos.wasLiquidated ? -Math.abs(pos.pnl) : pos.pnl;
+                      const displayPnlPercent = pos.wasLiquidated ? -Math.abs(pos.pnlPercent) : pos.pnlPercent;
+                      const isProfit = !pos.wasLiquidated && displayPnl >= 0;
+                      
                       return (
-                        <tr key={`cp-${i}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${i !== closedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
+                        <tr key={`cp-${i}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${pos.wasLiquidated ? 'bg-red-950/20' : ''} ${i !== closedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2">
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 flex-wrap">
                               <span className={`text-[10px] sm:text-[11px] font-medium ${pos.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
                                 {pos.direction}
                               </span>
+                              {pos.wasLiquidated && (
+                                <span className="text-[7px] sm:text-[8px] font-medium text-red-400 bg-red-400/20 px-1 py-px rounded border border-red-400/30">
+                                  LIQUIDATED
+                                </span>
+                              )}
                               {pos.settledViaSettlement && (
                                 <span className="text-[7px] sm:text-[8px] font-medium text-amber-400 bg-amber-400/10 px-1 py-px rounded">
                                   SETTLED
@@ -3640,20 +3777,32 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                             <span className="text-[11px] text-t-fg font-mono">${formatPrice(pos.entryPrice)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-t-fg font-mono">${formatPrice(pos.exitPrice)}</span>
+                            <div className="flex flex-col items-end">
+                              <span className="text-[11px] text-t-fg font-mono">${formatPrice(pos.exitPrice)}</span>
+                              {pos.wasLiquidated && (
+                                <span className="text-[8px] text-red-400/70">liq. price</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
                             <div className="flex flex-col items-end">
-                              <span className={`text-[10px] sm:text-[11px] font-medium font-mono ${pos.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                {pos.pnl >= 0 ? '+' : ''}${formatPrice(pos.pnl)}
+                              <span className={`text-[10px] sm:text-[11px] font-medium font-mono ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                {isProfit ? '+' : ''}{displayPnl < 0 ? '-' : ''}${formatPrice(Math.abs(displayPnl))}
                               </span>
-                              <span className={`text-[8px] sm:text-[9px] font-mono ${pos.pnlPercent >= 0 ? 'text-green-400/60' : 'text-red-400/60'}`}>
-                                {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
+                              <span className={`text-[8px] sm:text-[9px] font-mono ${isProfit ? 'text-green-400/60' : 'text-red-400/60'}`}>
+                                {isProfit ? '+' : ''}{displayPnlPercent.toFixed(2)}%
                               </span>
+                              {pos.wasLiquidated && pos.marginLocked !== undefined && (
+                                <span className="text-[7px] text-red-400/50">
+                                  margin: ${formatPrice(pos.marginLocked)}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="hidden md:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-t-fg-label font-mono">${pos.totalFees.toFixed(4)}</span>
+                            <span className="text-[11px] text-t-fg-label font-mono">
+                              {pos.wasLiquidated ? '-' : `$${pos.totalFees.toFixed(4)}`}
+                            </span>
                           </td>
                           <td className="hidden md:table-cell px-2.5 py-2 text-right">
                             <span className="text-[11px] text-t-fg-label">{durationStr}</span>
@@ -3694,11 +3843,19 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                 const side = isBuyer ? 'BUY' : 'SELL';
                 const fee = isBuyer ? trade.buyerFee : trade.sellerFee;
                 const isMargin = isBuyer ? trade.buyerIsMargin : trade.sellerIsMargin;
+                const isLiquidation = Boolean(trade.isLiquidation);
 
                 return (
-                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
+                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${isLiquidation ? 'bg-red-950/20' : ''} ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
-                      <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
+                        {isLiquidation && (
+                          <span className="text-[7px] sm:text-[8px] font-medium text-red-400 bg-red-400/20 px-1 py-px rounded border border-red-400/30">
+                            LIQ
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
                       <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">${trade.price.toFixed(2)}</span>
@@ -3713,7 +3870,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                       <span className="text-[11px] text-t-fg font-mono">${fee.toFixed(4)}</span>
                     </td>
                     <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-t-fg-label">{isMargin ? 'Margin' : 'Spot'}</span>
+                      <span className={`text-[11px] ${isLiquidation ? 'text-red-400' : 'text-t-fg-label'}`}>
+                        {isLiquidation ? 'Liquidation' : isMargin ? 'Margin' : 'Spot'}
+                      </span>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
                       <span className="text-[10px] sm:text-[11px] text-t-fg-label">{formatTime(trade.timestamp)}</span>

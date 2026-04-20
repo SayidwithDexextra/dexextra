@@ -25,7 +25,7 @@ export interface AnalyticsDashboardProps {
   targetWallet?: string
 }
 
-type TabId = 'overview' | 'trades' | 'orders' | 'fees' | 'revenue' | 'markets' | 'pnl' | 'settlements' | 'activity'
+type TabId = 'overview' | 'trades' | 'orders' | 'fees' | 'revenue' | 'markets' | 'pnl' | 'liquidations' | 'settlements' | 'activity'
 
 export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<TabId>('overview')
@@ -92,6 +92,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
     uniqueMarkets: tradedMarkets,
     dailyPnl: onChainDailyPnl,
     summary: onChainSummary,
+    liquidations: onChainLiquidations,
     isLoading: tradesLoading,
     error: tradesError,
     refetch: refetchTrades,
@@ -139,6 +140,8 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
 
   const hasCreatedMarkets = createdMarkets.length > 0
 
+  const hasLiquidations = onChainSummary?.liquidationCount > 0
+  
   const tabs: { id: TabId; label: string }[] = useMemo(() => [
     { id: 'overview', label: 'Overview' },
     { id: 'trades', label: 'Trades' },
@@ -147,9 +150,10 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
     ...(hasRevenue ? [{ id: 'revenue' as const, label: 'Revenue' }] : []),
     ...(hasCreatedMarkets ? [{ id: 'markets' as const, label: 'Markets' }] : []),
     { id: 'pnl', label: 'P&L' },
+    ...(hasLiquidations ? [{ id: 'liquidations' as const, label: 'Liquidations' }] : []),
     { id: 'settlements', label: 'Settlements' },
     { id: 'activity', label: 'Activity' },
-  ], [hasRevenue, hasCreatedMarkets])
+  ], [hasRevenue, hasCreatedMarkets, hasLiquidations])
 
   const filteredDailyData = useMemo(() => {
     if (dateRange === 'all') return dailyData
@@ -461,6 +465,127 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
                   isLoading={tradesLoading && onChainDailyPnl.length === 0} 
                   height={280} 
                 />
+              </div>
+            )}
+
+            {activeTab === 'liquidations' && (
+              <div className="space-y-3">
+                {/* Liquidation Summary Stats */}
+                <div className="grid grid-cols-3 gap-2">
+                  <MiniStat
+                    label="Total Liquidations"
+                    value={String(onChainSummary?.liquidationCount || 0)}
+                    positive={false}
+                  />
+                  <MiniStat
+                    label="Liquidation Volume"
+                    value={formatCurrency(onChainSummary?.liquidationVolume || 0)}
+                    positive={false}
+                  />
+                  <MiniStat
+                    label="Est. Total Loss"
+                    value={`-${formatCurrency(onChainLiquidations.reduce((sum, l) => sum + l.estimatedLoss, 0))}`}
+                    positive={false}
+                  />
+                </div>
+
+                {/* Liquidation Records Table */}
+                <div className="bg-[#0A0A0A] rounded border border-[#141414]">
+                  <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#141414]">
+                    <span className="text-[11px] font-medium text-[#a0a0a0] uppercase tracking-wide">Liquidation History</span>
+                    <span className="text-[10px] text-[#f87171] font-medium">{onChainLiquidations.length} events</span>
+                  </div>
+                  
+                  {tradesLoading && onChainLiquidations.length === 0 ? (
+                    <div className="p-4 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6] animate-pulse" />
+                        <span className="text-[11px] text-[#707070]">Loading liquidations...</span>
+                      </div>
+                    </div>
+                  ) : onChainLiquidations.length === 0 ? (
+                    <div className="p-4 text-center">
+                      <span className="text-[11px] text-[#505050]">No liquidation events found</span>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-left text-[10px] text-[#505050] uppercase tracking-wide">
+                            <th className="px-3 py-2.5 font-medium">Market</th>
+                            <th className="px-3 py-2.5 font-medium">Side</th>
+                            <th className="px-3 py-2.5 font-medium text-right">Price</th>
+                            <th className="px-3 py-2.5 font-medium text-right">Size</th>
+                            <th className="px-3 py-2.5 font-medium text-right">Value</th>
+                            <th className="px-3 py-2.5 font-medium text-right">Est. Loss</th>
+                            <th className="px-3 py-2.5 font-medium text-right">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {onChainLiquidations.map((liq) => (
+                            <tr key={liq.tradeId} className="border-t border-[#0F0F0F] hover:bg-[#0F0F0F]/50 transition-colors bg-[#1a0505]">
+                              <td className="px-3 py-2">
+                                <span className="text-[11px] text-[#c0c0c0] font-medium">{liq.marketSymbol}</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-1">
+                                  <span className={`text-[11px] font-medium ${liq.side === 'BUY' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                                    {liq.side}
+                                  </span>
+                                  <span className="text-[8px] font-medium text-[#f87171] bg-[#f87171]/20 px-1 py-px rounded border border-[#f87171]/30">
+                                    LIQ
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-[11px] text-[#c0c0c0] font-mono">${liq.price.toFixed(2)}</span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-[11px] text-[#c0c0c0] font-mono">{liq.quantity.toFixed(4)}</span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-[11px] text-[#c0c0c0] font-mono">${liq.tradeValue.toFixed(2)}</span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-[11px] text-[#f87171] font-mono font-medium">
+                                  -${liq.estimatedLoss.toFixed(2)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-[10px] text-[#707070]">
+                                  {liq.timestamp.toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Warning Message */}
+                {onChainLiquidations.length > 0 && (
+                  <div className="bg-[#1a0a0a] border border-[#f87171]/20 rounded p-3">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-[#f87171] mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div>
+                        <p className="text-[11px] text-[#f87171] font-medium">Liquidation Summary</p>
+                        <p className="text-[10px] text-[#a0a0a0] mt-1">
+                          You have {onChainLiquidations.length} liquidation event{onChainLiquidations.length > 1 ? 's' : ''} with an estimated total loss of {formatCurrency(onChainLiquidations.reduce((sum, l) => sum + l.estimatedLoss, 0))}.
+                          Consider using lower leverage or adding more margin to your positions to reduce liquidation risk.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1005,6 +1130,7 @@ function OnChainTradesTab({
   const stats = useMemo(() => {
     const buyTrades = trades.filter(t => t.side === 'BUY')
     const sellTrades = trades.filter(t => t.side === 'SELL')
+    const liquidationTrades = trades.filter(t => t.isLiquidation)
     const totalVolume = trades.reduce((sum, t) => sum + t.tradeValue, 0)
     const totalFees = trades.reduce((sum, t) => sum + t.fee, 0)
     
@@ -1012,6 +1138,7 @@ function OnChainTradesTab({
       totalTrades: trades.length,
       buyCount: buyTrades.length,
       sellCount: sellTrades.length,
+      liquidationCount: liquidationTrades.length,
       totalVolume,
       totalFees,
       marketsTraded: tradedMarkets.length,
@@ -1206,14 +1333,21 @@ function OnChainTradesTab({
             </thead>
             <tbody>
               {paginatedTrades.map((trade) => (
-                <tr key={trade.tradeId} className="border-t border-[#0F0F0F] hover:bg-[#0F0F0F] transition-colors">
+                <tr key={trade.tradeId} className={`border-t border-[#0F0F0F] hover:bg-[#0F0F0F] transition-colors ${trade.isLiquidation ? 'bg-[#1a0505]' : ''}`}>
                   <td className="px-3 py-2">
                     <span className="text-[11px] text-[#e0e0e0] font-medium">{trade.marketSymbol}</span>
                   </td>
                   <td className="px-3 py-2">
-                    <span className={`text-[11px] font-medium ${trade.side === 'BUY' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
-                      {trade.side}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[11px] font-medium ${trade.side === 'BUY' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                        {trade.side}
+                      </span>
+                      {trade.isLiquidation && (
+                        <span className="text-[8px] font-medium text-[#f87171] bg-[#f87171]/20 px-1 py-px rounded border border-[#f87171]/30">
+                          LIQ
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right">
                     <span className="text-[11px] font-mono text-[#c0c0c0]">

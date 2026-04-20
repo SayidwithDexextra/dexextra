@@ -73,6 +73,10 @@ export interface TradeHistoryItem {
   buyerIsMargin: boolean;
   sellerIsMargin: boolean;
   timestamp: number;
+  /** True if this trade was part of a liquidation (counterparty is the OrderBook contract) */
+  isLiquidation?: boolean;
+  /** The OrderBook contract address - used to detect liquidation trades */
+  orderBookAddress?: Address;
 }
 
 export interface MarketParams {
@@ -1352,6 +1356,13 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
 
     try {
+      // Step 1: Get OrderBook address first (needed for liquidation detection)
+      let addressForReads: string | undefined;
+      try {
+        addressForReads = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
+      } catch {}
+      const orderBookAddressLower = addressForReads?.toLowerCase() || '';
+
       // Helper: map trade tuple to TradeHistoryItem
       const mapTrade = (t: any): TradeHistoryItem => {
         const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
@@ -1366,6 +1377,14 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         const tradeValue = getField(t, 'tradeValue', 10);
         const buyerFee = getField(t, 'buyerFee', 11);
         const sellerFee = getField(t, 'sellerFee', 12);
+        
+        // Detect liquidation trades: counterparty is the OrderBook contract itself
+        const buyerLower = String(buyer || '').toLowerCase();
+        const sellerLower = String(seller || '').toLowerCase();
+        const isLiquidation = orderBookAddressLower !== '' && (
+          buyerLower === orderBookAddressLower || sellerLower === orderBookAddressLower
+        );
+        
         return {
           tradeId: tradeId?.toString?.() ?? String(tradeId ?? ''),
           buyer,
@@ -1377,18 +1396,16 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           sellerFee: Number(formatUnits(sellerFee ?? 0, 6)),
           buyerIsMargin: Boolean(buyerIsMargin),
           sellerIsMargin: Boolean(sellerIsMargin),
-          timestamp: Number(timestamp ?? 0) * 1000
+          timestamp: Number(timestamp ?? 0) * 1000,
+          isLiquidation,
+          orderBookAddress: addressForReads as Address | undefined
         } as TradeHistoryItem;
       };
 
-      // Step 1: try facet-based count and paginated trades
+      // Step 2: try facet-based count and paginated trades
       let userTradeCount: bigint = 0n;
       let trades: any[] | null = null;
       let hasMore: boolean = false;
-      let addressForReads: string | undefined;
-      try {
-        addressForReads = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
-      } catch {}
 
       try {
         if (contracts.obTradeExecution) {

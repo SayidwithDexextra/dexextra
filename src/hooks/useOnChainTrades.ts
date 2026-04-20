@@ -26,6 +26,8 @@ export interface OnChainTrade {
   sellerFee: number
   side: 'BUY' | 'SELL'
   fee: number
+  /** True if this trade was part of a liquidation (counterparty is the OrderBook contract) */
+  isLiquidation?: boolean
 }
 
 export interface DailyPnlData {
@@ -45,6 +47,20 @@ export interface TradeSummary {
   buyCount: number
   sellCount: number
   avgTradeSize: number
+  liquidationCount: number
+  liquidationVolume: number
+}
+
+export interface LiquidationRecord {
+  tradeId: string
+  marketSymbol: string
+  marketId: string
+  timestamp: Date
+  price: number
+  quantity: number
+  tradeValue: number
+  side: 'BUY' | 'SELL'
+  estimatedLoss: number
 }
 
 export interface UseOnChainTradesResult {
@@ -52,6 +68,7 @@ export interface UseOnChainTradesResult {
   uniqueMarkets: Array<{ marketId: string; marketAddress: string; symbol: string }>
   dailyPnl: DailyPnlData[]
   summary: TradeSummary
+  liquidations: LiquidationRecord[]
   isLoading: boolean
   error: string | null
   refetch: () => void
@@ -200,6 +217,12 @@ export function useOnChainTrades(): UseOnChainTradesResult {
               for (const trade of tradeData) {
                 const walletLower = walletAddress.toLowerCase()
                 const isBuyer = trade.buyer.toLowerCase() === walletLower
+                const marketAddressLower = market.marketAddress.toLowerCase()
+                
+                // Detect liquidation: counterparty is the OrderBook contract itself
+                const buyerLower = trade.buyer.toLowerCase()
+                const sellerLower = trade.seller.toLowerCase()
+                const isLiquidation = buyerLower === marketAddressLower || sellerLower === marketAddressLower
 
                 // Price uses 6 decimals, quantity/amount uses 18 decimals
                 const price = Number(ethers.formatUnits(trade.price, 6))
@@ -227,6 +250,7 @@ export function useOnChainTrades(): UseOnChainTradesResult {
                   sellerFee,
                   side: isBuyer ? 'BUY' : 'SELL',
                   fee: isBuyer ? buyerFee : sellerFee,
+                  isLiquidation,
                 })
               }
 
@@ -420,6 +444,8 @@ export function useOnChainTrades(): UseOnChainTradesResult {
         buyCount: 0,
         sellCount: 0,
         avgTradeSize: 0,
+        liquidationCount: 0,
+        liquidationVolume: 0,
       }
     }
 
@@ -427,6 +453,10 @@ export function useOnChainTrades(): UseOnChainTradesResult {
     const totalFees = trades.reduce((sum, t) => sum + t.fee, 0)
     const buyCount = trades.filter(t => t.side === 'BUY').length
     const sellCount = trades.filter(t => t.side === 'SELL').length
+    
+    const liquidationTrades = trades.filter(t => t.isLiquidation)
+    const liquidationCount = liquidationTrades.length
+    const liquidationVolume = liquidationTrades.reduce((sum, t) => sum + t.tradeValue, 0)
 
     return {
       totalTrades: trades.length,
@@ -435,7 +465,92 @@ export function useOnChainTrades(): UseOnChainTradesResult {
       buyCount,
       sellCount,
       avgTradeSize: totalVolume / trades.length,
+      liquidationCount,
+      liquidationVolume,
     }
+  }, [trades])
+
+  // Calculate liquidation records with estimated losses
+  const liquidations = useMemo<LiquidationRecord[]>(() => {
+    const liquidationTrades = trades.filter(t => t.isLiquidation)
+    if (liquidationTrades.length === 0) return []
+
+    // Sort trades by timestamp for FIFO matching
+    const sortedTrades = [...trades].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    
+    // Track open positions per market for loss calculation
+    const positions = new Map<string, Array<{ quantity: number; price: number; timestamp: Date }>>()
+    const liquidationRecords: LiquidationRecord[] = []
+
+    // Margin requirements for loss calculation
+    const LONG_MARGIN_MULTIPLIER = 0.10
+    const SHORT_MARGIN_MULTIPLIER = 0.15
+    const LIQUIDATION_PENALTY_BPS = 0.10
+
+    for (const trade of sortedTrades) {
+      const posKey = `${trade.marketId}-${trade.side === 'BUY' ? 'LONG' : 'SHORT'}`
+      const oppositeKey = `${trade.marketId}-${trade.side === 'BUY' ? 'SHORT' : 'LONG'}`
+
+      if (trade.isLiquidation) {
+        // This is a liquidation trade - calculate the loss
+        const openPositions = positions.get(oppositeKey) || []
+        let estimatedLoss = 0
+        let remainingQty = trade.quantity
+
+        for (const pos of openPositions) {
+          if (remainingQty <= 0) break
+          const closeQty = Math.min(remainingQty, pos.quantity)
+          
+          // Calculate loss based on price difference
+          const priceDiff = trade.side === 'BUY' 
+            ? trade.price - pos.price  // Closing short: bought high to close
+            : pos.price - trade.price  // Closing long: sold low to close
+          
+          // For liquidation, user loses their margin + penalty
+          const notional = pos.price * closeQty
+          const marginMultiplier = trade.side === 'SELL' ? LONG_MARGIN_MULTIPLIER : SHORT_MARGIN_MULTIPLIER
+          const marginLocked = notional * marginMultiplier
+          const penalty = notional * LIQUIDATION_PENALTY_BPS
+          
+          // Loss is the margin locked + penalty (simplified)
+          estimatedLoss += Math.abs(priceDiff * closeQty) + penalty
+          if (estimatedLoss < marginLocked) {
+            estimatedLoss = marginLocked
+          }
+          
+          remainingQty -= closeQty
+          pos.quantity -= closeQty
+        }
+
+        // Clean up empty positions
+        const filteredPositions = openPositions.filter(p => p.quantity > 0)
+        if (filteredPositions.length > 0) {
+          positions.set(oppositeKey, filteredPositions)
+        } else {
+          positions.delete(oppositeKey)
+        }
+
+        liquidationRecords.push({
+          tradeId: trade.tradeId,
+          marketSymbol: trade.marketSymbol,
+          marketId: trade.marketId,
+          timestamp: trade.timestamp,
+          price: trade.price,
+          quantity: trade.quantity,
+          tradeValue: trade.tradeValue,
+          side: trade.side,
+          estimatedLoss: estimatedLoss > 0 ? estimatedLoss : trade.tradeValue * 0.15, // Fallback estimate
+        })
+      } else {
+        // Regular trade - track for position matching
+        const existingPositions = positions.get(posKey) || []
+        existingPositions.push({ quantity: trade.quantity, price: trade.price, timestamp: trade.timestamp })
+        positions.set(posKey, existingPositions)
+      }
+    }
+
+    // Sort by timestamp descending (most recent first)
+    return liquidationRecords.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
   }, [trades])
 
   return {
@@ -443,6 +558,7 @@ export function useOnChainTrades(): UseOnChainTradesResult {
     uniqueMarkets,
     dailyPnl,
     summary,
+    liquidations,
     isLoading,
     error,
     refetch,
