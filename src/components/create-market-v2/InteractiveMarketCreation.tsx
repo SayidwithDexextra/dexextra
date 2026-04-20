@@ -229,6 +229,7 @@ type SettlementPreset = 'standard' | 'quick-15' | 'quick-30' | 'challenge-test' 
 type SpeedRunConfig = {
   rolloverLeadSeconds: number;
   challengeWindowSeconds: number;
+  lifecycleDurationSeconds?: number;
 };
 
 const SETTLEMENT_PRESETS: {
@@ -2272,7 +2273,10 @@ export function InteractiveMarketCreation({
       const nowSec = Math.floor(Date.now() / 1000);
       const selectedTiming = SETTLEMENT_PRESETS.find((o) => o.value === settlementPreset) ?? SETTLEMENT_PRESETS[1];
       const settlementDateTs = nowSec + selectedTiming.settlementOffsetSeconds;
-      const speedRunConfig = selectedTiming.speedRunConfig;
+      const speedRunConfig: SpeedRunConfig = {
+        ...selectedTiming.speedRunConfig,
+        lifecycleDurationSeconds: selectedTiming.settlementOffsetSeconds,
+      };
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
       const cleanNumeric = (v: unknown): string => {
         const s = String(v ?? '').trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');

@@ -361,6 +361,9 @@ export async function POST(req: Request) {
         speed_run: true,
         challenge_window_seconds: speedRunConfig.challengeWindowSeconds,
         rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
+        ...(speedRunConfig.lifecycleDurationSeconds ? {
+          lifecycle_duration_seconds: speedRunConfig.lifecycleDurationSeconds,
+        } : {}),
       } : {}),
     };
 

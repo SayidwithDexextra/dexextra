@@ -323,9 +323,10 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   // 4. Compute child settlement date (same duration as parent)
   // Priority order for determining lifecycle duration:
-  //   1. Read lifecycleDurationSeconds from parent market on-chain (most reliable)
-  //   2. Calculate from deployed_at in database
-  //   3. Fall back to 365 days only as last resort
+  //   1. Read lifecycle_duration_seconds from database (most reliable for rollover chains)
+  //   2. Read lifecycleDurationSeconds from parent market on-chain
+  //   3. Calculate from deployed_at in database (only for genesis markets)
+  //   4. Fall back to 365 days only as last resort
   vStep('[4/7] Compute settlement date', 'start');
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
   const parentDeployedAt = market.deployed_at ? new Date(market.deployed_at) : null;
@@ -337,8 +338,21 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   let lifecycleDurationMs: number = 0;
   let lifecycleDurationSource = 'fallback_365d';
 
-  // Try to read from on-chain first (most reliable)
-  if (effectiveAddress) {
+  // Priority 1: Try to read from database first (most reliable for rollover chains)
+  // This ensures we use the INTENDED lifecycle duration, not the actual deployment-to-settlement time
+  const dbLifecycleDurationSec = Number((existingConfig as any)?.lifecycle_duration_seconds) || 0;
+  if (dbLifecycleDurationSec > 0) {
+    lifecycleDurationMs = dbLifecycleDurationSec * 1000;
+    lifecycleDurationSource = 'database_lifecycle_duration_seconds';
+    log('rollover_duration', 'success', {
+      source: lifecycleDurationSource,
+      durationSeconds: dbLifecycleDurationSec,
+      durationMs: lifecycleDurationMs,
+    });
+  }
+
+  // Priority 2: Try to read from on-chain
+  if (lifecycleDurationSource === 'fallback_365d' && effectiveAddress) {
     const provider = getRpcProvider();
     if (provider) {
       try {
@@ -366,7 +380,9 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     }
   }
 
-  // Fall back to deployed_at calculation if on-chain read failed
+  // Priority 3: Fall back to deployed_at calculation (only valid for genesis markets)
+  // WARNING: This calculation is INCORRECT for child markets because their deployment-to-settlement
+  // time differs from their intended lifecycle duration. Only use as last resort.
   if (lifecycleDurationSource === 'fallback_365d' && parentDeployedAt) {
     lifecycleDurationMs = parentSettlementDate.getTime() - parentDeployedAt.getTime();
     if (lifecycleDurationMs > 0) {
@@ -376,17 +392,18 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         durationMs: lifecycleDurationMs,
         parentDeployedAt: parentDeployedAt.toISOString(),
         parentSettlementDate: parentSettlementDate.toISOString(),
+        warning: 'This may be incorrect for child markets - consider storing lifecycle_duration_seconds',
       });
     }
   }
 
-  // Final fallback to 365 days (should rarely happen)
+  // Priority 4: Final fallback to 365 days (should rarely happen)
   if (lifecycleDurationSource === 'fallback_365d' || !lifecycleDurationMs || lifecycleDurationMs <= 0) {
     lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
     lifecycleDurationSource = 'fallback_365d';
     log('rollover_duration', 'error', {
       source: lifecycleDurationSource,
-      reason: 'no onchain data and no deployed_at',
+      reason: 'no database, onchain data, or deployed_at',
       durationMs: lifecycleDurationMs,
     });
   }
@@ -413,12 +430,16 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   //   3. Calculate proportional values based on parent's ACTUAL lifecycle duration
   let parentSpeedRunConfig: { rolloverLeadSeconds: number; challengeWindowSeconds: number; lifecycleDurationSeconds?: number } | null = null;
 
-  // First try database config
+  // First try database config (includes lifecycle_duration_seconds for correct rollover chains)
   const cfg = existingConfig as any;
   if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_window_seconds || cfg.challenge_duration_seconds)) {
     parentSpeedRunConfig = {
       rolloverLeadSeconds: Number(cfg.rollover_lead_seconds) || 0,
       challengeWindowSeconds: Number(cfg.challenge_window_seconds || cfg.challenge_duration_seconds) || 0,
+      // Include lifecycle_duration_seconds from database if available
+      ...(cfg.lifecycle_duration_seconds ? {
+        lifecycleDurationSeconds: Number(cfg.lifecycle_duration_seconds),
+      } : {}),
     };
     log('rollover_timing_inherit', 'success', { source: 'database_speed_run', ...parentSpeedRunConfig });
   }
@@ -450,7 +471,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   }
 
   // ALWAYS ensure we have explicit timing config for the child
-  // Calculate proportional values based on parent's lifecycle duration
+  // Use the lifecycle duration from database/on-chain (already calculated above)
   const parentDurationSec = Math.floor(lifecycleDurationMs / 1000);
   if (!parentSpeedRunConfig) {
     // Rollover lead = duration / 12 (matches Solidity)
@@ -469,11 +490,15 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
       ...parentSpeedRunConfig 
     });
   } else {
-    // Add lifecycle duration to existing config
-    parentSpeedRunConfig.lifecycleDurationSeconds = parentDurationSec;
+    // Only add lifecycle duration if not already present from database
+    // This preserves the INTENDED duration from the rollover chain
+    if (!parentSpeedRunConfig.lifecycleDurationSeconds) {
+      parentSpeedRunConfig.lifecycleDurationSeconds = parentDurationSec;
+    }
     log('rollover_timing_inherit', 'success', { 
       source: 'existing_config_with_duration', 
       parentDurationSec,
+      inheritedDurationSec: parentSpeedRunConfig.lifecycleDurationSeconds,
       ...parentSpeedRunConfig 
     });
   }
