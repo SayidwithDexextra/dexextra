@@ -61,15 +61,6 @@ contract OBOrderPlacementFacet {
         return keccak256(abi.encodePacked(s.marketId, trader, orderId));
     }
 
-    function placeLimitOrder(uint256 price, uint256 amount, bool isBuy)
-        external
-        validOrder(price, amount)
-        marketActive
-        returns (uint256 orderId)
-    {
-        return _placeLimitOrder(msg.sender, price, amount, isBuy, false, 0);
-    }
-
     function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy)
         external
         validOrder(price, amount)
@@ -82,16 +73,6 @@ contract OBOrderPlacementFacet {
         if (amount < 1e12) { adjustedAmount = 1e12; }
         uint256 marginRequired = s.calculateMarginRequired( adjustedAmount, price, isBuy);
         return _placeLimitOrder(msg.sender, price, amount, isBuy, true, marginRequired);
-    }
-    function placeMarketOrder(uint256 amount, bool isBuy) external marketActive returns (uint256 filledAmount) {
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "a0");
-        uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "nl");
-        uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + s.maxSlippageBps, 10000) : type(uint256).max;
-        uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice, 10000 - s.maxSlippageBps, 10000);
-        uint256 filled = _placeMarket(msg.sender, amount, isBuy, false, maxPrice, minPrice);
-        return filled;
     }
     function placeMarginMarketOrder(uint256 amount, bool isBuy) external marketActive returns (uint256 filledAmount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
@@ -107,21 +88,6 @@ contract OBOrderPlacementFacet {
         uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice2, 10000 - s.maxSlippageBps, 10000);
         uint256 filled = _placeMarket(msg.sender, amount, isBuy, true, maxPrice, minPrice);
         return filled;
-    }
-
-    function placeMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps)
-        external
-        marketActive
-        returns (uint256 filledAmount)
-    {
-        require(slippageBps <= 5000, "sl");
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "a0");
-        uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "nl");
-        uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + slippageBps, 10000) : type(uint256).max;
-        uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice, 10000 - slippageBps, 10000);
-        return _placeMarket(msg.sender, amount, isBuy, false, maxPrice, minPrice);
     }
 
     function placeMarginMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps)
@@ -153,16 +119,6 @@ contract OBOrderPlacementFacet {
         _;
     }
 
-    function placeLimitOrderBy(address trader, uint256 price, uint256 amount, bool isBuy)
-        external
-        onlySelf
-        validOrder(price, amount)
-        marketActive
-        returns (uint256 orderId)
-    {
-        return _placeLimitOrder(trader, price, amount, isBuy, false, 0);
-    }
-
     function placeMarginLimitOrderBy(address trader, uint256 price, uint256 amount, bool isBuy)
         external
         onlySelf
@@ -176,22 +132,6 @@ contract OBOrderPlacementFacet {
         if (amount < 1e12) { adjustedAmount = 1e12; }
         uint256 marginRequired = s.calculateMarginRequired( adjustedAmount, price, isBuy);
         return _placeLimitOrder(trader, price, amount, isBuy, true, marginRequired);
-    }
-
-    function placeMarketOrderBy(address trader, uint256 amount, bool isBuy)
-        external
-        onlySelf
-        marketActive
-        returns (uint256 filledAmount)
-    {
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "a0");
-        uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "nl");
-        uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + s.maxSlippageBps, 10000) : type(uint256).max;
-        uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice, 10000 - s.maxSlippageBps, 10000);
-        uint256 filled = _placeMarket(trader, amount, isBuy, false, maxPrice, minPrice);
-        return filled;
     }
 
     function placeMarginMarketOrderBy(address trader, uint256 amount, bool isBuy)
@@ -325,59 +265,67 @@ contract OBOrderPlacementFacet {
 
     /**
      * @dev Admin-only: cancel all resting orders for this market. Used at settlement.
-     *      Iterates through known users' order lists and cancels any remaining orders.
-     *      Best-effort: skips if order no longer exists.
+     *      Uses O(1) linked list traversal instead of O(N) array iteration.
      */
     function adminCancelAllRestingOrders() external onlyOwner {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        // Cancel all buy-side orders by traversing price levels
-        for (uint256 i = 0; i < s.buyPrices.length; i++) {
-            uint256 price = s.buyPrices[i];
+        
+        // Cancel all buy-side orders using linked list traversal (O(1) per price level)
+        uint256 price = s.buyPriceHead;
+        while (price != 0) {
+            uint256 nextPrice = s.buyPriceNext[price];
             OrderBookStorage.PriceLevel storage level = s.buyLevels[price];
-            if (!level.exists) { continue; }
-            uint256 currentOrderId = level.firstOrderId;
-            while (currentOrderId != 0) {
-                OrderBookStorage.Order storage order = s.orders[currentOrderId];
-                uint256 nextOrderId = order.nextOrderId;
-                if (order.trader != address(0)) {
-                    _removeFromBuyBook(s, currentOrderId, price);
-                    if (order.isMarginOrder) {
-                        bytes32 rid = _reservationId(s, order.trader, currentOrderId);
-                        s.vault.unreserveMargin(order.trader, rid);
-                        s.vault.unreserveMargin(order.trader, bytes32(currentOrderId));
+            if (level.exists) {
+                uint256 currentOrderId = level.firstOrderId;
+                while (currentOrderId != 0) {
+                    OrderBookStorage.Order storage order = s.orders[currentOrderId];
+                    uint256 nextOrderId = order.nextOrderId;
+                    if (order.trader != address(0)) {
+                        _removeFromBuyBook(s, currentOrderId, price);
+                        if (order.isMarginOrder) {
+                            bytes32 rid = _reservationId(s, order.trader, currentOrderId);
+                            s.vault.unreserveMargin(order.trader, rid);
+                            s.vault.unreserveMargin(order.trader, bytes32(currentOrderId));
+                        }
+                        s.removeOrderFromUserList(order.trader, currentOrderId);
+                        emit OrderCancelled(currentOrderId, order.trader, order.price, order.amount, order.isBuy);
+                        delete s.orders[currentOrderId];
+                        delete s.cumulativeMarginUsed[currentOrderId];
                     }
-                    s.removeOrderFromUserList( order.trader, currentOrderId);
-                    emit OrderCancelled(currentOrderId, order.trader, order.price, order.amount, order.isBuy);
-                    delete s.orders[currentOrderId];
-                    delete s.cumulativeMarginUsed[currentOrderId];
+                    currentOrderId = nextOrderId;
                 }
-                currentOrderId = nextOrderId;
             }
+            price = nextPrice;
         }
-        // Cancel all sell-side orders by traversing price levels
-        for (uint256 j = 0; j < s.sellPrices.length; j++) {
-            uint256 price2 = s.sellPrices[j];
+        
+        // Cancel all sell-side orders using linked list traversal (O(1) per price level)
+        uint256 price2 = s.sellPriceHead;
+        while (price2 != 0) {
+            uint256 nextPrice2 = s.sellPriceNext[price2];
             OrderBookStorage.PriceLevel storage level2 = s.sellLevels[price2];
-            if (!level2.exists) { continue; }
-            uint256 currentOrderId2 = level2.firstOrderId;
-            while (currentOrderId2 != 0) {
-                OrderBookStorage.Order storage order2 = s.orders[currentOrderId2];
-                uint256 nextOrderId2 = order2.nextOrderId;
-                if (order2.trader != address(0)) {
-                    _removeFromSellBook(s, currentOrderId2, price2);
-                    if (order2.isMarginOrder) {
-                        bytes32 rid2 = _reservationId(s, order2.trader, currentOrderId2);
-                        s.vault.unreserveMargin(order2.trader, rid2);
-                        s.vault.unreserveMargin(order2.trader, bytes32(currentOrderId2));
+            if (level2.exists) {
+                uint256 currentOrderId2 = level2.firstOrderId;
+                while (currentOrderId2 != 0) {
+                    OrderBookStorage.Order storage order2 = s.orders[currentOrderId2];
+                    uint256 nextOrderId2 = order2.nextOrderId;
+                    if (order2.trader != address(0)) {
+                        _removeFromSellBook(s, currentOrderId2, price2);
+                        if (order2.isMarginOrder) {
+                            bytes32 rid2 = _reservationId(s, order2.trader, currentOrderId2);
+                            s.vault.unreserveMargin(order2.trader, rid2);
+                            s.vault.unreserveMargin(order2.trader, bytes32(currentOrderId2));
+                        }
+                        s.removeOrderFromUserList(order2.trader, currentOrderId2);
+                        emit OrderCancelled(currentOrderId2, order2.trader, order2.price, order2.amount, order2.isBuy);
+                        delete s.orders[currentOrderId2];
+                        delete s.cumulativeMarginUsed[currentOrderId2];
                     }
-                    s.removeOrderFromUserList( order2.trader, currentOrderId2);
-                    emit OrderCancelled(currentOrderId2, order2.trader, order2.price, order2.amount, order2.isBuy);
-                    delete s.orders[currentOrderId2];
-                    delete s.cumulativeMarginUsed[currentOrderId2];
+                    currentOrderId2 = nextOrderId2;
                 }
-                currentOrderId2 = nextOrderId2;
             }
+            price2 = nextPrice2;
         }
+        
         // After bulk liquidity removal, poke for mark/liquidation updates
         _onOrderBookLiquidityChanged();
     }
@@ -576,15 +524,12 @@ contract OBOrderPlacementFacet {
         return remaining;
     }
 
-    // --- Book ops ---
+    // --- Book ops (gas optimized: linked list only, no redundant arrays) ---
     function _addToBuyBook(OrderBookStorage.State storage s, uint256 orderId, uint256 price, uint256 amount) private {
         if (!s.buyLevels[price].exists) {
             s.buyLevels[price] = OrderBookStorage.PriceLevel({ totalAmount: amount, firstOrderId: orderId, lastOrderId: orderId, exists: true });
-            if (!s.buyPriceExists[price]) {
-                s.buyPrices.push(price);
-                s.buyPriceExists[price] = true;
-                s.insertBuyPriceIntoLinkedList(price);
-            }
+            // Gas optimization: use linked list only, skip redundant array operations
+            s.insertBuyPriceIntoLinkedList(price);
         } else {
             OrderBookStorage.PriceLevel storage level = s.buyLevels[price];
             uint256 lastOrderId = level.lastOrderId;
@@ -600,11 +545,8 @@ contract OBOrderPlacementFacet {
     function _addToSellBook(OrderBookStorage.State storage s, uint256 orderId, uint256 price, uint256 amount) private {
         if (!s.sellLevels[price].exists) {
             s.sellLevels[price] = OrderBookStorage.PriceLevel({ totalAmount: amount, firstOrderId: orderId, lastOrderId: orderId, exists: true });
-            if (!s.sellPriceExists[price]) {
-                s.sellPrices.push(price);
-                s.sellPriceExists[price] = true;
-                s.insertSellPriceIntoLinkedList(price);
-            }
+            // Gas optimization: use linked list only, skip redundant array operations
+            s.insertSellPriceIntoLinkedList(price);
         } else {
             OrderBookStorage.PriceLevel storage level = s.sellLevels[price];
             uint256 lastOrderId = level.lastOrderId;
@@ -634,32 +576,13 @@ contract OBOrderPlacementFacet {
     }
 
     function _prunePriceLevel(OrderBookStorage.State storage s, uint256 price, bool isBuy) private {
+        // Gas optimization: use O(1) linked list removal only
         if (isBuy) {
-            if (!s.buyPriceExists[price]) { return; }
-            s.buyPriceExists[price] = false;
             s.removeBuyPriceFromLinkedList(price);
-            uint256 len = s.buyPrices.length;
-            for (uint256 i = 0; i < len; i++) {
-                if (s.buyPrices[i] == price) {
-                    if (i < len - 1) { s.buyPrices[i] = s.buyPrices[len - 1]; }
-                    s.buyPrices.pop();
-                    emit PriceLevelPruned(price, true);
-                    break;
-                }
-            }
+            emit PriceLevelPruned(price, true);
         } else {
-            if (!s.sellPriceExists[price]) { return; }
-            s.sellPriceExists[price] = false;
             s.removeSellPriceFromLinkedList(price);
-            uint256 len2 = s.sellPrices.length;
-            for (uint256 j = 0; j < len2; j++) {
-                if (s.sellPrices[j] == price) {
-                    if (j < len2 - 1) { s.sellPrices[j] = s.sellPrices[len2 - 1]; }
-                    s.sellPrices.pop();
-                    emit PriceLevelPruned(price, false);
-                    break;
-                }
-            }
+            emit PriceLevelPruned(price, false);
         }
     }
 

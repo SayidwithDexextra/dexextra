@@ -67,6 +67,17 @@ export default function Home() {
     realtimeDebounce: 1000,
   });
 
+  // Fetch newest markets (sorted by creation date, newest first)
+  const { data: newestMarketsData } = useMarketOverview({
+    limit: 10,
+    status: ['ACTIVE', 'SETTLEMENT_REQUESTED'],
+    sortBy: 'created_at',
+    sortOrder: 'descending',
+    autoRefresh: false,
+    realtime: true,
+    realtimeDebounce: 1000,
+  });
+
   const baseMarkets = useMemo(() => (overview as any[]) || [], [overview]);
 
   useEffect(() => {
@@ -386,6 +397,24 @@ export default function Home() {
       };
     });
   }, [topPicksData]);
+
+  const newestMarketsItems: DexeteraTopPickItem[] = useMemo(() => {
+    return (newestMarketsData || []).map((market) => {
+      const raw = (market.mark_price ?? 0) as number;
+      const price = raw > 0 ? raw / 1_000_000 : 0;
+      return {
+        id: market.market_id,
+        title: market.name || market.symbol,
+        imageUrl: market.banner_image_url || market.icon_image_url,
+        imageAlt: market.name || market.symbol,
+        statLabel: 'Mark price',
+        price,
+        currency: '$',
+        changePercent: null,
+        isVerified: true,
+      };
+    });
+  }, [newestMarketsData]);
   
   const recentEvents: any[] = []
   const eventsLoading = false
@@ -499,6 +528,13 @@ export default function Home() {
           title="Top Picks"
           subtitle="This week’s top picks"
           items={topPicksItems}
+          onItemClick={handleMarketCardNavigate}
+        />
+
+        <DexeteraTopPicksCarousel
+          title="Newest Markets"
+          subtitle="Recently added markets"
+          items={newestMarketsItems}
           onItemClick={handleMarketCardNavigate}
         />
 

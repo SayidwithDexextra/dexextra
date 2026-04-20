@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
@@ -29,7 +28,12 @@ interface IOrderBookLiq {
  *   4. Single-pass winner selection with partial heap
  *   5. Incremental aggregate caching for instant capacity calculations
  */
-contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard, Pausable {
+/**
+ * @dev LiquidationManager is called ONLY via delegatecall from CoreVault.
+ *      Role checks happen in CoreVault (using AccessControlUpgradeable).
+ *      Inheriting AccessControl here would use wrong storage slots via delegatecall.
+ */
+contract LiquidationManager is CoreVaultStorage, ReentrancyGuard, Pausable {
     
     // ============ Custom Errors ============
     error InvalidAmount();
@@ -52,10 +56,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
     uint256 private constant MAX_BATCH_SIZE = 32; // Max users per batch operation
     uint256 private constant BITMAP_WORD_SIZE = 256;
 
-    // Roles to mirror CoreVault expectations
-    bytes32 public constant ORDERBOOK_ROLE = keccak256("ORDERBOOK_ROLE");
-    bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
-    bytes32 public constant FACTORY_ROLE = keccak256("FACTORY_ROLE");
+    // Role constants removed - access control is enforced by CoreVault before delegating
     
 
     // Storage inherited from CoreVaultStorage (slots 0-36).
@@ -162,7 +163,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
 
     constructor(address _collateralToken, address _admin) {
         collateralToken = IERC20(_collateralToken);
-        _grantRole(DEFAULT_ADMIN_ROLE, _admin);
+        // Role management happens in CoreVault; this contract is only called via delegatecall
         uint8 decs;
         try IERC20Metadata(_collateralToken).decimals() returns (uint8 d) { decs = d; } catch { revert CollateralDecimalsMustBe6(); }
         if (decs != 6) revert CollateralDecimalsMustBe6();
@@ -172,7 +173,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         address user,
         bytes32 marketId,
         bool state
-    ) external onlyRole(ORDERBOOK_ROLE) {
+    ) external {
         bool prev = isUnderLiquidationPosition[user][marketId];
         isUnderLiquidationPosition[user][marketId] = state;
         if (state) {
@@ -233,7 +234,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         return false;
     }
 
-    function debugEmitIsLiquidatable(address user, bytes32 marketId, uint256 markPrice) external onlyRole(ORDERBOOK_ROLE) {
+    function debugEmitIsLiquidatable(address user, bytes32 marketId, uint256 markPrice) external {
         PositionManager.Position[] storage positions = userPositions[user];
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId && positions[i].size != 0) {
@@ -337,7 +338,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         bytes32 marketId,
         address liquidator,
         uint256 executionPrice
-    ) external onlyRole(ORDERBOOK_ROLE) {
+    ) external {
         PositionManager.Position[] storage positions = userPositions[user];
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId && positions[i].size < 0) {
@@ -455,8 +456,15 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
                 if (locked <= totalMarginLocked) {
                     totalMarginLocked -= locked;
                 }
+                
+                // Clear position index cache BEFORE removal
+                userPositionIndex[user][marketId] = 0;
+                
+                // Swap-and-pop with index update
                 if (i < positions.length - 1) {
+                    bytes32 movedMarketId = positions[positions.length - 1].marketId;
                     positions[i] = positions[positions.length - 1];
+                    userPositionIndex[user][movedMarketId] = i + 1; // 1-based index
                 }
                 positions.pop();
 
@@ -481,7 +489,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         bytes32 marketId,
         address liquidator,
         uint256 executionPrice
-    ) external onlyRole(ORDERBOOK_ROLE) {
+    ) external {
         PositionManager.Position[] storage positions = userPositions[user];
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId && positions[i].size > 0) {
@@ -553,7 +561,16 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
                 }
 
                 if (locked <= totalMarginLocked) { totalMarginLocked -= locked; }
-                if (i < positions.length - 1) { positions[i] = positions[positions.length - 1]; }
+                
+                // Clear position index cache BEFORE removal
+                userPositionIndex[user][marketId] = 0;
+                
+                // Swap-and-pop with index update
+                if (i < positions.length - 1) {
+                    bytes32 movedMarketId = positions[positions.length - 1].marketId;
+                    positions[i] = positions[positions.length - 1];
+                    userPositionIndex[user][movedMarketId] = i + 1; // 1-based index
+                }
                 positions.pop();
 
                 _removeMarketIdFromUser(user, marketId);
@@ -580,7 +597,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         int256 sizeDelta,
         uint256 executionPrice,
         address liquidator
-    ) external onlyRole(ORDERBOOK_ROLE) {
+    ) external {
         PositionManager.Position[] storage positions = userPositions[user];
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId && positions[i].size != 0) {
@@ -660,7 +677,15 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
 
                 positions[i].size = newSize;
                 if (newSize == 0) {
-                    if (i < positions.length - 1) { positions[i] = positions[positions.length - 1]; }
+                    // Clear position index cache BEFORE removal
+                    userPositionIndex[user][marketId] = 0;
+                    
+                    // Swap-and-pop with index update
+                    if (i < positions.length - 1) {
+                        bytes32 movedMarketId = positions[positions.length - 1].marketId;
+                        positions[i] = positions[positions.length - 1];
+                        userPositionIndex[user][movedMarketId] = i + 1; // 1-based index
+                    }
                     positions.pop();
                     if (oldLocked <= totalMarginLocked) { totalMarginLocked -= oldLocked; }
                     _removeMarketIdFromUser(user, marketId);
@@ -769,7 +794,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         bytes32 marketId,
         uint256 lossAmount,
         address liquidatedUser
-    ) external onlyRole(ORDERBOOK_ROLE) {
+    ) external {
         _socializeLoss(marketId, lossAmount, liquidatedUser);
     }
 
@@ -1154,11 +1179,11 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
     ) private {
         _applyHaircutToPositionOptimized(user, marketId, amount, markPrice);
     }
-    function addUserToMarketIndex(address user, bytes32 marketId) external onlyRole(ORDERBOOK_ROLE) {
+    function addUserToMarketIndex(address user, bytes32 marketId) external {
         _addUserToMarketIndex(user, marketId);
     }
 
-    function removeUserFromMarketIndex(address user, bytes32 marketId) external onlyRole(ORDERBOOK_ROLE) {
+    function removeUserFromMarketIndex(address user, bytes32 marketId) external {
         _removeUserFromMarketIndex(user, marketId);
     }
 
@@ -1493,7 +1518,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         bytes32 marketId,
         uint256 newMarkPrice,
         uint256 maxUpdates
-    ) external onlyRole(ORDERBOOK_ROLE) returns (uint256 updatedCount, bool hasMore) {
+    ) external returns (uint256 updatedCount, bool hasMore) {
         return _refreshPositionCachesInternal(marketId, newMarkPrice, maxUpdates);
     }
 
@@ -1691,7 +1716,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         uint256 _penaltyMmrBps,
         uint256 _maxMmrBps,
         uint256 _liquidityDepthLevels
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external {
         if (_baseMmrBps > 10000 || _penaltyMmrBps > 10000 || _maxMmrBps > 10000) revert InvalidConfig();
         if (_liquidityDepthLevels == 0 || _liquidityDepthLevels > 50) revert InvalidConfig();
         baseMmrBps = _baseMmrBps;
@@ -1707,7 +1732,7 @@ contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard,
         uint256 _scalingSlopeBps,
         uint256 _liquidityDepthLevels,
         uint256 _priceGapSlopeBps
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external {
         if (_baseMmrBps > 10000 || _penaltyMmrBps > 10000 || _maxMmrBps > 10000) revert InvalidConfig();
         if (_liquidityDepthLevels == 0 || _liquidityDepthLevels > 50) revert InvalidConfig();
         baseMmrBps = _baseMmrBps;

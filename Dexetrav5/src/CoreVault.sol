@@ -328,12 +328,30 @@ contract CoreVault is
     function updatePositionWithMargin(
         address user, bytes32 marketId, int256 sizeDelta, uint256 executionPrice, uint256 requiredMargin
     ) external onlyRole(ORDERBOOK_ROLE) nonReentrant {
-        PositionManager.NettingResult memory result = PositionManager.executePositionNetting(
-            userPositions[user], user, marketId, sizeDelta, executionPrice, requiredMargin
+        // Execute position netting with index mapping for O(1) operations
+        PositionManager.NettingResult memory result = PositionManager.executePositionNettingWithIndex(
+            userPositions[user], 
+            userPositionIndex[user],
+            user, 
+            marketId, 
+            sizeDelta, 
+            executionPrice, 
+            requiredMargin
         );
 
-        if (result.marginToLock > 0) { totalMarginLocked += result.marginToLock; }
-        if (result.marginToRelease > 0) { totalMarginLocked -= result.marginToRelease; }
+        // Update margin caches
+        if (result.marginToLock > 0) { 
+            totalMarginLocked += result.marginToLock; 
+            userTotalMarginLocked[user] += result.marginToLock;
+        }
+        if (result.marginToRelease > 0) { 
+            totalMarginLocked -= result.marginToRelease; 
+            if (userTotalMarginLocked[user] >= result.marginToRelease) {
+                userTotalMarginLocked[user] -= result.marginToRelease;
+            } else {
+                userTotalMarginLocked[user] = 0;
+            }
+        }
 
         if (result.haircutToConfiscate6 > 0) {
             uint256 haircutTotal6 = result.haircutToConfiscate6;
@@ -379,9 +397,11 @@ contract CoreVault is
         }
 
         if (result.positionClosed) {
-            PositionManager.removeMarketIdFromUser(userMarketIds[user], marketId);
+            // O(1) market ID removal
+            PositionManager.removeMarketIdFromUserWithIndex(userMarketIds[user], userMarketIdIndex[user], marketId);
         } else if (!result.positionExists) {
-            PositionManager.addMarketIdToUser(userMarketIds[user], marketId);
+            // O(1) market ID addition
+            PositionManager.addMarketIdToUserWithIndex(userMarketIds[user], userMarketIdIndex[user], marketId);
         }
 
         _recomputeAndStoreLiquidationPrice(user, marketId);
@@ -583,20 +603,25 @@ contract CoreVault is
     function releaseMargin(address user, bytes32 marketId, uint256 amount) external onlyRole(ORDERBOOK_ROLE) {
         if (user == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
-        bool positionFound = false;
-        for (uint256 i = 0; i < userPositions[user].length; i++) {
-            if (userPositions[user][i].marketId == marketId) {
-                uint256 locked = userPositions[user][i].marginLocked;
-                if (locked < amount) revert InsufficientBalance();
-                userPositions[user][i].marginLocked = locked - amount;
-                positionFound = true;
-                emit MarginReleased(user, marketId, amount, userPositions[user][i].marginLocked);
-                _recomputeAndStoreLiquidationPrice(user, marketId);
-                break;
-            }
+        
+        // O(1) position lookup
+        uint256 indexPlusOne = userPositionIndex[user][marketId];
+        if (indexPlusOne == 0) revert PositionNotFound();
+        
+        uint256 index = indexPlusOne - 1;
+        PositionManager.Position storage position = userPositions[user][index];
+        
+        if (position.marginLocked < amount) revert InsufficientBalance();
+        position.marginLocked -= amount;
+        
+        // Update caches
+        if (userTotalMarginLocked[user] >= amount) {
+            userTotalMarginLocked[user] -= amount;
         }
-        require(positionFound, "No position found for market");
         if (totalMarginLocked >= amount) { totalMarginLocked -= amount; }
+        
+        emit MarginReleased(user, marketId, amount, position.marginLocked);
+        _recomputeAndStoreLiquidationPrice(user, marketId);
     }
 
     // ============ User Top-Up Interface ============
@@ -637,17 +662,20 @@ contract CoreVault is
     }
 
     function _increasePositionMargin(address user, bytes32 marketId, uint256 amount) internal {
-        bool positionFound = false;
-        for (uint256 i = 0; i < userPositions[user].length; i++) {
-            if (userPositions[user][i].marketId == marketId && userPositions[user][i].size != 0) {
-                userPositions[user][i].marginLocked += amount;
-                positionFound = true;
-                emit MarginLocked(user, marketId, amount, userPositions[user][i].marginLocked);
-                break;
-            }
-        }
-        if (!positionFound) revert PositionNotFound();
+        // O(1) position lookup
+        uint256 indexPlusOne = userPositionIndex[user][marketId];
+        if (indexPlusOne == 0) revert PositionNotFound();
+        
+        uint256 index = indexPlusOne - 1;
+        if (userPositions[user][index].size == 0) revert PositionNotFound();
+        
+        userPositions[user][index].marginLocked += amount;
+        
+        // Update caches
+        userTotalMarginLocked[user] += amount;
         totalMarginLocked += amount;
+        
+        emit MarginLocked(user, marketId, amount, userPositions[user][index].marginLocked);
         _recomputeAndStoreLiquidationPrice(user, marketId);
     }
 
@@ -657,46 +685,82 @@ contract CoreVault is
         if (user == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
         if (marketToOrderBook[marketId] == address(0)) revert MarketNotFound();
-        uint256 available = getAvailableCollateral(user);
+        
+        // O(1) available check using cached values
+        uint256 available = _getAvailableCollateralCached(user);
         if (available < amount) revert InsufficientAvailable();
+        
+        // O(1) duplicate check
+        if (userPendingOrderIndex[user][orderId] != 0) revert AlreadyReserved();
+        
+        // Add to array and index
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
-        for (uint256 i = 0; i < orders.length; i++) {
-            if (orders[i].orderId == orderId) revert AlreadyReserved();
-        }
         orders.push(VaultAnalytics.PendingOrder({ orderId: orderId, marginReserved: amount, timestamp: block.timestamp }));
+        userPendingOrderIndex[user][orderId] = orders.length;  // index + 1
+        
+        // Update cached total
+        userTotalMarginReserved[user] += amount;
+        
         emit MarginReserved(user, orderId, marketId, amount);
     }
 
     function unreserveMargin(address user, bytes32 orderId) external onlyRole(ORDERBOOK_ROLE) {
         if (user == address(0)) revert InvalidAddress();
+        
+        // O(1) lookup
+        uint256 indexPlusOne = userPendingOrderIndex[user][orderId];
+        if (indexPlusOne == 0) return;  // Not found, silent return for idempotency
+        
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
-        for (uint256 i = 0; i < orders.length; i++) {
-            if (orders[i].orderId == orderId) {
-                uint256 reserved = orders[i].marginReserved;
-                if (i < orders.length - 1) { orders[i] = orders[orders.length - 1]; }
-                orders.pop();
-                emit MarginUnreserved(user, orderId, reserved);
-                return;
-            }
+        uint256 index = indexPlusOne - 1;
+        uint256 reserved = orders[index].marginReserved;
+        
+        // Swap-and-pop removal (O(1))
+        uint256 lastIndex = orders.length - 1;
+        if (index != lastIndex) {
+            VaultAnalytics.PendingOrder storage lastOrder = orders[lastIndex];
+            orders[index] = lastOrder;
+            userPendingOrderIndex[user][lastOrder.orderId] = indexPlusOne;
         }
+        orders.pop();
+        userPendingOrderIndex[user][orderId] = 0;
+        
+        // Update cached total
+        if (userTotalMarginReserved[user] >= reserved) {
+            userTotalMarginReserved[user] -= reserved;
+        } else {
+            userTotalMarginReserved[user] = 0;
+        }
+        
+        emit MarginUnreserved(user, orderId, reserved);
     }
 
     function releaseExcessMargin(address user, bytes32 orderId, uint256 newTotalReservedForOrder) external onlyRole(ORDERBOOK_ROLE) {
+        // O(1) lookup
+        uint256 indexPlusOne = userPendingOrderIndex[user][orderId];
+        if (indexPlusOne == 0) return;  // Not found, silent return
+        
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
-        for (uint256 i = 0; i < orders.length; i++) {
-            if (orders[i].orderId == orderId) {
-                uint256 current = orders[i].marginReserved;
-                if (newTotalReservedForOrder < current) {
-                    orders[i].marginReserved = newTotalReservedForOrder;
-                    emit MarginReleased(user, bytes32(0), current - newTotalReservedForOrder, newTotalReservedForOrder);
-                } else if (newTotalReservedForOrder > current) {
-                    uint256 increase = newTotalReservedForOrder - current;
-                    uint256 available = getAvailableCollateral(user);
-                    if (available < increase) revert InsufficientAvailable();
-                    orders[i].marginReserved = newTotalReservedForOrder;
-                }
-                return;
+        uint256 index = indexPlusOne - 1;
+        uint256 current = orders[index].marginReserved;
+        
+        if (newTotalReservedForOrder < current) {
+            uint256 released = current - newTotalReservedForOrder;
+            orders[index].marginReserved = newTotalReservedForOrder;
+            
+            // Update cached total
+            if (userTotalMarginReserved[user] >= released) {
+                userTotalMarginReserved[user] -= released;
             }
+            
+            emit MarginReleased(user, bytes32(0), released, newTotalReservedForOrder);
+        } else if (newTotalReservedForOrder > current) {
+            uint256 increase = newTotalReservedForOrder - current;
+            uint256 available = _getAvailableCollateralCached(user);
+            if (available < increase) revert InsufficientAvailable();
+            
+            orders[index].marginReserved = newTotalReservedForOrder;
+            userTotalMarginReserved[user] += increase;
         }
     }
 
@@ -759,8 +823,8 @@ contract CoreVault is
     // ============ ADL Configuration ============
 
     function setAdlConfig(uint256 maxCandidates, uint256 maxPositionsPerTx, bool debugEnabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(maxCandidates > 0 && maxCandidates <= 500, "CoreVault: invalid maxCandidates");
-        require(maxPositionsPerTx > 0 && maxPositionsPerTx <= 100, "CoreVault: invalid maxPositionsPerTx");
+        require(maxCandidates > 0 && maxCandidates <= 500, "!cands");
+        require(maxPositionsPerTx > 0 && maxPositionsPerTx <= 100, "!pos");
         adlMaxCandidates = maxCandidates;
         adlMaxPositionsPerTx = maxPositionsPerTx;
         adlDebug = debugEnabled;
@@ -768,7 +832,7 @@ contract CoreVault is
     }
 
     function setMinSettlementScaleRay(uint256 newMinScaleRay) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newMinScaleRay > 0 && newMinScaleRay <= 1e18, "CoreVault: invalid min scale");
+        require(newMinScaleRay > 0 && newMinScaleRay <= 1e18, "!scale");
         minSettlementScaleRay = newMinScaleRay;
     }
 
@@ -833,24 +897,25 @@ contract CoreVault is
     // ============ Internal: Liquidation Price ============
 
     function _recomputeAndStoreLiquidationPrice(address user, bytes32 marketId) internal {
-        PositionManager.Position[] storage positions = userPositions[user];
-        for (uint256 i = 0; i < positions.length; i++) {
-            if (positions[i].marketId == marketId && positions[i].size != 0) {
-                (uint256 mmrBps, ) = _computeEffectiveMMRBps(user, marketId, positions[i].size);
-                uint256 mark = getMarkPrice(marketId);
-                if (mark == 0) { mark = positions[i].entryPrice; }
-                uint256 absSize = uint256(positions[i].size >= 0 ? positions[i].size : -positions[i].size);
-                if (absSize == 0) { positions[i].liquidationPrice = 0; return; }
-                if (positions[i].size > 0) {
-                    positions[i].liquidationPrice = 0;
-                } else {
-                    uint256 marginPerUnit6 = Math.mulDiv(positions[i].marginLocked, 1e18, absSize);
-                    uint256 numerator = positions[i].entryPrice + marginPerUnit6;
-                    uint256 denomBps = 10000 + mmrBps;
-                    positions[i].liquidationPrice = Math.mulDiv(numerator, 10000, denomBps);
-                }
-                return;
-            }
+        // O(1) position lookup
+        uint256 indexPlusOne = userPositionIndex[user][marketId];
+        if (indexPlusOne == 0) return;  // No position
+        
+        PositionManager.Position storage position = userPositions[user][indexPlusOne - 1];
+        if (position.size == 0) return;
+        
+        (uint256 mmrBps, ) = _computeEffectiveMMRBps(user, marketId, position.size);
+        uint256 mark = getMarkPrice(marketId);
+        if (mark == 0) { mark = position.entryPrice; }
+        uint256 absSize = uint256(position.size >= 0 ? position.size : -position.size);
+        if (absSize == 0) { position.liquidationPrice = 0; return; }
+        if (position.size > 0) {
+            position.liquidationPrice = 0;
+        } else {
+            uint256 marginPerUnit6 = Math.mulDiv(position.marginLocked, 1e18, absSize);
+            uint256 numerator = position.entryPrice + marginPerUnit6;
+            uint256 denomBps = 10000 + mmrBps;
+            position.liquidationPrice = Math.mulDiv(numerator, 10000, denomBps);
         }
     }
 
@@ -871,6 +936,22 @@ contract CoreVault is
     }
 
     // ============ Internal Helpers ============
+
+    /// @dev O(1) available collateral using cached totals
+    function _getAvailableCollateralCached(address user) internal view returns (uint256) {
+        uint256 total = userCollateral[user] + userCrossChainCredit[user];
+        
+        // Add positive realized PnL
+        int256 realizedPnL = userRealizedPnL[user];
+        if (realizedPnL > 0) {
+            total += uint256(realizedPnL) / DECIMAL_SCALE;
+        }
+        
+        // Subtract committed margin using cached totals (O(1))
+        uint256 committed = userTotalMarginLocked[user] + userTotalMarginReserved[user];
+        
+        return total > committed ? total - committed : 0;
+    }
 
     function _ensureUserTracked(address user) internal {
         if (!isKnownUser[user]) {
@@ -986,4 +1067,5 @@ contract CoreVault is
     function completeMigration() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _getMigrationStorage().complete = true;
     }
+
 }

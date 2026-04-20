@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-04-19T16:19:29.396Z",
+  "reason": "Remove spot order functions - margin-only trading",
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "network": "hyperliquid",
+  "chainId": 999,
+  "contracts": {
+    "OBOrderPlacementFacet": "0x8F0caf1dA416994880E72A673f05a8A1d67c6327",
+    "MetaTradeFacet": "0x43Cddf01c45CC87a543f198829fb1AbE61D3CDf3"
+  },
+  "changes": [
+    "Deployed new OBOrderPlacementFacet (spot functions removed)",
+    "Deployed new MetaTradeFacet (spot functions removed)",
+    "FacetRegistry updated with new OBOrderPlacementFacet",
+    "FacetRegistry updated with new MetaTradeFacet"
+  ],
+  "placementFacetRegistryTx": "0x04a2cb21cf75c0f96a58844e561ee66630b4f9769dab91e959426c0e27e0dd99",
+  "metaFacetRegistryTx": "0xc626b34e768488e8ec73047db6b66ce35c44f059eced9aa2ccf216ea5a9c3c0b"
+}

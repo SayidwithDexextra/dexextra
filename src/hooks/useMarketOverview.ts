@@ -27,6 +27,7 @@ export interface MarketOverviewRow {
   settlement_date?: string | null;
   total_volume?: number | null;
   total_trades?: number | null;
+  created_at?: string | null;
   mark_price?: number | null;
   last_update?: string | null;
   is_stale?: boolean | null;
@@ -36,7 +37,9 @@ export function useMarketOverview({
   limit = 50, 
   status, 
   category, 
-  search, 
+  search,
+  sortBy,
+  sortOrder,
   autoRefresh = true, 
   refreshInterval = 5000, 
   realtime = false, // Disabled by default to reduce egress - polling every 5s is sufficient
@@ -46,6 +49,8 @@ export function useMarketOverview({
   status?: string | string[];
   category?: string;
   search?: string;
+  sortBy?: 'symbol' | 'name' | 'created_at' | 'total_volume' | 'total_trades';
+  sortOrder?: 'ascending' | 'descending';
   autoRefresh?: boolean;
   refreshInterval?: number;
   realtime?: boolean;
@@ -67,9 +72,9 @@ export function useMarketOverview({
 
   // Generate cache key based on params
   const cacheKey = useMemo(() => {
-    const parts = [CACHE_KEYS.MARKET_OVERVIEW, limit, serializedStatus, category, search].filter(Boolean);
+    const parts = [CACHE_KEYS.MARKET_OVERVIEW, limit, serializedStatus, category, search, sortBy, sortOrder].filter(Boolean);
     return parts.join(':');
-  }, [limit, serializedStatus, category, search]);
+  }, [limit, serializedStatus, category, search, sortBy, sortOrder]);
 
   /**
    * IMPORTANT (Next.js SSR hydration):
@@ -104,6 +109,8 @@ export function useMarketOverview({
       if (serializedStatus) params.set('status', serializedStatus);
       if (category) params.set('category', category);
       if (search) params.set('search', search);
+      if (sortBy) params.set('sortBy', sortBy);
+      if (sortOrder) params.set('sortOrder', sortOrder);
 
       const res = await fetch(`/api/market-overview?${params.toString()}`);
       const json = await res.json();
@@ -141,7 +148,7 @@ export function useMarketOverview({
     const id = setInterval(fetchOverview, refreshInterval);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, refreshInterval, limit, serializedStatus, category, search]);
+  }, [autoRefresh, refreshInterval, limit, serializedStatus, category, search, sortBy, sortOrder]);
 
   // Debounced state updates for realtime data
   const [pendingUpdates, setPendingUpdates] = useState<Record<string, any>>({});

@@ -248,6 +248,12 @@ const CORE_VAULT_ABI = [
   parseAbiItem(
     "function getPositionSummary(address user, bytes32 marketId) view returns (int256 size, uint256 entryPrice, uint256 marginLocked)"
   ),
+  parseAbiItem(
+    "function getUsersWithPositionsInMarket(bytes32 marketId) view returns (address[])"
+  ),
+  parseAbiItem(
+    "function getAllKnownUsers() view returns (address[])"
+  ),
 ];
 
 const ORDERBOOK_PRICING_ABI = [
@@ -328,10 +334,14 @@ const LOG_VERBOSE = (() => {
   return v === "verbose" || v === "debug" || v === "trace";
 })();
 
+function log(traceId: string, emoji: string, message: string) {
+  console.log(`[${traceId}] ${emoji} ${message}`);
+}
+
 function logStep(traceId: string, stage: string, data?: Record<string, unknown>) {
-  try {
-    console.log(`[liq][${traceId}][${stage}]`, data ? JSON.stringify(data) : "");
-  } catch (_) {}
+  // Simplified: convert common stages to readable messages
+  const dataStr = data ? Object.entries(data).map(([k, v]) => `${k}=${v}`).join(" ") : "";
+  console.log(`[${traceId}] ${stage} ${dataStr}`.trim());
 }
 
 function logDebug(traceId: string, stage: string, data?: Record<string, unknown>) {
@@ -745,6 +755,69 @@ async function readOnchainPositionSize(
   }
 }
 
+async function fetchOnchainUsersWithPositions(
+  publicClient: any,
+  marketIdHex: string,
+  traceId: string
+): Promise<string[]> {
+  if (!CORE_VAULT) return [];
+  try {
+    const users = await publicClient.readContract({
+      address: CORE_VAULT as `0x${string}`,
+      abi: CORE_VAULT_ABI,
+      functionName: "getUsersWithPositionsInMarket",
+      args: [marketIdHex as `0x${string}`],
+    });
+    const userList = (users as string[]) || [];
+    logDebug(traceId, "onchain_users", { market: marketIdHex.slice(0, 14), count: userList.length });
+    return userList.map((u) => normalizeAddress(u)).filter(Boolean) as string[];
+  } catch (e) {
+    logStep(traceId, "ONCHAIN_USERS_ERR", { reason: String(e).slice(0, 100) });
+    return [];
+  }
+}
+
+async function fetchOnchainPositionAndLiq(
+  publicClient: any,
+  trader: string,
+  marketIdHex: string,
+  traceId: string
+): Promise<{ size: bigint; liqPrice: bigint; hasPos: boolean } | null> {
+  if (!CORE_VAULT) return null;
+  try {
+    const [posResult, liqResult] = await Promise.all([
+      publicClient.readContract({
+        address: CORE_VAULT as `0x${string}`,
+        abi: CORE_VAULT_ABI,
+        functionName: "getPositionSummary",
+        args: [trader as `0x${string}`, marketIdHex as `0x${string}`],
+      }),
+      publicClient.readContract({
+        address: CORE_VAULT as `0x${string}`,
+        abi: CORE_VAULT_ABI,
+        functionName: "getLiquidationPrice",
+        args: [trader as `0x${string}`, marketIdHex as `0x${string}`],
+      }),
+    ]);
+    
+    const size = posResult[0] as bigint;
+    const liqPrice = liqResult[0] as bigint;
+    const hasPos = size !== 0n;
+    
+    logDebug(traceId, "onchain_full", { 
+      trader: trader.slice(0, 10), 
+      size: size.toString(), 
+      liq: liqPrice.toString(),
+      hasPos 
+    });
+    
+    return { size, liqPrice, hasPos };
+  } catch (e) {
+    logDebug(traceId, "onchain_full_err", { trader: trader.slice(0, 10), reason: String(e).slice(0, 100) });
+    return null;
+  }
+}
+
 async function reconcilePositionSize(opts: {
   supabase: any;
   publicClient: any;
@@ -772,7 +845,7 @@ async function reconcilePositionSize(opts: {
   }
 
   const deltaRaw = onchainSize - dbNetRaw;
-  logStep(traceId, "DRIFT", { wallet: wallet.slice(0, 10), onchain: onchainSize.toString(), db: dbNetRaw.toString(), delta: deltaRaw.toString() });
+  log(traceId, "🔄", `Drift: ${wallet.slice(0, 8)} (Δ${formatUnits(deltaRaw, AMOUNT_DECIMALS)})`);
 
   await upsertNetTrade({
     supabase,
@@ -826,6 +899,94 @@ async function enqueueLiqFailure(opts: {
   } catch (e: any) {
     logStep(opts.traceId, "ENQUEUE_ERR", { wallet: opts.wallet?.slice(0, 10), err: (e?.message || "").slice(0, 80) });
   }
+}
+
+async function fetchQueuedLiquidations(
+  supabase: any,
+  marketHex: string,
+  traceId: string
+): Promise<string[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from("liq_queue")
+      .select("address")
+      .ilike("market_id", marketHex.toLowerCase())
+      .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .lt("attempts", LIQ_MAX_ATTEMPTS)
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(50);
+    
+    if (error) {
+      logDebug(traceId, "queue_fetch_err", { err: error.message?.slice(0, 80) });
+      return [];
+    }
+    
+    const wallets = (data || []).map((r: any) => normalizeAddress(r.address)).filter(Boolean) as string[];
+    if (wallets.length > 0) {
+      log(traceId, "📋", `${wallets.length} queued liquidations for retry`);
+    }
+    return wallets;
+  } catch (e: any) {
+    logDebug(traceId, "queue_fetch_err", { err: (e?.message || "").slice(0, 80) });
+    return [];
+  }
+}
+
+async function markQueuedLiquidationComplete(
+  supabase: any,
+  wallet: string,
+  marketHex: string,
+  traceId: string,
+  txHash?: string
+) {
+  if (!supabase) return;
+  try {
+    // Find the job ID first, then complete via RPC
+    const { data: jobs } = await supabase
+      .from("liq_queue")
+      .select("id")
+      .ilike("address", wallet.toLowerCase())
+      .ilike("market_id", marketHex.toLowerCase())
+      .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .limit(1);
+    
+    if (jobs && jobs.length > 0) {
+      await supabase.rpc("complete_liq_job", {
+        p_id: jobs[0].id,
+        p_tx_hash: txHash || null,
+      });
+    }
+  } catch {}
+}
+
+async function incrementQueuedLiquidationAttempts(
+  supabase: any,
+  wallet: string,
+  marketHex: string,
+  error: string,
+  traceId: string
+) {
+  if (!supabase) return;
+  try {
+    // Find the job ID first, then update via fail_or_requeue_liq_job
+    const { data: jobs } = await supabase
+      .from("liq_queue")
+      .select("id")
+      .ilike("address", wallet.toLowerCase())
+      .ilike("market_id", marketHex.toLowerCase())
+      .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .limit(1);
+    
+    if (jobs && jobs.length > 0) {
+      await supabase.rpc("fail_or_requeue_liq_job", {
+        p_id: jobs[0].id,
+        p_error: error.slice(0, 500),
+        p_max_attempts: LIQ_MAX_ATTEMPTS,
+      });
+    }
+  } catch {}
 }
 
 async function sendLiquidationTx(opts: {
@@ -889,303 +1050,305 @@ async function sendLiquidationTx(opts: {
   return { tx, relayer: relayer.address, pool: relayer.pool };
 }
 
+// Batch size for parallel RPC calls
+const BATCH_SIZE = 20;
+const MAX_CONCURRENT_LIQUIDATIONS = 5;
+
+async function batchFetchPositions(
+  publicClient: any,
+  users: string[],
+  marketHex: `0x${string}`,
+  traceId: string
+): Promise<Map<string, { size: bigint; liqPrice: bigint }>> {
+  const results = new Map<string, { size: bigint; liqPrice: bigint }>();
+  
+  // Process in batches for parallel RPC calls
+  for (let i = 0; i < users.length; i += BATCH_SIZE) {
+    const batch = users.slice(i, i + BATCH_SIZE);
+    const promises = batch.map(async (wallet) => {
+      const data = await fetchOnchainPositionAndLiq(publicClient, wallet, marketHex, traceId);
+      if (data && data.hasPos && data.size !== 0n) {
+        results.set(wallet.toLowerCase(), { size: data.size, liqPrice: data.liqPrice });
+      }
+    });
+    await Promise.all(promises);
+  }
+  
+  return results;
+}
+
+type LiqCandidate = {
+  wallet: `0x${string}`;
+  size: bigint;
+  liqPrice: bigint;
+  isLong: boolean;
+  urgency: bigint; // How far past liquidation price (higher = more urgent)
+  isQueued: boolean; // Was this from the liq_queue table?
+};
+
+function scoreLiquidationUrgency(markPrice: bigint, liqPrice: bigint, isLong: boolean): bigint {
+  // Higher score = more urgent (deeper underwater)
+  if (isLong) {
+    return liqPrice > markPrice ? liqPrice - markPrice : 0n;
+  } else {
+    return markPrice > liqPrice ? markPrice - liqPrice : 0n;
+  }
+}
+
 async function findCandidatesAndLiquidate(
   markPrice: bigint,
   opts: { supabase: any; traceId: string; marketUuid: string; marketHex: string }
 ) {
   const { traceId, supabase, marketUuid, marketHex } = opts;
-  if (!supabase || !CORE_VAULT || !RPC_URL || !hasAnyRelayer()) {
+  if (!CORE_VAULT || !RPC_URL || !hasAnyRelayer()) {
     return { skipped: true, reason: "missing_config" };
   }
 
   const smallPool = getSmallPool();
   const bigPool = getBigPool();
 
-  logDebug(traceId, "relayers", { small: smallPool.length, big: bigPool.length });
-
-  logStep(traceId, "PRICE_CHECK", { market: marketHex.slice(0, 14), mark: markPrice.toString() });
-
-  let rows: any[] = [];
-  logDebug(traceId, "fetch_trades", { marketUuid });
-  try {
-    const { data, error } = await supabase
-      .from(USER_TRADES_TABLE)
-      .select("user_wallet_address,liquidation_price,amount")
-      .eq("market_id", marketUuid)
-      .limit(5000);
-    if (error) {
-      logStep(traceId, "TRADES_DB_ERR", { err: error.message?.slice(0, 80) });
-      return { skipped: true, reason: "db_error" };
-    }
-    rows = data || [];
-  } catch (e) {
-    logStep(traceId, "TRADES_DB_ERR", { err: ((e as any)?.message || "").slice(0, 80) });
-    return { skipped: true, reason: "db_exception" };
-  }
-
-  logDebug(traceId, "trades_loaded", { count: rows.length });
-
-  if (!rows.length) {
-    logDebug(traceId, "no_trades", { marketUuid });
-    return { skipped: true, reason: "no_trades" };
-  }
-
-  const aggregates = new Map<string, { wallet: string; netRaw: bigint; liq: string | null }>();
-  for (const row of rows) {
-    const wallet = normalizeAddress(row.user_wallet_address);
-    if (!wallet) continue;
-    const amountStr =
-      row.amount === null || row.amount === undefined
-        ? null
-        : typeof row.amount === "string"
-        ? row.amount
-        : row.amount.toString();
-    const amtRaw = decimalToUnits(amountStr, AMOUNT_DECIMALS);
-    if (amtRaw === null || amtRaw === 0n) continue;
-
-    const current = aggregates.get(wallet) || { wallet, netRaw: 0n, liq: null };
-    current.netRaw += amtRaw;
-    if (!current.liq && row.liquidation_price !== null && row.liquidation_price !== undefined) {
-      current.liq =
-        typeof row.liquidation_price === "string"
-          ? row.liquidation_price
-          : row.liquidation_price.toString();
-    }
-    aggregates.set(wallet, current);
-  }
-
-  if (!aggregates.size) {
-    logDebug(traceId, "no_positions", { marketUuid });
-    return { skipped: true, reason: "no_positions" };
-  }
-
   const publicClient = createPublicClient({ transport: http(RPC_URL) });
-  const liquidations: any[] = [];
   const marketHexTyped = marketHex as `0x${string}`;
+  const marketShort = marketHex.slice(0, 10);
+  const markStr = formatUnits(markPrice, PRICE_DECIMALS);
 
-  for (const { wallet, netRaw, liq } of aggregates.values()) {
-    if (netRaw === 0n) continue;
-    const walletHex = wallet as `0x${string}`;
+  // Fetch on-chain users AND queued liquidations in parallel
+  const [onchainUsers, queuedUsers] = await Promise.all([
+    fetchOnchainUsersWithPositions(publicClient, marketHexTyped, traceId),
+    fetchQueuedLiquidations(supabase, marketHexTyped, traceId),
+  ]);
+  
+  // Merge: queued liquidations take priority (they already failed once)
+  const queuedSet = new Set(queuedUsers.map((u) => u.toLowerCase()));
+  const allUsers = [...queuedUsers, ...onchainUsers.filter((u) => !queuedSet.has(u.toLowerCase()))];
+  
+  if (!allUsers.length) {
+    log(traceId, "⏭️", `No positions in market [${marketShort}]`);
+    return { skipped: true, reason: "no_onchain_positions" };
+  }
 
-    const { liq: onchainLiq, hasPos } = await readOnchainLiq(publicClient, walletHex, marketHexTyped, traceId);
-    if (!hasPos) continue;
+  log(traceId, "📊", `Fetching ${allUsers.length} positions @ $${markStr} [${marketShort}]${queuedUsers.length ? ` (${queuedUsers.length} queued)` : ""}`);
 
-    // Reconcile Supabase position size with on-chain truth
-    let effectiveNetRaw = netRaw;
-    try {
-      const { onchainSize, reconciled } = await reconcilePositionSize({
-        supabase,
-        publicClient,
-        marketUuid,
-        marketHex: marketHexTyped,
-        wallet: walletHex,
-        dbNetRaw: netRaw,
-        traceId,
-      });
-      if (onchainSize !== null) {
-        effectiveNetRaw = onchainSize;
-        if (effectiveNetRaw === 0n) {
-          logDebug(traceId, "skip_zero", { wallet: walletHex.slice(0, 10) });
-          continue;
-        }
-      }
-    } catch (reconcileErr: any) {
-      logStep(traceId, "RECONCILE_ERR", { wallet: walletHex.slice(0, 10), reason: (reconcileErr?.message || "").slice(0, 80) });
+  // BATCH FETCH: Get all positions in parallel batches
+  const positionMap = await batchFetchPositions(publicClient, allUsers, marketHexTyped, traceId);
+  
+  // IDENTIFY LIQUIDATABLE: Score and sort by urgency
+  const candidates: LiqCandidate[] = [];
+  
+  for (const [wallet, { size, liqPrice }] of positionMap.entries()) {
+    if (liqPrice === 0n) continue;
+    
+    const isLong = size > 0n;
+    const shouldLiq = isLong ? markPrice <= liqPrice : markPrice >= liqPrice;
+    const isQueued = queuedSet.has(wallet.toLowerCase());
+    
+    // For queued liquidations, always retry even if position seems healthy
+    // (price may have changed since queueing)
+    if (!shouldLiq && !isQueued) continue;
+    
+    // If position is no longer liquidatable, remove from queue
+    if (!shouldLiq && isQueued) {
+      await markQueuedLiquidationComplete(supabase, wallet, marketHexTyped, traceId);
+      log(traceId, "📋", `Removed ${wallet.slice(0, 8)} from queue (no longer liquidatable)`);
+      continue;
     }
+    
+    const urgency = scoreLiquidationUrgency(markPrice, liqPrice, isLong);
+    candidates.push({
+      wallet: wallet as `0x${string}`,
+      size,
+      liqPrice,
+      isLong,
+      urgency,
+      isQueued,
+    });
+  }
+  
+  // Sort by urgency (most underwater first)
+  candidates.sort((a, b) => (b.urgency > a.urgency ? 1 : b.urgency < a.urgency ? -1 : 0));
+  
+  if (candidates.length === 0) {
+    log(traceId, "✓", `${positionMap.size} positions checked, none liquidatable`);
+    return { skipped: false, liquidations: [], checked: positionMap.size };
+  }
+  
+  log(traceId, "🎯", `${candidates.length} liquidatable (most urgent: ${candidates[0].wallet.slice(0, 8)})`);
 
-    const storedLiqRaw = liq ? decimalToUnits(liq, PRICE_DECIMALS) : null;
-    const liqBn = onchainLiq !== null ? onchainLiq : storedLiqRaw;
-    if (liqBn === null) continue;
+  // PARALLEL LIQUIDATIONS: Execute up to MAX_CONCURRENT_LIQUIDATIONS at once
+  const liquidations: any[] = [];
+  
+  for (let i = 0; i < candidates.length; i += MAX_CONCURRENT_LIQUIDATIONS) {
+    const batch = candidates.slice(i, i + MAX_CONCURRENT_LIQUIDATIONS);
+    
+    const batchPromises = batch.map(async (candidate) => {
+      const { wallet: walletHex, isLong, liqPrice: liqBn, isQueued } = candidate;
+      const dir = isLong ? "LONG" : "SHORT";
+      const liqStr = formatUnits(liqBn, PRICE_DECIMALS);
 
-    const isLong = effectiveNetRaw > 0n;
-    const shouldLiq = isLong ? markPrice <= liqBn : markPrice >= liqBn;
-    if (!shouldLiq) continue;
+      // Gas estimation & pool routing
+      let routedPool: "small" | "big" = smallPool.length > 0 ? "small" : "big";
+      const estimateFrom = (smallPool[0] || bigPool[0])?.address;
+      let estimatedGasBuffered: bigint | null = null;
 
-    logStep(traceId, "LIQ_FOUND", { wallet: walletHex, dir: isLong ? "LONG" : "SHORT", mark: markPrice.toString(), liq: liqBn.toString() });
+      if (estimateFrom) {
+        try {
+          const callData = encodeFunctionData({
+            abi: CORE_VAULT_ABI,
+            functionName: "liquidateDirect",
+            args: [marketHexTyped, walletHex],
+          });
+          const estimatedGas = await publicClient.estimateGas({
+            account: estimateFrom,
+            to: CORE_VAULT as `0x${string}`,
+            data: callData,
+          });
+          estimatedGasBuffered = (estimatedGas * GAS_ESTIMATE_BUFFER_BPS) / 10000n;
+          if (estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT) routedPool = "big";
+        } catch {}
+      }
 
-    // Gas estimation to decide small vs big pool routing
-    let estimatedGas: bigint | null = null;
-    let estimatedGasBuffered: bigint | null = null;
-    let routedPool: "small" | "big" = smallPool.length > 0 ? "small" : "big";
-    const estimateFrom = (smallPool[0] || bigPool[0])?.address;
+      const safetySmall = 120_000n;
+      const safetyBig = 300_000n;
+      const gasLimitForPool = (pool: "small" | "big"): bigint | undefined => {
+        const desired = estimatedGasBuffered && estimatedGasBuffered > 0n ? estimatedGasBuffered + 50_000n : undefined;
+        const cap = pool === "big"
+          ? (BIG_BLOCK_GAS_LIMIT > safetyBig ? BIG_BLOCK_GAS_LIMIT - safetyBig : BIG_BLOCK_GAS_LIMIT)
+          : (SMALL_BLOCK_GAS_LIMIT > safetySmall ? SMALL_BLOCK_GAS_LIMIT - safetySmall : SMALL_BLOCK_GAS_LIMIT);
+        return desired && desired > cap ? cap : desired;
+      };
 
-    if (estimateFrom) {
+      // Simulate first
+      const simAccount = routedPool === "big" ? (bigPool[0] || smallPool[0]) : (smallPool[0] || bigPool[0]);
       try {
-        const callData = encodeFunctionData({
+        await publicClient.simulateContract({
+          address: CORE_VAULT as `0x${string}`,
           abi: CORE_VAULT_ABI,
           functionName: "liquidateDirect",
           args: [marketHexTyped, walletHex],
+          account: simAccount.address,
         });
-        estimatedGas = await publicClient.estimateGas({
-          account: estimateFrom,
-          to: CORE_VAULT as `0x${string}`,
-          data: callData,
-        });
-        estimatedGasBuffered = (estimatedGas * GAS_ESTIMATE_BUFFER_BPS) / 10000n;
-
-        if (estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT) {
-          routedPool = "big";
+      } catch (simErr: any) {
+        // If this was a queued liquidation that failed simulation, increment attempts
+        if (isQueued) {
+          const errMsg = simErr?.shortMessage || simErr?.message || "simulation_failed";
+          await incrementQueuedLiquidationAttempts(supabase, walletHex, marketHexTyped, errMsg.slice(0, 200), traceId);
         }
-
-        logDebug(traceId, "gas_est", { raw: estimatedGas.toString(), buffered: estimatedGasBuffered.toString(), smallCap: SMALL_BLOCK_GAS_LIMIT.toString(), bigAvail: bigPool.length, pool: routedPool });
-      } catch (estErr: any) {
-        logDebug(traceId, "gas_est_fail", { reason: (estErr?.shortMessage || estErr?.message || "").slice(0, 80) });
+        return { status: "skipped", wallet: walletHex, reason: "simulation_failed" };
       }
-    }
 
-    // Compute gas limit for the target pool
-    const safetySmall = 120_000n;
-    const safetyBig = 300_000n;
-    function gasLimitForPool(pool: "small" | "big"): bigint | undefined {
-      const desired = estimatedGasBuffered && estimatedGasBuffered > 0n
-        ? estimatedGasBuffered + 50_000n
-        : undefined;
-      if (pool === "big") {
-        const cap = BIG_BLOCK_GAS_LIMIT > safetyBig ? BIG_BLOCK_GAS_LIMIT - safetyBig : BIG_BLOCK_GAS_LIMIT;
-        return desired && desired > cap ? cap : desired;
+      let relayerCandidates = getCandidatesForPool(routedPool);
+      if (relayerCandidates.length === 0 && routedPool === "big") {
+        relayerCandidates = getCandidatesForPool("small");
       }
-      const cap = SMALL_BLOCK_GAS_LIMIT > safetySmall ? SMALL_BLOCK_GAS_LIMIT - safetySmall : SMALL_BLOCK_GAS_LIMIT;
-      return desired && desired > cap ? cap : desired;
-    }
+      if (relayerCandidates.length === 0) {
+        if (isQueued) {
+          await incrementQueuedLiquidationAttempts(supabase, walletHex, marketHexTyped, "no_relayer_available", traceId);
+        } else {
+          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_relayer_available", traceId, priority: 10 });
+        }
+        return { status: "failed", wallet: walletHex, reason: "no_relayer" };
+      }
 
-    // Simulate with the chosen pool's account
-    const simAccount = routedPool === "big"
-      ? (bigPool[0] || smallPool[0])
-      : (smallPool[0] || bigPool[0]);
+      log(traceId, "⚡", `${dir} ${walletHex.slice(0, 8)} liq=$${liqStr}`);
 
-    try {
-      await publicClient.simulateContract({
-        address: CORE_VAULT as `0x${string}`,
-        abi: CORE_VAULT_ABI,
-        functionName: "liquidateDirect",
-        args: [marketHexTyped, walletHex],
-        account: simAccount.address,
-      });
-    } catch (simErr) {
-      logStep(traceId, "LIQ_REJECTED", { wallet: walletHex, reason: String(simErr).slice(0, 120) });
-      continue;
-    }
-
-    let candidates = getCandidatesForPool(routedPool);
-    if (candidates.length === 0 && routedPool === "big") {
-      candidates = getCandidatesForPool("small");
-      logDebug(traceId, "big_pool_empty_using_small_relayer");
-    }
-    if (candidates.length === 0) {
-      logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "no_relayer_available" });
-      await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_relayer_available", traceId, priority: 10 });
-      continue;
-    }
-
-    logStep(traceId, "LIQ_START", { wallet: walletHex, pool: routedPool, gas: estimatedGas?.toString() ?? "unknown", candidates: candidates.length });
-
-    let result: { tx: string; relayer: string; pool: string } | null = null;
-    let reroutedToBig = false;
-    let allInsufficientFunds = true;
-
-    for (const relayer of candidates) {
-      try {
-        result = await sendLiquidationTx({
-          relayer,
-          publicClient,
-          supabase,
-          marketHex: marketHexTyped,
-          traderWallet: walletHex,
-          gasLimit: gasLimitForPool(routedPool),
-          traceId,
-          label: `liq:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
-        });
-        allInsufficientFunds = false;
-        break;
-      } catch (sendErr: any) {
-        if (isInsufficientFundsError(sendErr)) {
-          markLowBalance(relayer.address);
-          logStep(traceId, "LIQ_RELAYER_LOW_FUNDS", {
-            wallet: walletHex,
-            relayer: relayer.address,
-            pool: routedPool,
-            tried: `${candidates.indexOf(relayer) + 1}/${candidates.length}`,
+      // Try relayers
+      for (const relayer of relayerCandidates) {
+        try {
+          const result = await sendLiquidationTx({
+            relayer,
+            publicClient,
+            supabase,
+            marketHex: marketHexTyped,
+            traderWallet: walletHex,
+            gasLimit: gasLimitForPool(routedPool),
+            traceId,
+            label: `liq:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
           });
-          continue;
-        }
-        allInsufficientFunds = false;
-
-        const errMsg = sendErr?.shortMessage || sendErr?.message || String(sendErr);
-        const isTxReverted = errMsg.includes("tx_reverted") || errMsg.includes("receipt_check_failed");
-        const canRetryBig = bigPool.length > 0 && routedPool !== "big" && (isBlockGasLimitError(sendErr) || isTxReverted);
-        if (!canRetryBig) {
-          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: routedPool, reason: errMsg.slice(0, 120) });
-          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `send_fail[${routedPool}]:${errMsg.slice(0, 200)}`, traceId, priority: 5 });
-          break;
-        }
-
-        logStep(traceId, "REROUTE_BIG", { wallet: walletHex, reason: isTxReverted ? "tx_reverted" : "block_gas_limit" });
-
-        const bigCandidates = getCandidatesForPool("big");
-        let bigSuccess = false;
-        for (const bigRelayer of bigCandidates) {
-          try {
-            reroutedToBig = true;
-            result = await sendLiquidationTx({
-              relayer: bigRelayer,
-              publicClient,
-              supabase,
-              marketHex: marketHexTyped,
-              traderWallet: walletHex,
-              gasLimit: gasLimitForPool("big"),
-              traceId,
-              label: `liq_big:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
-            });
-            bigSuccess = true;
-            break;
-          } catch (bigErr: any) {
-            if (isInsufficientFundsError(bigErr)) {
-              markLowBalance(bigRelayer.address);
-              logStep(traceId, "LIQ_BIG_RELAYER_LOW_FUNDS", {
-                wallet: walletHex,
-                relayer: bigRelayer.address,
-                tried: `${bigCandidates.indexOf(bigRelayer) + 1}/${bigCandidates.length}`,
-              });
-              continue;
-            }
-            const bigErrMsg = bigErr?.shortMessage || bigErr?.message || String(bigErr);
-            logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: "big", reason: bigErrMsg.slice(0, 120) });
-            await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `big_send_fail:${bigErrMsg.slice(0, 200)}`, traceId, priority: 8 });
-            break;
+          log(traceId, "✅", `${walletHex.slice(0, 8)} tx=${result.tx.slice(0, 12)}${isQueued ? " (queued)" : ""}`);
+          // Remove from queue on success
+          if (isQueued) {
+            await markQueuedLiquidationComplete(supabase, walletHex, marketHexTyped, traceId, result.tx);
           }
+          return { status: "success", wallet: walletHex, tx: result.tx, pool: result.pool };
+        } catch (sendErr: any) {
+          if (isInsufficientFundsError(sendErr)) {
+            markLowBalance(relayer.address);
+            continue;
+          }
+          const errMsg = sendErr?.shortMessage || sendErr?.message || String(sendErr);
+          if (isQueued) {
+            await incrementQueuedLiquidationAttempts(supabase, walletHex, marketHexTyped, errMsg.slice(0, 200), traceId);
+          } else {
+            await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: errMsg.slice(0, 200), traceId, priority: 5 });
+          }
+          return { status: "failed", wallet: walletHex, reason: errMsg.slice(0, 60) };
         }
-        if (!bigSuccess && bigCandidates.length > 0 && !result) {
-          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "all_big_relayers_insufficient_funds" });
-          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "all_big_relayers_insufficient_funds", traceId, priority: 10 });
-        } else if (bigCandidates.length === 0) {
-          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "no_big_relayer_for_retry" });
-          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_big_relayer_for_block_gas_retry", traceId, priority: 10 });
-        }
-        break;
       }
-    }
 
-    if (allInsufficientFunds && !result) {
-      logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "all_relayers_insufficient_funds", pool: routedPool });
-      await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `all_relayers_insufficient_funds[${routedPool}]`, traceId, priority: 10 });
-      continue;
-    }
+      if (isQueued) {
+        await incrementQueuedLiquidationAttempts(supabase, walletHex, marketHexTyped, "all_relayers_insufficient", traceId);
+      } else {
+        await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "all_relayers_insufficient", traceId, priority: 10 });
+      }
+      return { status: "failed", wallet: walletHex, reason: "all_relayers_low_funds" };
+    });
 
-    if (result) {
-      liquidations.push({
-        wallet: walletHex,
-        marketId: marketHexTyped,
-        tx: result.tx,
-        relayer: result.relayer,
-        pool: result.pool,
-        reroutedToBig,
-        estimatedGas: estimatedGas?.toString() ?? null,
-      });
-      logStep(traceId, "LIQ_COMPLETE", { wallet: walletHex, tx: result.tx, pool: result.pool, rerouted: reroutedToBig || undefined });
+    const batchResults = await Promise.allSettled(batchPromises);
+    
+    for (const r of batchResults) {
+      if (r.status === "fulfilled" && r.value?.status === "success") {
+        liquidations.push(r.value);
+      }
     }
   }
 
-  return { liquidations, checked: aggregates.size };
+  const successCount = liquidations.filter((l) => l.status === "success").length;
+  log(traceId, "📋", `${successCount}/${candidates.length} liquidated, ${positionMap.size} checked`);
+
+  // BACKGROUND: Sync DB with on-chain (non-blocking, fire-and-forget)
+  if (supabase && positionMap.size > 0) {
+    reconcileDbInBackground(supabase, marketUuid, marketHexTyped, positionMap, traceId);
+  }
+
+  return { liquidations, checked: positionMap.size, liquidatable: candidates.length };
+}
+
+// Fire-and-forget DB reconciliation (runs after liquidations complete)
+function reconcileDbInBackground(
+  supabase: any,
+  marketUuid: string,
+  marketHex: string,
+  positionMap: Map<string, { size: bigint; liqPrice: bigint }>,
+  traceId: string
+) {
+  (async () => {
+    let synced = 0;
+    for (const [wallet, { size, liqPrice }] of positionMap.entries()) {
+      try {
+        const dbNet = await fetchDbNetPositionRaw({ supabase, marketUuid, wallet, traceId });
+        if (dbNet !== size) {
+          const deltaRaw = size - dbNet;
+          await upsertNetTrade({
+            supabase,
+            marketUuid,
+            wallet,
+            deltaRaw,
+            payload: {
+              price: "0",
+              liquidation_price: truncateDecimals(formatUnits(liqPrice, PRICE_DECIMALS), LIQUIDATION_DISPLAY_DECIMALS),
+              trade_timestamp: new Date().toISOString(),
+              order_book_address: "",
+            },
+            traceId,
+          });
+          synced++;
+        }
+      } catch {}
+    }
+    if (synced > 0) {
+      log(traceId, "🔄", `Background sync: ${synced} positions corrected`);
+    }
+  })().catch(() => {});
 }
 
 Deno.serve(async (req) => {
@@ -1233,8 +1396,8 @@ Deno.serve(async (req) => {
 
   const results: any[] = [];
 
-  for (const log of logs) {
-    const decoded = decodeLog(log);
+  for (const eventLog of logs) {
+    const decoded = decodeLog(eventLog);
     if (!decoded) {
       results.push({ status: "skipped", reason: "decode_failed" });
       continue;
@@ -1270,7 +1433,7 @@ Deno.serve(async (req) => {
         ? truncateDecimals(formatUnits(BigInt(args.liquidationPrice), PRICE_DECIMALS), LIQUIDATION_DISPLAY_DECIMALS)
         : null;
       const tradeTs = args.timestamp ? new Date(Number(args.timestamp) * 1000).toISOString() : new Date().toISOString();
-      const orderBookSource = getLogAddressCandidate(log);
+      const orderBookSource = getLogAddressCandidate(eventLog);
       const orderBook = normalizeAddress(orderBookSource) || "";
       const payloadBase = {
         price: priceNorm,
@@ -1279,63 +1442,74 @@ Deno.serve(async (req) => {
         order_book_address: orderBook,
       };
 
-      if (args.buyer) {
-        await upsertNetTrade({
-          supabase,
-          marketUuid,
-          wallet: String(args.buyer),
-          deltaRaw: amtRaw,
-          payload: payloadBase,
-          traceId,
-        });
-      }
-      if (args.seller) {
-        const sellerLiq = (await fetchOnchainLiq(marketHex, String(args.seller), traceId)) || liqEvent;
-        await upsertNetTrade({
-          supabase,
-          marketUuid,
-          wallet: String(args.seller),
-          deltaRaw: -amtRaw,
-          payload: { ...payloadBase, liquidation_price: sellerLiq },
-          traceId,
-        });
-      }
+      // ALWAYS verify on-chain position and liquidation price for both parties
+      const tradePublicClient = CORE_VAULT && RPC_URL ? createPublicClient({ transport: http(RPC_URL) }) : null;
+      const walletsToSync = [
+        args.buyer ? String(args.buyer) : null,
+        args.seller ? String(args.seller) : null,
+      ].filter(Boolean) as string[];
 
-      // After applying the trade delta, verify DB position matches on-chain for both parties
-      if (CORE_VAULT && RPC_URL) {
-        const tradePublicClient = createPublicClient({ transport: http(RPC_URL) });
-        const walletsToReconcile = [
-          args.buyer ? String(args.buyer) : null,
-          args.seller ? String(args.seller) : null,
-        ].filter(Boolean) as string[];
+      for (const w of walletsToSync) {
+        const walletNorm = normalizeAddress(w);
+        if (!walletNorm) continue;
 
-        for (const w of walletsToReconcile) {
+        // Fetch on-chain position and liquidation price
+        let onchainSize: bigint | null = null;
+        let onchainLiqPrice: bigint | null = null;
+        
+        if (tradePublicClient) {
           try {
-            const dbNet = await fetchDbNetPositionRaw({ supabase, marketUuid, wallet: w, traceId });
-            await reconcilePositionSize({
+            const onchainData = await fetchOnchainPositionAndLiq(tradePublicClient, walletNorm, marketHex, traceId);
+            if (onchainData) {
+              onchainSize = onchainData.size;
+              onchainLiqPrice = onchainData.liqPrice;
+            }
+          } catch (e: any) {
+            logDebug(traceId, "onchain_fetch_err", { wallet: walletNorm.slice(0, 10), reason: String(e).slice(0, 80) });
+          }
+        }
+
+        // Use on-chain data as source of truth, fallback to event data
+        const liqPriceStr = onchainLiqPrice !== null && onchainLiqPrice !== 0n
+          ? truncateDecimals(formatUnits(onchainLiqPrice, PRICE_DECIMALS), LIQUIDATION_DISPLAY_DECIMALS)
+          : liqEvent;
+
+        // If we have on-chain size, sync DB to match exactly
+        if (onchainSize !== null) {
+          const dbNet = await fetchDbNetPositionRaw({ supabase, marketUuid, wallet: walletNorm, traceId });
+          const deltaRaw = onchainSize - dbNet;
+          
+          if (deltaRaw !== 0n) {
+            log(traceId, "🔄", `Trade sync: ${walletNorm.slice(0, 8)} (Δ${formatUnits(deltaRaw, AMOUNT_DECIMALS)})`);
+            await upsertNetTrade({
               supabase,
-              publicClient: tradePublicClient,
               marketUuid,
-              marketHex,
-              wallet: w,
-              dbNetRaw: dbNet,
+              wallet: walletNorm,
+              deltaRaw,
+              payload: { ...payloadBase, liquidation_price: liqPriceStr },
               traceId,
             });
-          } catch (recErr: any) {
-            logStep(traceId, "reconcile_err", {
-              wallet: w?.slice(0, 10),
-              reason: (recErr?.message || String(recErr)).slice(0, 80),
-            });
+          } else {
+            logDebug(traceId, "trade_in_sync", { wallet: walletNorm.slice(0, 10) });
           }
+        } else {
+          // Fallback: apply event delta if on-chain fetch failed
+          const isBuyer = normalizeAddress(String(args.buyer)) === walletNorm;
+          const deltaRaw = isBuyer ? amtRaw : -amtRaw;
+          await upsertNetTrade({
+            supabase,
+            marketUuid,
+            wallet: walletNorm,
+            deltaRaw,
+            payload: { ...payloadBase, liquidation_price: liqPriceStr },
+            traceId,
+          });
         }
       }
 
       results.push({ status: "ok", event: "TradeRecorded", marketId: marketHex });
     } else if (decoded.eventName === "PriceUpdated") {
-      if (!supabase) {
-        results.push({ status: "skipped", event: "PriceUpdated", reason: "no_supabase" });
-        continue;
-      }
+      // Liquidation checks use on-chain data primarily, supabase is optional for DB sync
       const mark = decoded.args.currentMarkPrice;
       const markBn =
         typeof mark === "bigint" ? mark : typeof mark === "number" ? BigInt(mark) : toBigIntSafe(mark);
@@ -1346,7 +1520,7 @@ Deno.serve(async (req) => {
 
       logDebug(traceId, "price_payload", { decodedArgs: decoded.args });
 
-      const orderBookCandidates = collectLogAddresses(log);
+      const orderBookCandidates = collectLogAddresses(eventLog);
       logDebug(traceId, "price_event", { orderBook: orderBookCandidates[0] ?? null, mark: markBn.toString() });
 
       if (!orderBookCandidates.length) {
@@ -1382,7 +1556,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const orderBookCandidates = collectLogAddresses(log);
+      const orderBookCandidates = collectLogAddresses(eventLog);
       if (!orderBookCandidates.length) {
         results.push({ status: "skipped", event: decoded.eventName, reason: "missing_orderbook" });
         continue;
@@ -1408,11 +1582,7 @@ Deno.serve(async (req) => {
         results.push({ status: "skipped", event: decoded.eventName, reason: "kernel_price_unavailable" });
         continue;
       }
-      logStep(traceId, "KERNEL_PRICE_CHECK", {
-        market: marketMeta.marketHex.slice(0, 14),
-        mark: kernelMark.toString(),
-        trigger: decoded.eventName,
-      });
+      log(traceId, "📈", `${decoded.eventName} → checking @ $${formatUnits(kernelMark, PRICE_DECIMALS)}`);
 
       const compare = await findCandidatesAndLiquidate(kernelMark, {
         supabase,
@@ -1436,7 +1606,7 @@ Deno.serve(async (req) => {
       const args: any = decoded.args;
       const trader = normalizeAddress(String(args.trader || ""));
       const remainingRaw = toBigIntSafe(args.remainingSize);
-      const orderBookCandidates = collectLogAddresses(log);
+      const orderBookCandidates = collectLogAddresses(eventLog);
       const orderBookAddr = orderBookCandidates[0] ?? null;
 
       if (!trader) {
@@ -1504,7 +1674,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  logStep(traceId, "DONE", { n: results.length });
+  log(traceId, "✓", `Done (${results.length} events)`);
   return new Response(JSON.stringify({ ok: true, processed: results.length, results, traceId }), {
     headers: { "content-type": "application/json" },
   });

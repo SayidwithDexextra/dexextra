@@ -274,23 +274,12 @@ contract OBLiquidationFacet {
             _releaseLiquidationFlag(s, trader);
             return (true, startSize, false, remainingSize);
         }
-        // Fallback to direct vault-side liquidation (no suppression)
-        bool vaultSuccess = false;
-        uint256 execPrice = markPrice;
-        if (execPrice == 0) execPrice = s.lastMarkPrice != 0 ? s.lastMarkPrice : s.lastTradePrice;
-        if (execPrice == 0) execPrice = size < 0 ? s.bestAsk : s.bestBid;
-        if (size < 0) {
-            s.vault.liquidateShort(trader, s.marketId, address(this), execPrice);
-            vaultSuccess = true;
-        } else if (size > 0) {
-            s.vault.liquidateLong(trader, s.marketId, address(this), execPrice);
-            vaultSuccess = true;
-        }
-        (int256 afterVault, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        bool directReduced = afterVault != positionSize;
-        remainingSize = afterVault;
+        
+        // No liquidity available - position stays open, will be retried later
+        // (removed fallback vault liquidation - positions should only close when liquidity is consumed)
         _releaseLiquidationFlag(s, trader);
-        return (directReduced, positionSize, true, remainingSize);
+        remainingSize = positionSize;
+        return (false, positionSize, false, remainingSize);
     }
 
     function _releaseLiquidationFlag(OrderBookStorage.State storage s, address trader) private {

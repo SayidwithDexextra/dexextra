@@ -25,11 +25,8 @@ interface IGlobalSessionRegistry {
  *         This facet MUST NOT duplicate business logic from the OrderBook; it only verifies and dispatches.
  */
 interface IOBOrderPlacementBy {
-    function placeLimitOrderBy(address trader, uint256 price, uint256 amount, bool isBuy) external returns (uint256 orderId);
     function placeMarginLimitOrderBy(address trader, uint256 price, uint256 amount, bool isBuy) external returns (uint256 orderId);
-    function placeMarketOrderBy(address trader, uint256 amount, bool isBuy) external returns (uint256 filledAmount);
     function placeMarginMarketOrderBy(address trader, uint256 amount, bool isBuy) external returns (uint256 filledAmount);
-    function placeMarketOrderWithSlippageBy(address trader, uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256 filledAmount);
     function placeMarginMarketOrderWithSlippageBy(address trader, uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256 filledAmount);
     function modifyOrderBy(address trader, uint256 orderId, uint256 price, uint256 amount) external returns (uint256 newOrderId);
     function cancelOrderBy(address trader, uint256 orderId) external;
@@ -83,10 +80,8 @@ contract MetaTradeFacet is EIP712 {
     bytes32 private constant TYPEHASH_SESSION_PERMIT =
         keccak256("SessionPermit(address trader,address relayer,uint256 expiry,uint256 maxNotionalPerTrade,uint256 maxNotionalPerSession,bytes32 methodsBitmap,bytes32 sessionSalt,bytes32[] allowedMarkets,uint256 nonce)");
 
-    // method bits (example policy)
-    uint256 private constant MBIT_PLACE_LIMIT = 1 << 0;
+    // method bits (margin-only policy)
     uint256 private constant MBIT_PLACE_MARGIN_LIMIT = 1 << 1;
-    uint256 private constant MBIT_PLACE_MARKET = 1 << 2;
     uint256 private constant MBIT_PLACE_MARGIN_MARKET = 1 << 3;
     uint256 private constant MBIT_MODIFY = 1 << 4;
     uint256 private constant MBIT_CANCEL = 1 << 5;
@@ -101,17 +96,6 @@ contract MetaTradeFacet is EIP712 {
     bytes32 private constant TYPEHASH_CANCEL =
         keccak256("CancelOrder(address trader,uint256 orderId,uint256 deadline,uint256 nonce)");
 
-    struct PlaceLimit {
-        address trader;
-        uint256 price;
-        uint256 amount;
-        bool isBuy;
-        uint256 deadline;
-        uint256 nonce;
-    }
-    bytes32 private constant TYPEHASH_PLACE_LIMIT =
-        keccak256("PlaceLimit(address trader,uint256 price,uint256 amount,bool isBuy,uint256 deadline,uint256 nonce)");
-
     struct PlaceMarginLimit {
         address trader;
         uint256 price;
@@ -123,16 +107,6 @@ contract MetaTradeFacet is EIP712 {
     bytes32 private constant TYPEHASH_PLACE_MARGIN_LIMIT =
         keccak256("PlaceMarginLimit(address trader,uint256 price,uint256 amount,bool isBuy,uint256 deadline,uint256 nonce)");
 
-    struct PlaceMarket {
-        address trader;
-        uint256 amount;
-        bool isBuy;
-        uint256 deadline;
-        uint256 nonce;
-    }
-    bytes32 private constant TYPEHASH_PLACE_MARKET =
-        keccak256("PlaceMarket(address trader,uint256 amount,bool isBuy,uint256 deadline,uint256 nonce)");
-
     struct PlaceMarginMarket {
         address trader;
         uint256 amount;
@@ -142,17 +116,6 @@ contract MetaTradeFacet is EIP712 {
     }
     bytes32 private constant TYPEHASH_PLACE_MARGIN_MARKET =
         keccak256("PlaceMarginMarket(address trader,uint256 amount,bool isBuy,uint256 deadline,uint256 nonce)");
-
-    struct PlaceMarketWithSlippage {
-        address trader;
-        uint256 amount;
-        bool isBuy;
-        uint256 slippageBps;
-        uint256 deadline;
-        uint256 nonce;
-    }
-    bytes32 private constant TYPEHASH_PLACE_MARKET_WITH_SLIPPAGE =
-        keccak256("PlaceMarketWithSlippage(address trader,uint256 amount,bool isBuy,uint256 slippageBps,uint256 deadline,uint256 nonce)");
 
     struct PlaceMarginMarketWithSlippage {
         address trader;
@@ -260,17 +223,6 @@ contract MetaTradeFacet is EIP712 {
         IOBOrderPlacementBy(address(this)).cancelOrderBy(p.trader, p.orderId);
     }
 
-    function metaPlaceLimit(PlaceLimit calldata p, bytes calldata signature) external returns (uint256 orderId) {
-        _verifyAndConsume(
-            p.trader,
-            p.nonce,
-            p.deadline,
-            keccak256(abi.encode(TYPEHASH_PLACE_LIMIT, p.trader, p.price, p.amount, p.isBuy, p.deadline, p.nonce)),
-            signature
-        );
-        return IOBOrderPlacementBy(address(this)).placeLimitOrderBy(p.trader, p.price, p.amount, p.isBuy);
-    }
-
     function metaPlaceMarginLimit(PlaceMarginLimit calldata p, bytes calldata signature) external returns (uint256 orderId) {
         _verifyAndConsume(
             p.trader,
@@ -282,17 +234,6 @@ contract MetaTradeFacet is EIP712 {
         return IOBOrderPlacementBy(address(this)).placeMarginLimitOrderBy(p.trader, p.price, p.amount, p.isBuy);
     }
 
-    function metaPlaceMarket(PlaceMarket calldata p, bytes calldata signature) external returns (uint256 filledAmount) {
-        _verifyAndConsume(
-            p.trader,
-            p.nonce,
-            p.deadline,
-            keccak256(abi.encode(TYPEHASH_PLACE_MARKET, p.trader, p.amount, p.isBuy, p.deadline, p.nonce)),
-            signature
-        );
-        return IOBOrderPlacementBy(address(this)).placeMarketOrderBy(p.trader, p.amount, p.isBuy);
-    }
-
     function metaPlaceMarginMarket(PlaceMarginMarket calldata p, bytes calldata signature) external returns (uint256 filledAmount) {
         _verifyAndConsume(
             p.trader,
@@ -302,17 +243,6 @@ contract MetaTradeFacet is EIP712 {
             signature
         );
         return IOBOrderPlacementBy(address(this)).placeMarginMarketOrderBy(p.trader, p.amount, p.isBuy);
-    }
-
-    function metaPlaceMarketWithSlippage(PlaceMarketWithSlippage calldata p, bytes calldata signature) external returns (uint256 filledAmount) {
-        _verifyAndConsume(
-            p.trader,
-            p.nonce,
-            p.deadline,
-            keccak256(abi.encode(TYPEHASH_PLACE_MARKET_WITH_SLIPPAGE, p.trader, p.amount, p.isBuy, p.slippageBps, p.deadline, p.nonce)),
-            signature
-        );
-        return IOBOrderPlacementBy(address(this)).placeMarketOrderWithSlippageBy(p.trader, p.amount, p.isBuy, p.slippageBps);
     }
 
     function metaPlaceMarginMarketWithSlippage(PlaceMarginMarketWithSlippage calldata p, bytes calldata signature) external returns (uint256 filledAmount) {
@@ -394,20 +324,6 @@ contract MetaTradeFacet is EIP712 {
     }
 
     // Direct session dispatchers (no user signature required)
-    function sessionPlaceLimit(
-        bytes32 sessionId,
-        address trader,
-        uint256 price,
-        uint256 amount,
-        bool isBuy,
-        bytes32[] calldata relayerProof
-    ) external returns (uint256 orderId) {
-        // Compute notional = amount * price / 1e18 (amount in 1e18, price in 6 decimals)
-        uint256 notional = Math.mulDiv(amount, price, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_LIMIT, notional, relayerProof);
-        return IOBOrderPlacementBy(address(this)).placeLimitOrderBy(trader, price, amount, isBuy);
-    }
-
     function sessionPlaceMarginLimit(
         bytes32 sessionId,
         address trader,
@@ -419,22 +335,6 @@ contract MetaTradeFacet is EIP712 {
         uint256 notional = Math.mulDiv(amount, price, 1e18);
         _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_LIMIT, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).placeMarginLimitOrderBy(trader, price, amount, isBuy);
-    }
-
-    function sessionPlaceMarket(
-        bytes32 sessionId,
-        address trader,
-        uint256 amount,
-        bool isBuy,
-        bytes32[] calldata relayerProof
-    ) external returns (uint256 filledAmount) {
-        // Approximate notional using best opposite price
-        OrderBookStorage.State storage st = OrderBookStorage.state();
-        uint256 refPrice = isBuy ? st.bestAsk : st.bestBid;
-        require(refPrice != 0, "OB: no liq");
-        uint256 notional = Math.mulDiv(amount, refPrice, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARKET, notional, relayerProof);
-        return IOBOrderPlacementBy(address(this)).placeMarketOrderBy(trader, amount, isBuy);
     }
 
     function sessionPlaceMarginMarket(

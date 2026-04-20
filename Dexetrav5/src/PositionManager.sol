@@ -44,7 +44,7 @@ library PositionManager {
     }
 
     /**
-     * @dev Execute position netting with detailed calculations
+     * @dev Execute position netting with detailed calculations (legacy - O(N) lookup)
      */
     function executePositionNetting(
         Position[] storage positions,
@@ -54,13 +54,13 @@ library PositionManager {
         uint256 executionPrice,
         uint256 requiredMargin
     ) external returns (NettingResult memory result) {
-        // Find existing position
-        uint256 positionIndex;
+        // Find existing position (O(N) - legacy compatibility)
+        uint256 positionIdx;
         bool found = false;
         
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId) {
-                positionIndex = i;
+                positionIdx = i;
                 found = true;
                 break;
             }
@@ -69,108 +69,78 @@ library PositionManager {
         result.positionExists = found;
         
         if (found) {
-            Position storage position = positions[positionIndex];
+            Position storage position = positions[positionIdx];
             result.oldSize = position.size;
             result.oldEntryPrice = position.entryPrice;
             result.oldMargin = position.marginLocked;
             uint256 oldHaircut6 = position.socializedLossAccrued6;
             uint256 oldHaircutUnits18 = position.haircutUnits18;
             
-            // Calculate new position
             result.newSize = position.size + sizeDelta;
 
-            // Calculate realized P&L ONLY for the portion that actually closes
             if ((position.size > 0 && sizeDelta < 0) || (position.size < 0 && sizeDelta > 0)) {
-                // Closing direction: compute closed quantity as min(|delta|, |position|)
                 uint256 absDelta = uint256(sizeDelta > 0 ? sizeDelta : -sizeDelta);
                 uint256 posAbs = uint256(position.size > 0 ? position.size : -position.size);
                 uint256 closedAbs = absDelta > posAbs ? posAbs : absDelta;
-
-                // Closing size SIGNED the same as the original position (not the trade delta)
                 int256 closingSizeSigned = position.size > 0 ? int256(closedAbs) : -int256(closedAbs);
-
-                // Standard P&L calculation in 18 decimals: (P_exec - P_entry) * Q / TICK_PRECISION
                 int256 priceDiff = int256(executionPrice) - int256(position.entryPrice);
                 result.realizedPnL = (priceDiff * closingSizeSigned) / int256(TICK_PRECISION);
             }
 
-            // Calculate new entry price
             if (result.newSize == 0) {
                 result.newEntryPrice = 0;
                 result.positionClosed = true;
                 result.marginToRelease = position.marginLocked;
-                // Entire haircut for this position is realized now
                 result.haircutToConfiscate6 = oldHaircut6;
                 
-                // Remove position
-                if (positionIndex < positions.length - 1) {
-                    positions[positionIndex] = positions[positions.length - 1];
+                if (positionIdx < positions.length - 1) {
+                    positions[positionIdx] = positions[positions.length - 1];
                 }
                 positions.pop();
                 
             } else {
-                // Position continues - determine correct entry price behavior
                 bool sameDirection = (position.size > 0 && sizeDelta > 0) || (position.size < 0 && sizeDelta < 0);
 
                 if (sameDirection) {
-                    // CRITICAL OVERFLOW FIX: Use fixed precision arithmetic with extreme scaling
                     unchecked {
-                        // Get absolute sizes
                         uint256 existingSize = uint256(position.size >= 0 ? position.size : -position.size);
                         uint256 newSize = uint256(sizeDelta >= 0 ? sizeDelta : -sizeDelta);
-                        
-                        // Scale down to whole units (from 18 decimals to 0)
                         uint256 wholeExistingSize = existingSize / 1e18;
                         uint256 wholeNewSize = newSize / 1e18;
-                        
-                        // Ensure minimum values for tiny amounts
                         if (wholeExistingSize == 0) wholeExistingSize = 1;
                         if (wholeNewSize == 0) wholeNewSize = 1;
-                        
-                        // Calculate weighted average price (cannot overflow)
                         uint256 existingNotional = wholeExistingSize * position.entryPrice;
                         uint256 newNotional = wholeNewSize * executionPrice;
                         uint256 totalNotional = existingNotional + newNotional;
                         uint256 totalSize = wholeExistingSize + wholeNewSize;
-                        
-                        // Calculate new entry price
                         result.newEntryPrice = totalSize > 0 ? (totalNotional / totalSize) : position.entryPrice;
                     }
                 } else {
-                    // Opposite direction: either partial close or flip
                     uint256 absDelta = uint256(sizeDelta > 0 ? sizeDelta : -sizeDelta);
                     uint256 posAbs = uint256(position.size > 0 ? position.size : -position.size);
                     if (absDelta < posAbs) {
-                    // Partial close only: keep original entry price for the remaining position
-                    result.newEntryPrice = position.entryPrice;
-                    // Realize haircut only on the originally socialized units, not on newly added units
-                    uint256 unitsToRelease18 = oldHaircutUnits18 == 0 ? 0 : (absDelta > oldHaircutUnits18 ? oldHaircutUnits18 : absDelta);
-                    uint256 haircutClosed6 = (oldHaircut6 == 0 || oldHaircutUnits18 == 0) ? 0 : (oldHaircut6 * unitsToRelease18) / oldHaircutUnits18;
-                    if (haircutClosed6 > 0) {
-                        if (haircutClosed6 > position.socializedLossAccrued6) {
-                            haircutClosed6 = position.socializedLossAccrued6;
+                        result.newEntryPrice = position.entryPrice;
+                        uint256 unitsToRelease18 = oldHaircutUnits18 == 0 ? 0 : (absDelta > oldHaircutUnits18 ? oldHaircutUnits18 : absDelta);
+                        uint256 haircutClosed6 = (oldHaircut6 == 0 || oldHaircutUnits18 == 0) ? 0 : (oldHaircut6 * unitsToRelease18) / oldHaircutUnits18;
+                        if (haircutClosed6 > 0) {
+                            if (haircutClosed6 > position.socializedLossAccrued6) {
+                                haircutClosed6 = position.socializedLossAccrued6;
+                            }
+                            position.socializedLossAccrued6 = position.socializedLossAccrued6 - haircutClosed6;
+                            if (unitsToRelease18 > 0) {
+                                position.haircutUnits18 = position.haircutUnits18 - unitsToRelease18;
+                            }
+                            result.haircutToConfiscate6 = haircutClosed6;
                         }
-                        position.socializedLossAccrued6 = position.socializedLossAccrued6 - haircutClosed6;
-                        // Reduce the tagged units by the portion actually closed
-                        if (unitsToRelease18 > 0) {
-                            position.haircutUnits18 = position.haircutUnits18 - unitsToRelease18;
-                        }
-                        result.haircutToConfiscate6 = haircutClosed6;
-                    }
                     } else {
-                        // Flip: entire old position closed and new opened at execution price
                         result.newEntryPrice = executionPrice;
-                        // Entire haircut is realized due to full close of old leg
                         result.haircutToConfiscate6 = oldHaircut6;
-                        // Reset haircut on the new leg (implicitly zero since entry below)
                     }
                 }
                 
-                // Update position
                 position.size = result.newSize;
                 position.entryPrice = result.newEntryPrice;
                 
-                // Standard margin update: do not bind to haircut floor; haircut is realized from payouts
                 uint256 oldMarginLocal = position.marginLocked;
                 if (requiredMargin > oldMarginLocal) {
                     result.marginToLock = requiredMargin - oldMarginLocal;
@@ -190,7 +160,6 @@ library PositionManager {
             }
             
         } else {
-            // New position
             result.newSize = sizeDelta;
             result.newEntryPrice = executionPrice;
             result.newMargin = requiredMargin;
@@ -206,9 +175,155 @@ library PositionManager {
                 liquidationPrice: 0
             }));
         }
+    }
+    
+    /**
+     * @dev Execute position netting with O(1) index lookup (falls back to O(N) if index not set)
+     */
+    function executePositionNettingWithIndex(
+        Position[] storage positions,
+        mapping(bytes32 => uint256) storage positionIndex,
+        address /*user*/,
+        bytes32 marketId,
+        int256 sizeDelta,
+        uint256 executionPrice,
+        uint256 requiredMargin
+    ) external returns (NettingResult memory result) {
+        // O(1) position lookup
+        uint256 indexPlusOne = positionIndex[marketId];
+        bool found = indexPlusOne != 0;
+        uint256 positionIdx = found ? indexPlusOne - 1 : 0;
         
-        // Note: Margin is now tracked exclusively in Position struct
-        // No separate marginByMarket mapping needed - single source of truth
+        // Fallback: if index not set, do O(N) search for legacy positions
+        if (!found) {
+            for (uint256 i = 0; i < positions.length; i++) {
+                if (positions[i].marketId == marketId) {
+                    positionIdx = i;
+                    found = true;
+                    // Set the index for future O(1) lookups
+                    positionIndex[marketId] = i + 1;
+                    break;
+                }
+            }
+        }
+        
+        result.positionExists = found;
+        
+        if (found) {
+            Position storage position = positions[positionIdx];
+            result.oldSize = position.size;
+            result.oldEntryPrice = position.entryPrice;
+            result.oldMargin = position.marginLocked;
+            uint256 oldHaircut6 = position.socializedLossAccrued6;
+            uint256 oldHaircutUnits18 = position.haircutUnits18;
+            
+            result.newSize = position.size + sizeDelta;
+
+            if ((position.size > 0 && sizeDelta < 0) || (position.size < 0 && sizeDelta > 0)) {
+                uint256 absDelta = uint256(sizeDelta > 0 ? sizeDelta : -sizeDelta);
+                uint256 posAbs = uint256(position.size > 0 ? position.size : -position.size);
+                uint256 closedAbs = absDelta > posAbs ? posAbs : absDelta;
+                int256 closingSizeSigned = position.size > 0 ? int256(closedAbs) : -int256(closedAbs);
+                int256 priceDiff = int256(executionPrice) - int256(position.entryPrice);
+                result.realizedPnL = (priceDiff * closingSizeSigned) / int256(TICK_PRECISION);
+            }
+
+            if (result.newSize == 0) {
+                result.newEntryPrice = 0;
+                result.positionClosed = true;
+                result.marginToRelease = position.marginLocked;
+                result.haircutToConfiscate6 = oldHaircut6;
+                
+                // Swap-and-pop removal with index maintenance
+                uint256 lastIndex = positions.length - 1;
+                if (positionIdx != lastIndex) {
+                    Position storage lastPos = positions[lastIndex];
+                    positions[positionIdx] = lastPos;
+                    positionIndex[lastPos.marketId] = indexPlusOne;  // Update moved position's index
+                }
+                positions.pop();
+                positionIndex[marketId] = 0;  // Clear removed position's index
+                
+            } else {
+                bool sameDirection = (position.size > 0 && sizeDelta > 0) || (position.size < 0 && sizeDelta < 0);
+
+                if (sameDirection) {
+                    unchecked {
+                        uint256 existingSize = uint256(position.size >= 0 ? position.size : -position.size);
+                        uint256 newSize = uint256(sizeDelta >= 0 ? sizeDelta : -sizeDelta);
+                        uint256 wholeExistingSize = existingSize / 1e18;
+                        uint256 wholeNewSize = newSize / 1e18;
+                        if (wholeExistingSize == 0) wholeExistingSize = 1;
+                        if (wholeNewSize == 0) wholeNewSize = 1;
+                        uint256 existingNotional = wholeExistingSize * position.entryPrice;
+                        uint256 newNotional = wholeNewSize * executionPrice;
+                        uint256 totalNotional = existingNotional + newNotional;
+                        uint256 totalSize = wholeExistingSize + wholeNewSize;
+                        result.newEntryPrice = totalSize > 0 ? (totalNotional / totalSize) : position.entryPrice;
+                    }
+                } else {
+                    uint256 absDelta = uint256(sizeDelta > 0 ? sizeDelta : -sizeDelta);
+                    uint256 posAbs = uint256(position.size > 0 ? position.size : -position.size);
+                    if (absDelta < posAbs) {
+                        result.newEntryPrice = position.entryPrice;
+                        uint256 unitsToRelease18 = oldHaircutUnits18 == 0 ? 0 : (absDelta > oldHaircutUnits18 ? oldHaircutUnits18 : absDelta);
+                        uint256 haircutClosed6 = (oldHaircut6 == 0 || oldHaircutUnits18 == 0) ? 0 : (oldHaircut6 * unitsToRelease18) / oldHaircutUnits18;
+                        if (haircutClosed6 > 0) {
+                            if (haircutClosed6 > position.socializedLossAccrued6) {
+                                haircutClosed6 = position.socializedLossAccrued6;
+                            }
+                            position.socializedLossAccrued6 = position.socializedLossAccrued6 - haircutClosed6;
+                            if (unitsToRelease18 > 0) {
+                                position.haircutUnits18 = position.haircutUnits18 - unitsToRelease18;
+                            }
+                            result.haircutToConfiscate6 = haircutClosed6;
+                        }
+                    } else {
+                        result.newEntryPrice = executionPrice;
+                        result.haircutToConfiscate6 = oldHaircut6;
+                    }
+                }
+                
+                position.size = result.newSize;
+                position.entryPrice = result.newEntryPrice;
+                
+                uint256 oldMarginLocal = position.marginLocked;
+                if (requiredMargin > oldMarginLocal) {
+                    result.marginToLock = requiredMargin - oldMarginLocal;
+                    result.marginToRelease = 0;
+                    position.marginLocked = requiredMargin;
+                    result.newMargin = requiredMargin;
+                } else if (requiredMargin < oldMarginLocal) {
+                    result.marginToLock = 0;
+                    result.marginToRelease = oldMarginLocal - requiredMargin;
+                    position.marginLocked = requiredMargin;
+                    result.newMargin = requiredMargin;
+                } else {
+                    result.marginToLock = 0;
+                    result.marginToRelease = 0;
+                    result.newMargin = oldMarginLocal;
+                }
+            }
+            
+        } else {
+            result.newSize = sizeDelta;
+            result.newEntryPrice = executionPrice;
+            result.newMargin = requiredMargin;
+            result.marginToLock = requiredMargin;
+            
+            positions.push(Position({
+                marketId: marketId,
+                size: sizeDelta,
+                entryPrice: executionPrice,
+                marginLocked: requiredMargin,
+                socializedLossAccrued6: 0,
+                haircutUnits18: 0,
+                liquidationPrice: 0
+            }));
+            
+            // Set index for new position
+            positionIndex[marketId] = positions.length;
+        }
     }
 
     /**
@@ -297,7 +412,7 @@ library PositionManager {
     }
 
     /**
-     * @dev Remove market ID from user's market list
+     * @dev Remove market ID from user's market list (legacy - O(N))
      */
     function removeMarketIdFromUser(
         bytes32[] storage userMarketIds,
@@ -313,21 +428,57 @@ library PositionManager {
             }
         }
     }
+    
+    /**
+     * @dev Remove market ID from user's market list with O(1) index lookup
+     */
+    function removeMarketIdFromUserWithIndex(
+        bytes32[] storage userMarketIds,
+        mapping(bytes32 => uint256) storage marketIdIndex,
+        bytes32 marketId
+    ) external {
+        uint256 indexPlusOne = marketIdIndex[marketId];
+        if (indexPlusOne == 0) return;  // Not found
+        
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = userMarketIds.length - 1;
+        
+        if (index != lastIndex) {
+            bytes32 lastId = userMarketIds[lastIndex];
+            userMarketIds[index] = lastId;
+            marketIdIndex[lastId] = indexPlusOne;  // Update moved ID's index
+        }
+        userMarketIds.pop();
+        marketIdIndex[marketId] = 0;  // Clear removed ID's index
+    }
 
     /**
-     * @dev Add market ID to user's market list (if not already present)
+     * @dev Add market ID to user's market list (legacy - O(N))
      */
     function addMarketIdToUser(
         bytes32[] storage userMarketIds,
         bytes32 marketId
     ) external {
-        // Check if market ID already exists
         for (uint256 i = 0; i < userMarketIds.length; i++) {
             if (userMarketIds[i] == marketId) {
-                return; // Already exists
+                return;
             }
         }
         userMarketIds.push(marketId);
+    }
+    
+    /**
+     * @dev Add market ID to user's market list with O(1) duplicate check
+     */
+    function addMarketIdToUserWithIndex(
+        bytes32[] storage userMarketIds,
+        mapping(bytes32 => uint256) storage marketIdIndex,
+        bytes32 marketId
+    ) external {
+        if (marketIdIndex[marketId] != 0) return;  // Already exists (O(1) check)
+        
+        userMarketIds.push(marketId);
+        marketIdIndex[marketId] = userMarketIds.length;  // index + 1
     }
 
     /**
@@ -412,3 +563,4 @@ library PositionManager {
         return false;
     }
 }
+

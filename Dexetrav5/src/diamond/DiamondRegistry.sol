@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "./interfaces/IDiamondLoupe.sol";
 import "./interfaces/IERC173.sol";
+import "./libraries/LibDiamond.sol";
 
 interface IFacetRegistry {
     function getFacet(bytes4 selector) external view returns (address);
@@ -34,7 +35,8 @@ contract DiamondRegistry is IDiamondLoupe, IERC173 {
     ) {
         facetRegistry = _registry;
         _owner = _contractOwner;
-        emit OwnershipTransferred(address(0), _contractOwner);
+        // Also set in LibDiamond storage so facets using enforceIsContractOwner() work
+        LibDiamond.setContractOwner(_contractOwner);
         
         if (_init != address(0)) {
             (bool success, bytes memory error) = _init.delegatecall(_calldata);
@@ -119,6 +121,8 @@ contract DiamondRegistry is IDiamondLoupe, IERC173 {
         if (_newOwner == address(0)) revert NewOwnerIsZero();
         emit OwnershipTransferred(_owner, _newOwner);
         _owner = _newOwner;
+        // Keep LibDiamond storage in sync for facets using enforceIsContractOwner()
+        LibDiamond.setContractOwner(_newOwner);
     }
     
     // ============ Fallback - Registry Lookup ============

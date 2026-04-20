@@ -1,0 +1,55 @@
+{
+  "// NOTE": "This file contains contract addresses BEFORE the CoreVault gas optimization upgrade.",
+  "// DATE": "2026-04-11",
+  "// PURPOSE": "Backup of deployed contract addresses prior to implementing O(1) margin operations",
+  
+  "network": "hyperliquid",
+  "chainId": 999,
+  
+  "coreContracts": {
+    "MOCK_USDC": "0x2343A6Ad12D0d1091C45b166901B25a281D3eD9D",
+    "VAULT_ANALYTICS": "0xEece3ce717958a39F5E1d257c75C213Dd83Ec7e9",
+    "POSITION_MANAGER": "0x95F53AF1dc4cDcA311C8f2999Ed9d9592B179064",
+    "CORE_VAULT": "0x41E33Ac4DE5d37d85bd3E1f1a99cbeb25Cc5c0c4",
+    "LIQUIDATION_MANAGER": "0x61983b92f2C511f16d133854Fc8D4dBb524beaec",
+    "FUTURES_MARKET_FACTORY": "0x7C0DB915706b6ab667f9886c2a0d313A7E63fB7a"
+  },
+  
+  "diamondFacets": {
+    "MARKET_LIFECYCLE_FACET": "0x84282214a489Fdc65Fb440Ff08d2154A57b85fdb",
+    "META_TRADE_FACET": "0x09Cc0b148b971746B0fe6311b503f361d3AD8F11",
+    "OB_TRADE_EXECUTION_FACET": "0xCd396BCE332729F05D9C6396861d2293058c1731",
+    "OB_ORDER_PLACEMENT_FACET": "0x5AEa8376D78F04F44D8bd7dea31728a5e0DeE603",
+    "MARKET_BOND_MANAGER_V2": "0xcBc4D2Bc606050Fa280b4a3550104044928dD6Ba"
+  },
+  
+  "markets": {
+    "GOLD": {
+      "orderBook": "0xFdC268c4e7ff2a32558E004C94A1311E315eeB86",
+      "marketId": "0xc0e300c3718338a3c390ad3e4bd370fe4e3d5430b38f03bbce0919eb19a3e3d0"
+    },
+    "ALUMINUM": {
+      "orderBook": "0x58410B977c2BA93a0a9f50154CecEb4b1d501bb0",
+      "marketId": "0x65ac51cc822bb3024c67bac97a65782b37cd7387439a706774df6095a5c53579"
+    },
+    "SILVER": {
+      "orderBook": "0xc81838e983981c099229a47A7D3D6418464ED5a5",
+      "marketId": "0xabc874dda28efcc5493925a0593f9ac1f60b23794c52e847d14a0d5478b3d5f2"
+    },
+    "JASMY": {
+      "orderBook": "0xF91Da1Dd70728AAa20835E90E7946ADE7aECea3A",
+      "marketId": "0xe85cb17c6fd8ed518d5bbacf6e1a3629eea374a9278dc60fa7ccd554d0861baa"
+    },
+    "COPPER": {
+      "orderBook": "0x2Bd6A9573F2aD61Bc8b01A93e1C84fEE309ad82c",
+      "marketId": "0xd51c9f359bc723312d125c8e7c4414377eedcd34cc2ac8215665027fc5ac48c9"
+    }
+  },
+  
+  "deployer": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+  
+  "upgradeHistory": {
+    "previousCoreVault": "0xAdD81D5D46fd9Fb6235a142a5f4547a8EfE30F43",
+    "previousOBOrderPlacementFacet": "0xE0eEd23d340E060762C77e1a72cbfb45855681D9"
+  }
+}

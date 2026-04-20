@@ -1,41 +1,51 @@
 const { ethers } = require("hardhat");
+const fs = require("fs");
+const path = require("path");
+require("dotenv").config({ path: path.join(process.cwd(), "..", ".env.local") });
 
 async function main() {
-  const provider = ethers.provider;
+  const deployerAddress = "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500";
+  const amountToSend = ethers.parseEther("0.025"); // Send enough for deployment
   
-  // Relayer has more funds
-  const relayerKey = process.env.RELAYER_PRIVATE_KEY;
-  if (!relayerKey) {
-    console.error("RELAYER_PRIVATE_KEY not set");
+  // Load relayers
+  const relayersPath = path.join(__dirname, "../../relayers.generated.json");
+  const relayers = JSON.parse(fs.readFileSync(relayersPath, "utf8"));
+  
+  // Find the relayer with highest balance
+  let bestRelayer = null;
+  let highestBalance = 0n;
+  
+  for (const r of relayers) {
+    const bal = await ethers.provider.getBalance(r.address);
+    if (bal > highestBalance) {
+      highestBalance = bal;
+      bestRelayer = r;
+    }
+  }
+  
+  if (!bestRelayer || highestBalance < amountToSend + ethers.parseEther("0.01")) {
+    console.log("❌ No relayer with sufficient balance");
     process.exit(1);
   }
   
-  const relayer = new ethers.Wallet(relayerKey, provider);
-  const [deployer] = await ethers.getSigners();
+  console.log("💰 Funding deployer address");
+  console.log("   From:", bestRelayer.address);
+  console.log("   Balance:", ethers.formatEther(highestBalance), "HYPE");
+  console.log("   To:", deployerAddress);
+  console.log("   Amount:", ethers.formatEther(amountToSend), "HYPE");
   
-  console.log("Relayer:", relayer.address);
-  console.log("Relayer balance:", ethers.formatEther(await provider.getBalance(relayer.address)), "ETH");
-  console.log("Deployer:", deployer.address);
-  console.log("Deployer balance:", ethers.formatEther(await provider.getBalance(deployer.address)), "ETH");
-  
-  // Send 0.01 ETH to deployer
-  const amount = ethers.parseEther("0.01");
-  console.log(`\nSending ${ethers.formatEther(amount)} ETH to deployer...`);
-  
-  const tx = await relayer.sendTransaction({
-    to: deployer.address,
-    value: amount
+  const wallet = new ethers.Wallet(bestRelayer.privateKey, ethers.provider);
+  const tx = await wallet.sendTransaction({
+    to: deployerAddress,
+    value: amountToSend,
+    gasLimit: 21000,
   });
-  console.log("Tx hash:", tx.hash);
+  
+  console.log("\n   TX:", tx.hash);
   await tx.wait();
   
-  console.log("Done!");
-  console.log("Deployer new balance:", ethers.formatEther(await provider.getBalance(deployer.address)), "ETH");
+  const newBal = await ethers.provider.getBalance(deployerAddress);
+  console.log("   ✅ Deployer new balance:", ethers.formatEther(newBal), "HYPE");
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+main().catch(e => { console.error(e); process.exit(1); });

@@ -79,4 +79,22 @@ abstract contract CoreVaultStorage {
     // ============ Global Stats ============
     uint256 public totalCollateralDeposited;                                            // slot 35
     uint256 public totalMarginLocked;                                                   // slot 36
+
+    // ============ GAS OPTIMIZATION: O(1) Lookups (appended for storage safety) ============
+    
+    // Pending Order Index: O(1) lookup/removal
+    // Maps user => orderId => (array index + 1), where 0 = not present
+    mapping(address => mapping(bytes32 => uint256)) public userPendingOrderIndex;       // slot 37
+    
+    // Cached Margin Totals: Avoid O(N) loops in margin calculations
+    mapping(address => uint256) public userTotalMarginReserved;                         // slot 38
+    mapping(address => uint256) public userTotalMarginLocked;                           // slot 39
+    
+    // Position Index: O(1) position lookup by marketId
+    // Maps user => marketId => (array index + 1), where 0 = no position
+    mapping(address => mapping(bytes32 => uint256)) public userPositionIndex;           // slot 40
+    
+    // Market ID Index: O(1) market ID removal
+    // Maps user => marketId => (array index + 1)
+    mapping(address => mapping(bytes32 => uint256)) public userMarketIdIndex;           // slot 41
 }

@@ -58,7 +58,7 @@ contract MarketBondManager {
 
     // ============ Storage ============
     ICoreVaultBondLedger public immutable vault;
-    address public immutable factory;
+    address public factory;  // mutable to support factory upgrades
     address public owner;
 
     uint256 public defaultBondAmount; // 6 decimals (USDC precision in CoreVault)
@@ -112,6 +112,11 @@ contract MarketBondManager {
         address old = owner;
         owner = newOwner;
         emit OwnerUpdated(old, newOwner);
+    }
+
+    function setFactory(address newFactory) external onlyOwner {
+        if (newFactory == address(0)) revert InvalidAddress();
+        factory = newFactory;
     }
 
     function setBondConfig(uint256 _defaultBondAmount, uint256 _minBondAmount, uint256 _maxBondAmount) external onlyOwner {

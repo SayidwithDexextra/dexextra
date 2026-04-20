@@ -14,9 +14,15 @@ export async function GET(request: NextRequest) {
 
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
-      const status = searchParams.get('status');
+    const status = searchParams.get('status');
     const category = searchParams.get('category');
     const search = searchParams.get('search');
+    const sortBy = searchParams.get('sortBy') || 'symbol';
+    const sortOrder = searchParams.get('sortOrder') || 'ascending';
+
+    const validSortFields = ['symbol', 'name', 'created_at', 'total_volume', 'total_trades'];
+    const sortField = validSortFields.includes(sortBy) ? sortBy : 'symbol';
+    const ascending = sortOrder !== 'descending';
 
     let query = supabase
       .from('markets')
@@ -37,12 +43,13 @@ export async function GET(request: NextRequest) {
         is_active,
         market_status,
         total_volume,
-        total_trades
+        total_trades,
+        created_at
       `,
         { count: 'exact' }
       )
       .eq('is_active', true)
-      .order('symbol', { ascending: true });
+      .order(sortField, { ascending });
 
       // Support multiple statuses via comma-separated list, e.g. status=ACTIVE,SETTLEMENT_REQUESTED
       if (status) {
@@ -106,6 +113,7 @@ export async function GET(request: NextRequest) {
         market_status: m.market_status,
         total_volume: m.total_volume,
         total_trades: m.total_trades,
+        created_at: m.created_at,
         mark_price: ticker?.mark_price ?? null,
         last_update: ticker?.last_update ?? null,
         is_stale: ticker?.is_stale ?? null

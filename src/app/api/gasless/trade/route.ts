@@ -99,29 +99,24 @@ function extractRevertData(err: any): string | null {
 }
 
 const ALLOWED: Record<string, string> = {
-  metaPlaceLimit: 'metaPlaceLimit',
+  // Margin-only order methods (spot functions removed)
   metaPlaceMarginLimit: 'metaPlaceMarginLimit',
-  metaPlaceMarket: 'metaPlaceMarket',
   metaPlaceMarginMarket: 'metaPlaceMarginMarket',
+  metaPlaceMarginMarketWithSlippage: 'metaPlaceMarginMarketWithSlippage',
   metaModifyOrder: 'metaModifyOrder',
   metaCancelOrder: 'metaCancelOrder',
-  // Session-based (sign-once) calls
-  sessionPlaceLimit: 'sessionPlaceLimit',
+  // Session-based (sign-once) calls - margin only
   sessionPlaceMarginLimit: 'sessionPlaceMarginLimit',
-  sessionPlaceMarket: 'sessionPlaceMarket',
   sessionPlaceMarginMarket: 'sessionPlaceMarginMarket',
   sessionModifyOrder: 'sessionModifyOrder',
   sessionCancelOrder: 'sessionCancelOrder',
 };
 
 const PLACE_METHODS = new Set([
-  'metaPlaceLimit',
   'metaPlaceMarginLimit',
-  'metaPlaceMarket',
   'metaPlaceMarginMarket',
-  'sessionPlaceLimit',
+  'metaPlaceMarginMarketWithSlippage',
   'sessionPlaceMarginLimit',
-  'sessionPlaceMarket',
   'sessionPlaceMarginMarket',
 ]);
 
@@ -267,24 +262,19 @@ async function saveGaslessOrderHistory(payload: {
 
 function selectorFor(method: string): string | null {
   switch (method) {
-    case 'metaPlaceLimit':
-      return 'metaPlaceLimit((address,uint256,uint256,bool,uint256,uint256),bytes)';
+    // Margin-only methods (spot functions removed from contract)
     case 'metaPlaceMarginLimit':
       return 'metaPlaceMarginLimit((address,uint256,uint256,bool,uint256,uint256),bytes)';
-    case 'metaPlaceMarket':
-      return 'metaPlaceMarket((address,uint256,bool,uint256,uint256),bytes)';
     case 'metaPlaceMarginMarket':
       return 'metaPlaceMarginMarket((address,uint256,bool,uint256,uint256),bytes)';
+    case 'metaPlaceMarginMarketWithSlippage':
+      return 'metaPlaceMarginMarketWithSlippage((address,uint256,bool,uint256,uint256,uint256),bytes)';
     case 'metaModifyOrder':
       return 'metaModifyOrder((address,uint256,uint256,uint256,uint256,uint256),bytes)';
     case 'metaCancelOrder':
       return 'metaCancelOrder((address,uint256,uint256,uint256),bytes)';
-    case 'sessionPlaceLimit':
-      return 'sessionPlaceLimit(bytes32,address,uint256,uint256,bool,bytes32[])';
     case 'sessionPlaceMarginLimit':
       return 'sessionPlaceMarginLimit(bytes32,address,uint256,uint256,bool,bytes32[])';
-    case 'sessionPlaceMarket':
-      return 'sessionPlaceMarket(bytes32,address,uint256,bool,bytes32[])';
     case 'sessionPlaceMarginMarket':
       return 'sessionPlaceMarginMarket(bytes32,address,uint256,bool,bytes32[])';
     case 'sessionModifyOrder':
@@ -557,12 +547,8 @@ export async function POST(req: Request) {
           const proof = computeRelayerProof(relayerAddrs, estimateFrom);
 
           const args =
-            method === 'sessionPlaceLimit'
+            method === 'sessionPlaceMarginLimit'
               ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, proof]
-              : method === 'sessionPlaceMarginLimit'
-              ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, proof]
-              : method === 'sessionPlaceMarket'
-              ? [sessionId, params?.trader, params?.amount, params?.isBuy, proof]
               : method === 'sessionPlaceMarginMarket'
               ? [sessionId, params?.trader, params?.amount, params?.isBuy, proof]
               : method === 'sessionModifyOrder'
@@ -676,13 +662,13 @@ export async function POST(req: Request) {
           }
           // Basic numeric shape checks (keep permissive; on-chain checks still apply)
           if (
-            (method === 'sessionPlaceLimit' || method === 'sessionPlaceMarginLimit' || method === 'sessionModifyOrder') &&
+            (method === 'sessionPlaceMarginLimit' || method === 'sessionModifyOrder') &&
             (params?.price === undefined || params?.price === null)
           ) {
             throw new HttpError(400, { error: 'missing_price' });
           }
           if (
-            (method === 'sessionPlaceLimit' || method === 'sessionPlaceMarginLimit' || method === 'sessionPlaceMarket' || method === 'sessionPlaceMarginMarket' || method === 'sessionModifyOrder') &&
+            (method === 'sessionPlaceMarginLimit' || method === 'sessionPlaceMarginMarket' || method === 'sessionModifyOrder') &&
             (params?.amount === undefined || params?.amount === null)
           ) {
             throw new HttpError(400, { error: 'missing_amount' });
@@ -761,13 +747,10 @@ export async function POST(req: Request) {
               }
 
               // Session policy checks (so we can fail fast with a useful error instead of a revert-without-data)
+              // Margin-only method bits (spot functions removed from contract)
               const methodBitIndex =
-                method === 'sessionPlaceLimit'
-                  ? 0n
-                  : method === 'sessionPlaceMarginLimit'
+                method === 'sessionPlaceMarginLimit'
                   ? 1n
-                  : method === 'sessionPlaceMarket'
-                  ? 2n
                   : method === 'sessionPlaceMarginMarket'
                   ? 3n
                   : method === 'sessionModifyOrder'
@@ -792,7 +775,7 @@ export async function POST(req: Request) {
               const notional6 =
                 method === 'sessionCancelOrder'
                   ? 0n
-                  : method === 'sessionPlaceMarket' || method === 'sessionPlaceMarginMarket'
+                  : method === 'sessionPlaceMarginMarket'
                   ? 0n // market notional depends on book ref price; registry still enforces it at execution time
                   : (() => {
                       const price = parseBigintish(params?.price, 'price');
@@ -1029,12 +1012,8 @@ export async function POST(req: Request) {
               const fn = (meta as any)[method]
               if (typeof fn === 'function') {
                 await fn.staticCall?.(
-                  ...(method === 'sessionPlaceLimit'
+                  ...(method === 'sessionPlaceMarginLimit'
                     ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
-                    : method === 'sessionPlaceMarginLimit'
-                    ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
-                    : method === 'sessionPlaceMarket'
-                    ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
                     : method === 'sessionPlaceMarginMarket'
                     ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
                     : method === 'sessionModifyOrder'
@@ -1081,16 +1060,7 @@ export async function POST(req: Request) {
           console.log(`[TIMING][trade] +${Date.now() - reqStartTime}ms | 🎯 ABOUT TO CALL SMART CONTRACT - method=${method} (${Date.now() - actionStart}ms into action)`);
           
           switch (method) {
-            case 'sessionPlaceLimit':
-              return await sendWithNonceRetry({
-                provider,
-                wallet,
-                contract: meta,
-                method: 'sessionPlaceLimit',
-                args: [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof],
-                label: `trade:${method}`,
-                overrides: { gasLimit: effectiveTradeGasLimit },
-              });
+            // Margin-only session methods (spot functions removed)
             case 'sessionPlaceMarginLimit':
               return await sendWithNonceRetry({
                 provider,
@@ -1098,16 +1068,6 @@ export async function POST(req: Request) {
                 contract: meta,
                 method: 'sessionPlaceMarginLimit',
                 args: [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof],
-                label: `trade:${method}`,
-                overrides: { gasLimit: effectiveTradeGasLimit },
-              });
-            case 'sessionPlaceMarket':
-              return await sendWithNonceRetry({
-                provider,
-                wallet,
-                contract: meta,
-                method: 'sessionPlaceMarket',
-                args: [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof],
                 label: `trade:${method}`,
                 overrides: { gasLimit: effectiveTradeGasLimit },
               });
@@ -1148,14 +1108,13 @@ export async function POST(req: Request) {
 
           console.log('[UpGas][API][trade] legacy meta path selected', { method, hasMessage: !!message, hasSignature: typeof signature === 'string' });
           switch (method) {
-            case 'metaPlaceLimit':
-              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            // Margin-only meta methods (spot functions removed)
             case 'metaPlaceMarginLimit':
               return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-            case 'metaPlaceMarket':
-              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
             case 'metaPlaceMarginMarket':
               return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaPlaceMarginMarketWithSlippage':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarketWithSlippage', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
             case 'metaModifyOrder':
               return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaModifyOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
             case 'metaCancelOrder':
