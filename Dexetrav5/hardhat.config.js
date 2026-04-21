@@ -15,7 +15,9 @@ const networkAccounts = process.env.ADMIN_PRIVATE_KEY
       process.env.PRIVATE_KEY_USER2,
       process.env.PRIVATE_KEY_USER5,
       process.env.ADMIN_PRIVATE_KEY_4,
-    ]
+      process.env.PRIVATE_KEY_USER6,
+      process.env.PRIVATE_KEY_USER7,
+    ].filter(Boolean) // Filter out undefined keys
   : [];
 
 const creatorAccounts = process.env.CREATOR_PRIVATE_KEY
@@ -75,7 +77,7 @@ const config = {
         interval: [100, 300],
       },
       accounts: {
-        count: 50,
+        count: 1100,
       },
     },
     localhost: {

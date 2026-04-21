@@ -3150,6 +3150,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const [showClosedSummary, setShowClosedSummary] = useState(false);
   const [tradeFilter, setTradeFilter] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
+  
+  // All trades for PnL calculation (need full history to properly match positions)
+  const [allTradesForPnL, setAllTradesForPnL] = useState<Trade[]>([]);
 
   // Do not reset trade offset on tab changes to avoid re-fetching on click
 
@@ -3162,6 +3165,36 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     };
     if (walletAddress) prefetch();
   }, [walletAddress, symbol, orderBookActions.getUserTradeCountOnly]);
+
+  // Load ALL trades for PnL calculation (need full history to properly match opening/closing trades)
+  useEffect(() => {
+    let isMounted = true;
+    
+    const loadAllTrades = async () => {
+      if (!walletAddress) {
+        setAllTradesForPnL([]);
+        return;
+      }
+      
+      try {
+        const { getUserTradeHistory } = orderBookActions;
+        if (!getUserTradeHistory) return;
+        
+        // Fetch a large batch of trades for PnL calculation (up to 500)
+        const { trades: allTrades } = await getUserTradeHistory(0, 500);
+        
+        if (isMounted && allTrades && allTrades.length > 0) {
+          setAllTradesForPnL(allTrades);
+        }
+      } catch (error) {
+        console.error('Failed to load all trades for PnL calculation:', error);
+      }
+    };
+    
+    loadAllTrades();
+    
+    return () => { isMounted = false; };
+  }, [walletAddress, orderBookActions.getUserTradeHistory]);
 
   // Load trade history when pagination changes (not on tab click)
   useEffect(() => {
@@ -3501,6 +3534,119 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   useEffect(() => {
     onSettlementPnl?.(settlementPnL);
   }, [settlementPnL, onSettlementPnl]);
+
+  // Calculate realized PnL per trade (for showing in trade history)
+  // Uses allTradesForPnL which contains full trade history for accurate FIFO matching
+  const tradeRealizedPnL = useMemo((): Map<string, { pnl: number; closedSize: number; wasLiquidated: boolean }> => {
+    const result = new Map<string, { pnl: number; closedSize: number; wasLiquidated: boolean }>();
+    // Use allTradesForPnL for accurate PnL calculation (needs full history)
+    const tradesToProcess = allTradesForPnL.length > 0 ? allTradesForPnL : trades;
+    if (!walletAddress || tradesToProcess.length === 0) return result;
+
+    console.log('[PnL Calc] Processing trades for realized PnL:', {
+      allTradesCount: allTradesForPnL.length,
+      displayedTradesCount: trades.length,
+      usingFullHistory: allTradesForPnL.length > 0
+    });
+
+    const sorted = [...tradesToProcess].sort((a, b) => a.timestamp - b.timestamp);
+    const openLots: Array<{
+      side: 'BUY' | 'SELL';
+      price: number;
+      remaining: number;
+      feePerUnit: number;
+    }> = [];
+
+    const LONG_MARGIN_MULTIPLIER = 0.10;
+    const SHORT_MARGIN_MULTIPLIER = 0.15;
+    const LIQUIDATION_PENALTY_BPS = 0.10;
+
+    for (const trade of sorted) {
+      const isBuyer = trade.buyer.toLowerCase() === walletAddress.toLowerCase();
+      const side: 'BUY' | 'SELL' = isBuyer ? 'BUY' : 'SELL';
+      const fee = isBuyer ? trade.buyerFee : trade.sellerFee;
+      const oppositeSide = side === 'BUY' ? 'SELL' : 'BUY';
+      let remaining = trade.amount;
+      const feePerUnit = trade.amount > 0 ? fee / trade.amount : 0;
+
+      // Detect liquidation
+      const orderBookAddr = trade.orderBookAddress?.toLowerCase() || '';
+      const counterparty = isBuyer ? trade.seller : trade.buyer;
+      const counterpartyLower = String(counterparty || '').toLowerCase();
+      const isLiquidationTrade = Boolean(trade.isLiquidation) || 
+        (orderBookAddr !== '' && counterpartyLower === orderBookAddr);
+
+      let totalPnlForTrade = 0;
+      let totalClosedSize = 0;
+      let wasLiquidated = false;
+
+      // Match against open positions (closing trades)
+      while (remaining > 0) {
+        const matchIdx = openLots.findIndex((l) => l.side === oppositeSide);
+        if (matchIdx === -1) break;
+
+        const lot = openLots[matchIdx];
+        const matched = Math.min(remaining, lot.remaining);
+
+        const isLong = lot.side === 'BUY';
+        const entryPrice = isLong ? lot.price : trade.price;
+        const exitPrice = isLong ? trade.price : lot.price;
+        const entryValue = entryPrice * matched;
+
+        let pnl: number;
+
+        if (isLiquidationTrade) {
+          // Liquidation PnL - user loses margin
+          const notional = entryValue;
+          const penalty = notional * LIQUIDATION_PENALTY_BPS;
+          const marginMultiplier = isLong ? LONG_MARGIN_MULTIPLIER : SHORT_MARGIN_MULTIPLIER;
+          const marginLoss = notional * marginMultiplier;
+          pnl = -Math.abs(marginLoss + penalty);
+          wasLiquidated = true;
+        } else {
+          // Normal close PnL
+          const rawPnl = isLong
+            ? (exitPrice - entryPrice) * matched
+            : (entryPrice - exitPrice) * matched;
+          const matchedFees = lot.feePerUnit * matched + feePerUnit * matched;
+          pnl = rawPnl - matchedFees;
+        }
+
+        totalPnlForTrade += pnl;
+        totalClosedSize += matched;
+
+        lot.remaining -= matched;
+        remaining -= matched;
+        if (lot.remaining <= 0) openLots.splice(matchIdx, 1);
+      }
+
+      // Store realized PnL for this trade (only if it closed something)
+      if (totalClosedSize > 0) {
+        console.log('[PnL Calc] Trade closed position:', {
+          tradeId: trade.tradeId,
+          side,
+          price: trade.price,
+          amount: trade.amount,
+          closedSize: totalClosedSize,
+          pnl: totalPnlForTrade,
+          wasLiquidated,
+          timestamp: new Date(trade.timestamp * 1000).toISOString()
+        });
+        result.set(trade.tradeId, { 
+          pnl: totalPnlForTrade, 
+          closedSize: totalClosedSize,
+          wasLiquidated 
+        });
+      }
+
+      // Any remaining amount opens a new position
+      if (remaining > 0) {
+        openLots.push({ side, price: trade.price, remaining, feePerUnit });
+      }
+    }
+
+    return result;
+  }, [allTradesForPnL, trades, walletAddress]);
 
   const renderTradesTable = () => {
 
@@ -3860,8 +4006,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                 <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Price</th>
                 <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
                 <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Value</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Realized P&L</th>
                 <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Fee</th>
-                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Type</th>
+                <th className="hidden lg:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Type</th>
                 <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Time</th>
               </tr>
             </thead>
@@ -3878,15 +4025,26 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                 const fee = isBuyer ? trade.buyerFee : trade.sellerFee;
                 const isMargin = isBuyer ? trade.buyerIsMargin : trade.sellerIsMargin;
                 const isLiquidation = Boolean(trade.isLiquidation);
+                
+                // Get realized PnL for this trade
+                const realizedData = tradeRealizedPnL.get(trade.tradeId);
+                const hasRealizedPnL = realizedData && realizedData.closedSize > 0;
+                const realizedPnL = realizedData?.pnl || 0;
+                const wasLiquidated = realizedData?.wasLiquidated || false;
 
                 return (
-                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${isLiquidation ? 'bg-red-950/20' : ''} ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
+                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${isLiquidation || wasLiquidated ? 'bg-red-950/20' : ''} ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
                       <div className="flex items-center gap-1 flex-wrap">
                         <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
-                        {isLiquidation && (
+                        {(isLiquidation || wasLiquidated) && (
                           <span className="text-[7px] sm:text-[8px] font-medium text-red-400 bg-red-400/20 px-1 py-px rounded border border-red-400/30">
                             LIQ
+                          </span>
+                        )}
+                        {hasRealizedPnL && !wasLiquidated && (
+                          <span className="text-[7px] sm:text-[8px] font-medium text-blue-400 bg-blue-400/10 px-1 py-px rounded">
+                            CLOSE
                           </span>
                         )}
                       </div>
@@ -3900,12 +4058,21 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                     <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
                       <span className="text-[11px] text-t-fg font-mono">${trade.tradeValue.toFixed(2)}</span>
                     </td>
+                    <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                      {hasRealizedPnL ? (
+                        <span className={`text-[10px] sm:text-[11px] font-medium font-mono ${realizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {realizedPnL >= 0 ? '+' : ''}{realizedPnL < 0 ? '-' : ''}${formatPrice(Math.abs(realizedPnL))}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] sm:text-[11px] text-t-fg-muted font-mono">—</span>
+                      )}
+                    </td>
                     <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
                       <span className="text-[11px] text-t-fg font-mono">${fee.toFixed(4)}</span>
                     </td>
-                    <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
-                      <span className={`text-[11px] ${isLiquidation ? 'text-red-400' : 'text-t-fg-label'}`}>
-                        {isLiquidation ? 'Liquidation' : isMargin ? 'Margin' : 'Spot'}
+                    <td className="hidden lg:table-cell px-2.5 py-2.5 text-right">
+                      <span className={`text-[11px] ${isLiquidation || wasLiquidated ? 'text-red-400' : 'text-t-fg-label'}`}>
+                        {isLiquidation || wasLiquidated ? 'Liquidation' : isMargin ? 'Margin' : 'Spot'}
                       </span>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">

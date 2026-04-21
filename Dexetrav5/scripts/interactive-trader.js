@@ -769,6 +769,9 @@ class InteractiveTrader {
     this.hackHistory = [];
     this._mainMenuRenderInProgress = false;
 
+    // Track cumulative fees paid per address (in 6-decimal USDC units as bigint)
+    this.userFees = new Map();
+
     // Concurrency limiter for RPC calls (tunable via env)
     const defaultConcurrency = 3;
     const maxConc = parseInt(
@@ -3850,6 +3853,164 @@ ${colors.brightRed}└───────────────────�
     );
   }
 
+  handleFeesDeductedEvent(buyer, buyerFee, seller, sellerFee, event) {
+    const timestamp = new Date().toLocaleTimeString();
+
+    // Accumulate fees for buyer
+    if (buyer && buyerFee) {
+      const buyerAddr = buyer.toLowerCase();
+      const feeBn = typeof buyerFee === "bigint" ? buyerFee : BigInt(buyerFee.toString());
+      const prev = this.userFees.get(buyerAddr) || 0n;
+      this.userFees.set(buyerAddr, prev + feeBn);
+    }
+
+    // Accumulate fees for seller
+    if (seller && sellerFee) {
+      const sellerAddr = seller.toLowerCase();
+      const feeBn = typeof sellerFee === "bigint" ? sellerFee : BigInt(sellerFee.toString());
+      const prev = this.userFees.get(sellerAddr) || 0n;
+      this.userFees.set(sellerAddr, prev + feeBn);
+    }
+
+    // Format for display
+    const buyerFeeStr = buyerFee ? formatWithAutoDecimalDetection(buyerFee, 6, 4) : "0";
+    const sellerFeeStr = sellerFee ? formatWithAutoDecimalDetection(sellerFee, 6, 4) : "0";
+    const buyerShort = buyer ? buyer.slice(0, 6) + "…" + buyer.slice(-4) : "(n/a)";
+    const sellerShort = seller ? seller.slice(0, 6) + "…" + seller.slice(-4) : "(n/a)";
+
+    console.log(
+      `${colors.dim}[${timestamp}]${colors.reset} ${colors.yellow}💰 FEES DEDUCTED${colors.reset} | ` +
+        `buyer ${buyerShort}: $${buyerFeeStr} | seller ${sellerShort}: $${sellerFeeStr}`
+    );
+  }
+
+  // Get cumulative fees paid by an address (returns bigint in 6-decimal USDC)
+  // First checks cache, then falls back to on-chain calculation
+  getUserFeesPaid(address) {
+    if (!address) return 0n;
+    return this.userFees.get(address.toLowerCase()) || 0n;
+  }
+
+  // Fetch cumulative fees from on-chain trade history for a user
+  // This reads all trades and sums buyerFee/sellerFee where user participated
+  async fetchUserFeesOnChain(address, debug = false) {
+    if (!address || !this.contracts.orderBook) return 0n;
+
+    // Normalize address to checksummed format, then lowercase for comparison
+    let normalizedAddr;
+    try {
+      normalizedAddr = ethers.getAddress(address).toLowerCase();
+    } catch (_) {
+      normalizedAddr = address.toLowerCase();
+    }
+    
+    let totalFees = 0n;
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    try {
+      // First check how many trades this user has
+      let tradeCount = 0n;
+      try {
+        tradeCount = await this.contracts.orderBook.getUserTradeCount(address);
+      } catch (_) {}
+
+      if (debug) {
+        console.log(`[fees] User ${address.slice(0, 10)}: ${tradeCount} trades indexed`);
+      }
+
+      while (hasMore) {
+        const [trades, more] = await this.contracts.orderBook.getUserTrades(
+          address,
+          offset,
+          limit
+        );
+        hasMore = more;
+        offset += trades.length;
+
+        if (debug && trades.length > 0) {
+          console.log(`[fees] Fetched ${trades.length} trades (offset=${offset - trades.length})`);
+        }
+
+        for (const trade of trades) {
+          // Normalize trade addresses
+          let buyerAddr, sellerAddr;
+          try {
+            buyerAddr = ethers.getAddress(trade.buyer).toLowerCase();
+          } catch (_) {
+            buyerAddr = (trade.buyer || "").toLowerCase();
+          }
+          try {
+            sellerAddr = ethers.getAddress(trade.seller).toLowerCase();
+          } catch (_) {
+            sellerAddr = (trade.seller || "").toLowerCase();
+          }
+          
+          const buyerFeeRaw = typeof trade.buyerFee === "bigint"
+            ? trade.buyerFee
+            : BigInt((trade.buyerFee || 0).toString());
+          const sellerFeeRaw = typeof trade.sellerFee === "bigint"
+            ? trade.sellerFee
+            : BigInt((trade.sellerFee || 0).toString());
+
+          if (debug) {
+            const buyerFeeUsdc = ethers.formatUnits(buyerFeeRaw, 6);
+            const sellerFeeUsdc = ethers.formatUnits(sellerFeeRaw, 6);
+            console.log(`[fees] Trade #${trade.tradeId}:`);
+            console.log(`[fees]   buyer=${buyerAddr.slice(0,10)} buyerFee=$${buyerFeeUsdc}`);
+            console.log(`[fees]   seller=${sellerAddr.slice(0,10)} sellerFee=$${sellerFeeUsdc}`);
+            console.log(`[fees]   user=${normalizedAddr.slice(0,10)}`);
+          }
+          
+          // Check if user was buyer
+          if (buyerAddr === normalizedAddr) {
+            totalFees += buyerFeeRaw;
+            if (debug) console.log(`[fees]   ✓ User is BUYER, adding $${ethers.formatUnits(buyerFeeRaw, 6)}`);
+          }
+          // Check if user was seller
+          if (sellerAddr === normalizedAddr) {
+            totalFees += sellerFeeRaw;
+            if (debug) console.log(`[fees]   ✓ User is SELLER, adding $${ethers.formatUnits(sellerFeeRaw, 6)}`);
+          }
+          
+          // Neither buyer nor seller - should not happen for getUserTrades
+          if (buyerAddr !== normalizedAddr && sellerAddr !== normalizedAddr && debug) {
+            console.log(`[fees]   ⚠ User is NEITHER buyer nor seller - data issue?`);
+          }
+        }
+
+        if (trades.length === 0) break;
+      }
+
+      if (debug) {
+        console.log(`[fees] TOTAL for ${address.slice(0, 10)}: $${ethers.formatUnits(totalFees, 6)}`);
+      }
+
+      // Cache the result
+      this.userFees.set(normalizedAddr, totalFees);
+      return totalFees;
+    } catch (err) {
+      console.error(`[fetchUserFeesOnChain] Error for ${address.slice(0,10)}:`, err.message);
+      // Fallback to cached value on error
+      return this.userFees.get(normalizedAddr) || 0n;
+    }
+  }
+
+  // Format fees for display (uses cached value, call fetchUserFeesOnChain first for fresh data)
+  formatUserFees(address) {
+    const feesBn = this.getUserFeesPaid(address);
+    if (feesBn === 0n) return "0.00";
+    return parseFloat(ethers.formatUnits(feesBn, 6)).toFixed(4);
+  }
+
+  // Format fees for display with async on-chain fetch
+  async formatUserFeesAsync(address) {
+    const feesBn = await this.fetchUserFeesOnChain(address);
+    if (feesBn === 0n) return "0.00";
+    return parseFloat(ethers.formatUnits(feesBn, 6)).toFixed(4);
+  }
+
   handleTradeExecutionCompletedEvent(buyer, seller, price, amount, event) {
     const timestamp = new Date().toLocaleTimeString();
     const px = formatWithAutoDecimalDetection(price, 6, 2);
@@ -5601,8 +5762,60 @@ ${colors.brightRed}└───────────────────�
   async loadUsers() {
     console.log(colorText("\n👥 Loading user accounts...", colors.yellow));
 
-    const signers = await ethers.getSigners();
-    this.users = signers.slice(0, 5); // Use first 5 accounts
+    const network = await ethers.provider.getNetwork();
+    const chainId = Number(network.chainId);
+    const isLocalNetwork = chainId === 31337 || chainId === 1337; // hardhat or ganache
+
+    if (isLocalNetwork) {
+      // Local development: use hardhat's test accounts
+      const signers = await ethers.getSigners();
+      const userCount = Math.min(signers.length, 10);
+      this.users = signers.slice(0, userCount);
+      console.log(colorText(`  ✓ Local network (chainId=${chainId}): loaded ${this.users.length} test accounts`, colors.green));
+    } else {
+      // Live network: load from environment variables
+      console.log(colorText(`  🌐 Live network detected (chainId=${chainId})`, colors.cyan));
+      
+      // First, get signers configured in hardhat.config.js (from networkAccounts)
+      const configuredSigners = await ethers.getSigners();
+      this.users = [];
+
+      // Add all configured signers
+      for (let i = 0; i < configuredSigners.length; i++) {
+        const signer = configuredSigners[i];
+        const addr = await signer.getAddress();
+        const label = i === 0 ? "Primary" : `Wallet ${i}`;
+        console.log(colorText(`    ✓ ${label}: ${addr}`, colors.green));
+        this.users.push(signer);
+      }
+
+      // Also check for additional trading wallets in env vars
+      // Format: TRADING_PRIVATE_KEY_1, TRADING_PRIVATE_KEY_2, etc.
+      for (let i = 1; i <= 10; i++) {
+        const envKey = `TRADING_PRIVATE_KEY_${i}`;
+        const pk = process.env[envKey];
+        if (pk && pk.trim()) {
+          try {
+            const wallet = new ethers.Wallet(pk.trim(), ethers.provider);
+            const addr = await wallet.getAddress();
+            // Check if already added
+            const alreadyAdded = this.users.some(
+              (u) => u.address.toLowerCase() === addr.toLowerCase()
+            );
+            if (!alreadyAdded) {
+              console.log(colorText(`    ✓ ${envKey}: ${addr}`, colors.green));
+              this.users.push(wallet);
+            }
+          } catch (err) {
+            console.log(colorText(`    ⚠ ${envKey}: invalid key - ${err.message?.slice(0, 40)}`, colors.yellow));
+          }
+        }
+      }
+
+      if (this.users.length === 0) {
+        console.log(colorText("  ⚠ No wallets loaded! Set ADMIN_PRIVATE_KEY or TRADING_PRIVATE_KEY_1 in .env", colors.red));
+      }
+    }
 
     console.log(
       colorText(
@@ -5626,6 +5839,8 @@ ${colors.brightRed}└───────────────────�
       const { portfolioValue } = await this.computePortfolioValueFor(
         user.address
       );
+      // Get cumulative fees paid from on-chain trade history
+      const feesPaid = await this.formatUserFeesAsync(user.address);
 
       const userType = i === 0 ? "Deployer" : `User ${i}`;
       console.log(colorText(`\n${i + 1}. ${userType}`, colors.brightYellow));
@@ -5637,6 +5852,12 @@ ${colors.brightRed}└───────────────────�
         colorText(
           `   Portfolio Value: ${portfolioValue.toFixed(2)} USDC`,
           colors.blue
+        )
+      );
+      console.log(
+        colorText(
+          `   Fees Paid: $${feesPaid}`,
+          colors.yellow
         )
       );
     }
@@ -5652,7 +5873,7 @@ ${colors.brightRed}└───────────────────�
 
     const choiceRaw = await this.askQuestion(
       colorText(
-        "\n🎯 Select account (0-5 or O, H for Hack): ",
+        `\n🎯 Select account (0-${this.users.length} or O, H for Hack): `,
         colors.brightMagenta
       )
     );
@@ -6371,6 +6592,18 @@ ${colors.brightRed}└───────────────────�
         return `LH`;
       }
 
+      case "DFEE": {
+        // Debug fees for current user
+        console.log(colorText("\n🔍 DEBUG: User Fees Analysis", colors.brightYellow));
+        for (let i = 0; i < this.users.length; i++) {
+          const u = this.users[i];
+          const label = i === 0 ? "Deployer" : `User ${i}`;
+          console.log(colorText(`\n--- ${label} (${u.address.slice(0, 10)}...) ---`, colors.cyan));
+          await this.fetchUserFeesOnChain(u.address, true);
+        }
+        return `DFEE`;
+      }
+
       case "SLT": {
         await this.testSlippageRequirement();
         return `SLT`;
@@ -6717,6 +6950,12 @@ ${colors.brightRed}└───────────────────�
     console.log(
       colorText(
         "│ Analyt: DPA (portfolio) | DMA (margin) | TH (trades) | LH   │",
+        colors.white
+      )
+    );
+    console.log(
+      colorText(
+        "│         DFEE (debug user fees)                              │",
         colors.white
       )
     );
@@ -7234,6 +7473,31 @@ ${colors.brightRed}└───────────────────�
         }
       );
 
+      // Display: Fee Structure
+      try {
+        if (this.contracts.obView && this.contracts.obView.getFeeStructure) {
+          const [takerBps, makerBps, , , legacyFee] = await this.contracts.obView.getFeeStructure();
+          const takerPct = (Number(takerBps) / 100).toFixed(2);
+          const makerPct = (Number(makerBps) / 100).toFixed(2);
+          const legacyPct = (Number(legacyFee) / 100).toFixed(2);
+          
+          const useSplit = Number(takerBps) > 0 || Number(makerBps) > 0;
+          if (useSplit) {
+            console.log(colorText("💰 FEE STRUCTURE (Maker/Taker)", colors.yellow));
+            console.log(colorText(`   Taker Fee: ${takerPct}%  |  Maker Fee: ${makerPct}%`, colors.dim));
+            if (Number(makerBps) > 0 && Number(takerBps) === 0) {
+              console.log(colorText("   ⚠️  Makers pay fees, takers pay nothing", colors.dim));
+            } else if (Number(takerBps) > 0 && Number(makerBps) === 0) {
+              console.log(colorText("   ⚠️  Takers pay fees, makers pay nothing", colors.dim));
+            }
+          } else if (Number(legacyFee) > 0) {
+            console.log(colorText("💰 FEE STRUCTURE (Symmetric)", colors.yellow));
+            console.log(colorText(`   Trading Fee: ${legacyPct}% (both sides)`, colors.dim));
+          }
+          console.log(gradient("-".repeat(80)));
+        }
+      } catch (_) {}
+
       // Display: Markets table
       console.log(colorText("MARKETS OVERVIEW", colors.brightYellow));
       if (marketEntries.length === 0) {
@@ -7348,6 +7612,7 @@ ${colors.brightRed}└───────────────────�
         "Realized",
         "Unrealized",
         "Socialized",
+        "Fees",
         "Total",
         "Address",
       ];
@@ -7359,7 +7624,7 @@ ${colors.brightRed}└───────────────────�
             11
           )} ${userHeader[4].padStart(12)} ${userHeader[5].padStart(
             12
-          )} ${userHeader[6].padStart(9)} ${userHeader[7].padEnd(14)}`,
+          )} ${userHeader[6].padStart(10)} ${userHeader[7].padStart(9)} ${userHeader[8].padEnd(14)}`,
           colors.dim
         )
       );
@@ -7375,6 +7640,7 @@ ${colors.brightRed}└───────────────────�
             return 0;
           }
         })();
+        const feesPaid = parseFloat(await this.formatUserFeesAsync(u.address));
         const total = realized + unrealized - socialized;
 
         const addrShort = `${u.address.substring(0, 6)}…${u.address.substring(
@@ -7398,9 +7664,15 @@ ${colors.brightRed}└───────────────────�
             ? `${colors.red}${colSocializedPlain}${colors.reset}${outerColor}`
             : colSocializedPlain;
 
+        // Fees paid (session) - always display in yellow
+        const colFeesPlain = feesPaid.toFixed(2).padStart(10);
+        const colFees = feesPaid > 0
+          ? `${colors.yellow}${colFeesPlain}${colors.reset}${outerColor}`
+          : colFeesPlain;
+
         const colTotal = total.toFixed(2).padStart(9);
 
-        const lineBody = `   ${colIdx} ${colUser} ${colPositions} ${colRealized} ${colUnrealized} ${colSocialized} ${colTotal} ${addrShort}`;
+        const lineBody = `   ${colIdx} ${colUser} ${colPositions} ${colRealized} ${colUnrealized} ${colSocialized} ${colFees} ${colTotal} ${addrShort}`;
 
         // Apply outer color to the entire line, while preserving the inner red for socialized
         console.log(`${outerColor}${lineBody}${colors.reset}`);
@@ -8378,6 +8650,17 @@ ${colors.brightRed}└───────────────────�
           );
         }
       }
+
+      // Fees Paid Section (fetched from on-chain trade history)
+      const feesPaidDisplay = await this.formatUserFeesAsync(this.currentUser.address);
+      console.log(
+        colorText(
+          `│ Fees Paid (total):  ${feesPaidDisplay.padStart(
+            12
+          )} USDC                │`,
+          colors.yellow
+        )
+      );
 
       // Margin Usage Section
       console.log(

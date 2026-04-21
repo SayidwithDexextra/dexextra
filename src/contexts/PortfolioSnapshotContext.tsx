@@ -244,32 +244,43 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     if (!isConnected || !walletAddress) return null
     const updatedAt = safeParseNumber((summary.summary as any)?.updatedAt)
     const availableCash = safeParseNumber((summary.summary as any)?.availableCash)
-    const unrealizedPnl = safeParseNumber((summary.summary as any)?.unrealizedPnl)
+    const onChainUnrealizedPnl = safeParseNumber((summary.summary as any)?.unrealizedPnl)
     const totalCollateral = safeParseNumber((summary.summary as any)?.totalCollateral)
     const realizedPnl = safeParseNumber((summary.summary as any)?.realizedPnl)
     if (
       updatedAt === null ||
       availableCash === null ||
-      unrealizedPnl === null ||
+      onChainUnrealizedPnl === null ||
       totalCollateral === null ||
       realizedPnl === null
     ) {
       return null
     }
+
+    // Use client-side P&L from positions if available (uses real-time mark prices from each OrderBook)
+    // This avoids the discrepancy caused by stale stored marketMarkPrices on-chain
+    const positionsArray = Array.isArray(positionsState?.positions) ? positionsState.positions : []
+    const positionsHaveLoaded = !positionsState?.isLoading
+    const clientSideUnrealizedPnl = positionsHaveLoaded
+      ? positionsArray.reduce((sum, p: any) => sum + (Number(p?.pnl) || 0), 0)
+      : null
+
+    // Prefer client-side P&L when positions have loaded (even if 0 positions); fall back to on-chain otherwise
+    const unrealizedPnl = clientSideUnrealizedPnl !== null ? clientSideUnrealizedPnl : onChainUnrealizedPnl
     const portfolioValue = totalCollateral + Math.max(0, realizedPnl) + unrealizedPnl
 
     return {
       version: 1,
       chainId,
       walletAddress: String(walletAddress),
-      updatedAt,
+      updatedAt: positionsHaveLoaded ? Date.now() : updatedAt,
       availableCash,
       unrealizedPnl,
       portfolioValue,
       totalCollateral,
       realizedPnl,
     }
-  }, [chainId, isConnected, summary.summary, walletAddress])
+  }, [chainId, isConnected, summary.summary, walletAddress, positionsState?.positions, positionsState?.isLoading])
 
   // Persist fresh snapshots (and publish via context state).
   useEffect(() => {

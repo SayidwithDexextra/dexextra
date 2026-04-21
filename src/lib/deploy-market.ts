@@ -46,6 +46,8 @@ export interface DeployMarketParams {
   } | null;
   /** Set to false to disable short naming transformation */
   useShortNaming?: boolean;
+  /** Use V2 factory (DiamondRegistry with FacetRegistry) for auto-upgradeable markets. Default: true */
+  useV2?: boolean;
 }
 
 export interface DeployMarketResult {
@@ -213,6 +215,7 @@ export async function deployMarket(
     isRollover = false,
     speedRunConfig = null,
     useShortNaming = true,
+    useV2 = true,
   } = params;
 
   // Generate clean, short market naming from raw input
@@ -384,49 +387,88 @@ export async function deployMarket(
     (factoryArtifact as any)?.abi ||
     (factoryArtifact as any)?.default ||
     (factoryArtifact as any);
-  const factoryAbi = Array.isArray(baseFactoryAbi) ? baseFactoryAbi : [];
+  // Add V2 function signature if not present in artifact
+  const v2FunctionAbi = [
+    'function createFuturesMarketV2(string marketSymbol, string metricUrl, uint256 settlementDate, uint256 startPrice, string dataSource, string[] tags, address diamondOwner) returns (address orderBook, bytes32 marketId)',
+    'function facetRegistry() view returns (address)',
+    'function initFacetAddress() view returns (address)',
+  ];
+  const factoryAbi = Array.isArray(baseFactoryAbi) ? [...baseFactoryAbi, ...v2FunctionAbi] : v2FunctionAbi;
   const factory = new ethers.Contract(factoryAddress, factoryAbi, wallet);
   const factoryIface = new ethers.Interface(factoryAbi);
   const feeRecipient = (feeRecipientInput && ethers.isAddress(feeRecipientInput))
     ? feeRecipientInput
     : (creatorWalletAddress || ownerAddress);
 
+  // ── Preflight: Verify V2 factory configuration ──
+  if (useV2) {
+    try {
+      const [registryAddr, initAddr] = await Promise.all([
+        factory.facetRegistry().catch(() => ethers.ZeroAddress),
+        factory.initFacetAddress().catch(() => ethers.ZeroAddress),
+      ]);
+      
+      if (!registryAddr || registryAddr === ethers.ZeroAddress) {
+        throw new Error('Factory facetRegistry is not configured. Call factory.setFacetRegistry(address) first.');
+      }
+      if (!initAddr || initAddr === ethers.ZeroAddress) {
+        throw new Error('Factory initFacetAddress is not configured. Call factory.setInitFacet(address) first.');
+      }
+      
+      log('factory_v2_config', 'success', { 
+        facetRegistry: registryAddr, 
+        initFacet: initAddr 
+      });
+    } catch (e: any) {
+      if (e?.message?.includes('not configured')) throw e;
+      log('factory_v2_config', 'error', { error: e?.message || String(e) });
+      throw new Error(`V2 factory preflight failed: ${e?.message || 'Could not verify facetRegistry/initFacetAddress'}`);
+    }
+  }
+
   // ── Deploy via factory ──
   phaseHeader('DEPLOY MARKET', symbol);
 
-  vStepLog('Static call (preflight)', 'start');
-  log('factory_static_call', 'start');
+  // V2 uses createFuturesMarketV2 (DiamondRegistry) - no facet cuts needed
+  // V1 uses createFuturesMarketDiamond with explicit facet cuts
+  const factoryMethod = useV2 ? 'createFuturesMarketV2' : 'createFuturesMarketDiamond';
+  const factoryArgsV2 = [symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, ownerAddress];
+  const factoryArgsV1 = [...factoryArgsV2, cutArg, initFacet, '0x'];
+  const factoryArgs = useV2 ? factoryArgsV2 : factoryArgsV1;
+
+  log('deploy_mode', 'success', { v2: useV2, method: factoryMethod });
+
+  vStepLog('Static call (preflight)', 'start', useV2 ? 'V2 (DiamondRegistry)' : 'V1 (direct Diamond)');
+  log('factory_static_call', 'start', { v2: useV2 });
   try {
-    await factory.getFunction('createFuturesMarketDiamond').staticCall(
-      symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-      ownerAddress, cutArg, initFacet, '0x',
-    );
+    await factory.getFunction(factoryMethod).staticCall(...factoryArgs);
     vStepLog('Static call (preflight)', 'success');
     log('factory_static_call', 'success');
   } catch (e: any) {
     const decoded = (() => { try { return factoryIface.parseError(e?.data || e?.error?.data || ''); } catch { return null; } })();
     const msg = e?.shortMessage || e?.reason || e?.message || 'static call failed';
     vStepLog('Static call (preflight)', 'error', decoded?.name || msg);
-    log('factory_static_call', 'error', { error: msg, customError: decoded?.name });
+    log('factory_static_call', 'error', { error: msg, customError: decoded?.name, v2: useV2 });
+    
+    // If V2 fails, provide a helpful hint
+    if (useV2 && (msg.includes('InvalidInput') || msg.includes('facetRegistry'))) {
+      throw new Error(`V2 factory static call failed: ${msg}. Ensure facetRegistry and initFacetAddress are configured on the factory contract.`);
+    }
     throw new Error(`Factory static call failed: ${msg}`);
   }
 
-  vStepLog('Factory tx', 'start', `signer=${shortAddr(ownerAddress)}`);
-  log('factory_send_tx', 'start');
+  vStepLog('Factory tx', 'start', `signer=${shortAddr(ownerAddress)} mode=${useV2 ? 'V2' : 'V1'}`);
+  log('factory_send_tx', 'start', { v2: useV2 });
   const overrides = await nonceMgr.nextOverrides();
-  const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
-  const factoryArgs = [
-    symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-    ownerAddress, cutArg, initFacet, '0x',
-  ];
+  const fallbackGasLimit = BigInt(useV2 ? (process.env.FACTORY_GAS_LIMIT_V2 || '4000000') : (process.env.FACTORY_GAS_LIMIT || '8000000'));
   let gasLimit: bigint;
   try {
-    const estimated = await factory.getFunction('createFuturesMarketDiamond').estimateGas(...factoryArgs);
+    const estimated = await factory.getFunction(factoryMethod).estimateGas(...factoryArgs);
     gasLimit = (estimated * 130n) / 100n;
-    log('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
+    log('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimit), v2: useV2 });
   } catch {
     gasLimit = fallbackGasLimit;
-    log('factory_estimate_gas', 'error', { fallback: String(gasLimit) });
+    log('factory_estimate_gas', 'error', { fallback: String(gasLimit), v2: useV2 });
   }
 
   const balance = await provider.getBalance(ownerAddress);
@@ -441,7 +483,7 @@ export async function deployMarket(
 
   let tx: ethers.TransactionResponse;
   try {
-    tx = await factory.getFunction('createFuturesMarketDiamond')(
+    tx = await factory.getFunction(factoryMethod)(
       ...factoryArgs,
       { ...overrides, gasLimit } as any,
     );
@@ -449,11 +491,11 @@ export async function deployMarket(
     const decoded = (() => { try { return factoryIface.parseError(e?.data || e?.error?.data || ''); } catch { return null; } })();
     const msg = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
     vStepLog('Factory tx', 'error', decoded?.name || msg);
-    log('factory_send_tx', 'error', { error: msg, customError: decoded?.name });
+    log('factory_send_tx', 'error', { error: msg, customError: decoded?.name, v2: useV2 });
     throw new Error(`Factory send tx failed: ${msg}`);
   }
-  vStepLog('Factory tx', 'success', `sent ${shortTx(tx.hash)}`);
-  log('factory_send_tx', 'success', { hash: tx.hash });
+  vStepLog('Factory tx', 'success', `sent ${shortTx(tx.hash)} (${useV2 ? 'V2' : 'V1'})`);
+  log('factory_send_tx', 'success', { hash: tx.hash, v2: useV2 });
 
   vStepLog('Confirm factory tx', 'start');
   log('factory_confirm', 'start');

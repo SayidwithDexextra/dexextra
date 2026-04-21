@@ -60,7 +60,6 @@ contract CoreVault is
     error AlreadyReserved();
     error PositionNotFound();
     error UnauthorizedOrderBook();
-    error MigrationAlreadyComplete();
     error SessionRegistryNotSet();
 
     // ============ Access Control Roles ============
@@ -89,20 +88,6 @@ contract CoreVault is
 
     // Session top-up method bit (bits 0-5 used by MetaTradeFacet for OB actions)
     uint8 private constant MBIT_TOPUP = 6;
-
-    // ============ ERC-7201 Namespaced Storage (CoreVault-specific, outside shared layout) ============
-    /// @custom:storage-location erc7201:corevault.migration
-    struct MigrationStorage {
-        bool complete;
-    }
-    // keccak256(abi.encode(uint256(keccak256("corevault.migration")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant MIGRATION_STORAGE_LOCATION =
-        0x5e6f12b80b8e1dab52eb81e6c006eab0fbb38fca24c63b88ad26b6a6ee5e6200;
-
-    function _getMigrationStorage() private pure returns (MigrationStorage storage s) {
-        bytes32 loc = MIGRATION_STORAGE_LOCATION;
-        assembly { s.slot := loc }
-    }
 
     // ============ Events ============
     event CollateralDeposited(address indexed user, uint256 amount);
@@ -399,9 +384,13 @@ contract CoreVault is
         if (result.positionClosed) {
             // O(1) market ID removal
             PositionManager.removeMarketIdFromUserWithIndex(userMarketIds[user], userMarketIdIndex[user], marketId);
+            // O(1) remove from per-market tracking
+            _removeUserFromMarketPositions(user, marketId);
         } else if (!result.positionExists) {
             // O(1) market ID addition
             PositionManager.addMarketIdToUserWithIndex(userMarketIds[user], userMarketIdIndex[user], marketId);
+            // O(1) add to per-market tracking
+            _addUserToMarketPositions(user, marketId);
         }
 
         _recomputeAndStoreLiquidationPrice(user, marketId);
@@ -801,6 +790,40 @@ contract CoreVault is
         _delegateSettlement(abi.encodeWithSelector(this.settleMarket.selector, marketId, finalPrice));
     }
 
+    // ============ Batch Settlement (for large markets) ============
+
+    function initBatchSettlement(bytes32 marketId, uint256 finalPrice) external nonReentrant {
+        _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("initBatchSettlement(bytes32,uint256)")), marketId, finalPrice));
+    }
+
+    function batchCalculateTotals(bytes32 marketId, uint256 batchSize) external nonReentrant returns (bool) {
+        bytes memory ret = _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("batchCalculateTotals(bytes32,uint256)")), marketId, batchSize));
+        return abi.decode(ret, (bool));
+    }
+
+    function finalizeHaircutCalculation(bytes32 marketId) external nonReentrant {
+        _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("finalizeHaircutCalculation(bytes32)")), marketId));
+    }
+
+    function batchApplySettlements(bytes32 marketId, uint256 batchSize) external nonReentrant returns (bool) {
+        bytes memory ret = _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("batchApplySettlements(bytes32,uint256)")), marketId, batchSize));
+        return abi.decode(ret, (bool));
+    }
+
+    function finalizeBatchSettlement(bytes32 marketId) external nonReentrant {
+        _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("finalizeBatchSettlement(bytes32)")), marketId));
+    }
+
+    function getBatchSettlementState(bytes32 marketId) external returns (uint8, uint256, uint256, uint256) {
+        bytes memory ret = _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("getBatchSettlementState(bytes32)")), marketId));
+        return abi.decode(ret, (uint8, uint256, uint256, uint256));
+    }
+
+    function isMarketSettling(bytes32 marketId) external returns (bool) {
+        bytes memory ret = _delegateSettlement(abi.encodeWithSelector(bytes4(keccak256("isMarketSettling(bytes32)")), marketId));
+        return abi.decode(ret, (bool));
+    }
+
     // ============ Liquidation Under-Control Flag ============
 
     function setUnderLiquidation(address user, bytes32 marketId, bool state) external onlyRole(ORDERBOOK_ROLE) {
@@ -971,101 +994,56 @@ contract CoreVault is
         }
     }
 
-    // ============ Migration Functions (admin-only, removable in next upgrade) ============
-
-    modifier onlyDuringMigration() {
-        if (_getMigrationStorage().complete) revert MigrationAlreadyComplete();
-        _;
-    }
-
-    function migrationComplete() public view returns (bool) {
-        return _getMigrationStorage().complete;
-    }
-
-    function migrateUserState(
-        address user, uint256 collateral, uint256 crossChainCredit,
-        int256 realizedPnL, uint256 socializedLoss
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        userCollateral[user] = collateral;
-        userCrossChainCredit[user] = crossChainCredit;
-        userRealizedPnL[user] = realizedPnL;
-        userSocializedLoss[user] = socializedLoss;
-        _ensureUserTracked(user);
-    }
-
-    function migratePositions(
-        address user, PositionManager.Position[] calldata positions
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        for (uint256 i = 0; i < positions.length; i++) {
-            userPositions[user].push(positions[i]);
+    /// @dev Add user to per-market position tracking (O(1))
+    function _addUserToMarketPositions(address user, bytes32 marketId) internal {
+        if (marketPositionUserIndex[marketId][user] == 0) {
+            marketPositionUsers[marketId].push(user);
+            marketPositionUserIndex[marketId][user] = marketPositionUsers[marketId].length;
         }
     }
 
-    function migratePendingOrders(
-        address user, VaultAnalytics.PendingOrder[] calldata orders
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        for (uint256 i = 0; i < orders.length; i++) {
-            userPendingOrders[user].push(orders[i]);
-        }
-    }
-
-    function migrateUserMarketIds(
-        address user, bytes32[] calldata ids
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        for (uint256 i = 0; i < ids.length; i++) {
-            userMarketIds[user].push(ids[i]);
-        }
-    }
-
-    function migrateMarketConfig(
-        bytes32 marketId, address orderBook, uint256 markPrice,
-        bool settled, bool disputed, uint256 badDebt
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        marketToOrderBook[marketId] = orderBook;
-        marketMarkPrices[marketId] = markPrice;
-        marketSettled[marketId] = settled;
-        marketDisputed[marketId] = disputed;
-        marketBadDebt[marketId] = badDebt;
-        if (orderBook != address(0)) {
-            if (!registeredOrderBooks[orderBook]) {
-                registeredOrderBooks[orderBook] = true;
-                allOrderBooks.push(orderBook);
+    /// @dev Remove user from per-market position tracking (O(1))
+    function _removeUserFromMarketPositions(address user, bytes32 marketId) internal {
+        uint256 idx = marketPositionUserIndex[marketId][user];
+        if (idx != 0) {
+            uint256 lastIdx = marketPositionUsers[marketId].length;
+            if (idx != lastIdx) {
+                address lastUser = marketPositionUsers[marketId][lastIdx - 1];
+                marketPositionUsers[marketId][idx - 1] = lastUser;
+                marketPositionUserIndex[marketId][lastUser] = idx;
             }
-            orderBookToMarkets[orderBook].push(marketId);
+            marketPositionUsers[marketId].pop();
+            marketPositionUserIndex[marketId][user] = 0;
         }
     }
 
-    function migrateTopUpNonces(
-        address[] calldata users, uint256[] calldata nonces
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        require(users.length == nonces.length, "length");
+    /// @dev Get count of users with positions in a market
+    function getMarketPositionUserCount(bytes32 marketId) external view returns (uint256) {
+        return marketPositionUsers[marketId].length;
+    }
+
+    /**
+     * @notice Backfill marketPositionUsers for existing positions (admin only)
+     * @dev Call this for each market after upgrading to populate the per-market tracking.
+     *      Can be called in batches if there are many users.
+     * @param marketId The market to backfill
+     * @param users Array of users to add to the market's position tracking
+     */
+    function backfillMarketPositionUsers(
+        bytes32 marketId, 
+        address[] calldata users
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         for (uint256 i = 0; i < users.length; i++) {
-            topUpNonces[users[i]] = nonces[i];
+            address user = users[i];
+            // Only add if not already tracked and user actually has a position
+            if (marketPositionUserIndex[marketId][user] == 0) {
+                // Verify user has a position in this market
+                uint256 posIdx = userPositionIndex[user][marketId];
+                if (posIdx != 0 && userPositions[user][posIdx - 1].size != 0) {
+                    marketPositionUsers[marketId].push(user);
+                    marketPositionUserIndex[marketId][user] = marketPositionUsers[marketId].length;
+                }
+            }
         }
     }
-
-    function migrateGlobalConfig(
-        uint256 _baseMmrBps, uint256 _penaltyMmrBps, uint256 _maxMmrBps,
-        uint256 _scalingSlopeBps, uint256 _priceGapSlopeBps, uint256 _mmrLiquidityDepthLevels,
-        uint256 _adlMaxCandidates, uint256 _adlMaxPositionsPerTx, bool _adlDebug,
-        uint256 _minSettlementScaleRay, uint256 _totalCollateralDeposited, uint256 _totalMarginLocked
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) onlyDuringMigration {
-        baseMmrBps = _baseMmrBps;
-        penaltyMmrBps = _penaltyMmrBps;
-        maxMmrBps = _maxMmrBps;
-        scalingSlopeBps = _scalingSlopeBps;
-        priceGapSlopeBps = _priceGapSlopeBps;
-        mmrLiquidityDepthLevels = _mmrLiquidityDepthLevels;
-        adlMaxCandidates = _adlMaxCandidates;
-        adlMaxPositionsPerTx = _adlMaxPositionsPerTx;
-        adlDebug = _adlDebug;
-        minSettlementScaleRay = _minSettlementScaleRay;
-        totalCollateralDeposited = _totalCollateralDeposited;
-        totalMarginLocked = _totalMarginLocked;
-    }
-
-    function completeMigration() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _getMigrationStorage().complete = true;
-    }
-
 }

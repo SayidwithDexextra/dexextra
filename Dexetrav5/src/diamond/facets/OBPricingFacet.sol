@@ -30,60 +30,8 @@ contract OBPricingFacet {
         view
         returns (uint256[] memory bidPrices, uint256[] memory bidAmounts, uint256[] memory askPrices, uint256[] memory askAmounts)
     {
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        // collect bids (desc)
-        uint256[] memory allBuyPrices = new uint256[](s.buyPrices.length);
-        uint256[] memory allBuyAmounts = new uint256[](s.buyPrices.length);
-        uint256 buyCount = 0;
-        for (uint256 i = 0; i < s.buyPrices.length; i++) {
-            uint256 p = s.buyPrices[i];
-            OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p];
-            if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
-                allBuyPrices[buyCount] = p;
-                allBuyAmounts[buyCount] = lvl.totalAmount;
-                buyCount++;
-            }
-        }
-        if (buyCount > 1) {
-            for (uint256 i2 = 0; i2 < buyCount - 1; i2++) {
-                for (uint256 j = 0; j < buyCount - i2 - 1; j++) {
-                    if (allBuyPrices[j] < allBuyPrices[j + 1]) {
-                        (allBuyPrices[j], allBuyPrices[j + 1]) = (allBuyPrices[j + 1], allBuyPrices[j]);
-                        (allBuyAmounts[j], allBuyAmounts[j + 1]) = (allBuyAmounts[j + 1], allBuyAmounts[j]);
-                    }
-                }
-            }
-        }
-        uint256[] memory allSellPrices = new uint256[](s.sellPrices.length);
-        uint256[] memory allSellAmounts = new uint256[](s.sellPrices.length);
-        uint256 sellCount = 0;
-        for (uint256 k = 0; k < s.sellPrices.length; k++) {
-            uint256 p2 = s.sellPrices[k];
-            OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2];
-            if (lvl2.exists && lvl2.totalAmount > 0 && lvl2.firstOrderId != 0) {
-                allSellPrices[sellCount] = p2;
-                allSellAmounts[sellCount] = lvl2.totalAmount;
-                sellCount++;
-            }
-        }
-        if (sellCount > 1) {
-            for (uint256 i3 = 0; i3 < sellCount - 1; i3++) {
-                for (uint256 j2 = 0; j2 < sellCount - i3 - 1; j2++) {
-                    if (allSellPrices[j2] > allSellPrices[j2 + 1]) {
-                        (allSellPrices[j2], allSellPrices[j2 + 1]) = (allSellPrices[j2 + 1], allSellPrices[j2]);
-                        (allSellAmounts[j2], allSellAmounts[j2 + 1]) = (allSellAmounts[j2 + 1], allSellAmounts[j2]);
-                    }
-                }
-            }
-        }
-        uint256 bidLevels = buyCount < levels ? buyCount : levels;
-        uint256 askLevels = sellCount < levels ? sellCount : levels;
-        bidPrices = new uint256[](bidLevels);
-        bidAmounts = new uint256[](bidLevels);
-        askPrices = new uint256[](askLevels);
-        askAmounts = new uint256[](askLevels);
-        for (uint256 a = 0; a < bidLevels; a++) { bidPrices[a] = allBuyPrices[a]; bidAmounts[a] = allBuyAmounts[a]; }
-        for (uint256 b = 0; b < askLevels; b++) { askPrices[b] = allSellPrices[b]; askAmounts[b] = allSellAmounts[b]; }
+        // Use linked list traversal (gas-optimized storage no longer uses price arrays)
+        return this.getOrderBookDepthFromPointers(levels);
     }
 
     function getOrderBookDepthFromPointers(uint256 levels)
@@ -269,12 +217,13 @@ contract OBPricingFacet {
     }
 
     function _getNextSellPrice(OrderBookStorage.State storage s, uint256 currentPrice) private view returns (uint256) {
-        uint256 next = 0; for (uint256 i = 0; i < s.sellPrices.length; i++) { if (s.sellLevels[s.sellPrices[i]].exists && s.sellPrices[i] > currentPrice) { if (next == 0 || s.sellPrices[i] < next) next = s.sellPrices[i]; } }
-        return next;
+        // Use linked list pointer (ascending order: next = higher price)
+        return s.sellPriceNext[currentPrice];
     }
+    
     function _getPrevBuyPrice(OrderBookStorage.State storage s, uint256 currentPrice) private view returns (uint256) {
-        uint256 prev = 0; for (uint256 i = 0; i < s.buyPrices.length; i++) { if (s.buyLevels[s.buyPrices[i]].exists && s.buyPrices[i] < currentPrice && s.buyPrices[i] > prev) { prev = s.buyPrices[i]; } }
-        return prev;
+        // Use linked list pointer (descending order: next = lower price)
+        return s.buyPriceNext[currentPrice];
     }
 }
 

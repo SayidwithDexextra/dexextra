@@ -596,6 +596,9 @@ async function main() {
     const MarketLifecycleFacet = await ethers.getContractFactory(
       "MarketLifecycleFacet"
     );
+    const OBBatchSettlementFacet = await ethers.getContractFactory(
+      "OBBatchSettlementFacet"
+    );
 
     const initFacet = await OrderBookInitFacet.deploy();
     await initFacet.waitForDeployment();
@@ -615,6 +618,8 @@ async function main() {
     await settlementFacet.waitForDeployment();
     const lifecycleFacet = await MarketLifecycleFacet.deploy();
     await lifecycleFacet.waitForDeployment();
+    const batchSettlementFacet = await OBBatchSettlementFacet.deploy();
+    await batchSettlementFacet.waitForDeployment();
 
     const initAddr = await initFacet.getAddress();
     const adminAddr = await adminFacet.getAddress();
@@ -624,9 +629,11 @@ async function main() {
     const liqAddr = await liqFacet.getAddress();
     const settlementAddr = await settlementFacet.getAddress();
     const lifecycleAddr = await lifecycleFacet.getAddress();
+    const batchSettlementAddr = await batchSettlementFacet.getAddress();
 
     // Record lifecycle facet address for downstream config/env updates
     contracts.MARKET_LIFECYCLE_FACET = lifecycleAddr;
+    contracts.OB_BATCH_SETTLEMENT_FACET = batchSettlementAddr;
 
     console.log("     ✅ Facets deployed:");
     console.log("        init:", initAddr);
@@ -637,6 +644,7 @@ async function main() {
     console.log("        liquidation:", liqAddr);
     console.log("        settlement:", settlementAddr);
     console.log("        lifecycle:", lifecycleAddr);
+    console.log("        batchSettlement:", batchSettlementAddr);
 
     // Set conservative defaults: 100% margin, 0 bps trading fee (no fees)
     try {
@@ -879,6 +887,11 @@ async function main() {
       facetAddress: lifecycleAddr,
       action: FacetCutAction.Add,
       functionSelectors: selectors(lifecycleFacet.interface),
+    });
+    cut.push({
+      facetAddress: batchSettlementAddr,
+      action: FacetCutAction.Add,
+      functionSelectors: selectors(batchSettlementFacet.interface),
     });
 
     // If bonded market creation is enabled, ensure the creator has enough CoreVault available balance

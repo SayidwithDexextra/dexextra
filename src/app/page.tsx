@@ -450,21 +450,37 @@ export default function Home() {
   };
 
   const handleMarketCardLongPosition = (cardId: string) => {
-    const market = (overview || []).find((m: any) => m.market_id === cardId || m.id === cardId);
+    const allMarkets = [
+      ...(overview || []),
+      ...(newestMarketsData || []),
+      ...(topPicksData || []),
+    ];
+    const market = allMarkets.find((m: any) => m.market_id === cardId || m.id === cardId);
     if (market) {
       router.push(`/token/${(market as any).market_identifier || (market as any).symbol}?action=long`);
     }
   };
 
   const handleMarketCardShortPosition = (cardId: string) => {
-    const market = (overview || []).find((m: any) => m.market_id === cardId || m.id === cardId);
+    const allMarkets = [
+      ...(overview || []),
+      ...(newestMarketsData || []),
+      ...(topPicksData || []),
+    ];
+    const market = allMarkets.find((m: any) => m.market_id === cardId || m.id === cardId);
     if (market) {
       router.push(`/token/${(market as any).market_identifier || (market as any).symbol}?action=short`);
     }
   };
 
   const handleMarketCardNavigate = (cardId: string) => {
-    const market = (overview || []).find((m: any) => m.market_id === cardId || m.id === cardId);
+    // Search across all market data sources (overview, newest markets, top picks)
+    const allMarkets = [
+      ...(overview || []),
+      ...(newestMarketsData || []),
+      ...(topPicksData || []),
+    ];
+    const market = allMarkets.find((m: any) => m.market_id === cardId || m.id === cardId);
     if (market) {
       router.push(`/token/${(market as any).market_identifier || (market as any).symbol}`);
     }

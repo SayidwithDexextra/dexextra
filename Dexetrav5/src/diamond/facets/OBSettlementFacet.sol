@@ -109,7 +109,34 @@ contract OBSettlementFacet {
         return s.vault.marketSettled(s.marketId);
     }
 
-    
+    /**
+     * @notice Get market settlement requirements to determine if batch settlement is needed.
+     * @return positionCount Number of positions in this market
+     * @return buyPriceLevels Number of buy price levels with orders
+     * @return sellPriceLevels Number of sell price levels with orders
+     * @return estimatedOrderCount Rough estimate of total orders (price levels as proxy)
+     * @return requiresBatchSettlement True if market likely exceeds single-tx gas limits
+     */
+    function getSettlementRequirements() external view returns (
+        uint256 positionCount,
+        uint256 buyPriceLevels,
+        uint256 sellPriceLevels,
+        uint256 estimatedOrderCount,
+        bool requiresBatchSettlement
+    ) {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        
+        positionCount = s.vault.getMarketPositionUserCount(s.marketId);
+        buyPriceLevels = s.buyPrices.length;
+        sellPriceLevels = s.sellPrices.length;
+        estimatedOrderCount = buyPriceLevels + sellPriceLevels;
+        
+        // Heuristic: batch settlement recommended if:
+        // - More than 50 positions, OR
+        // - More than 100 price levels (proxy for order count)
+        // These thresholds are conservative for ~30M gas limit
+        requiresBatchSettlement = (positionCount > 50) || (estimatedOrderCount > 100);
+    }
 }
 
 

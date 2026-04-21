@@ -97,4 +97,14 @@ abstract contract CoreVaultStorage {
     // Market ID Index: O(1) market ID removal
     // Maps user => marketId => (array index + 1)
     mapping(address => mapping(bytes32 => uint256)) public userMarketIdIndex;           // slot 41
+
+    // ============ Per-Market Position User Tracking (for batch settlement) ============
+    
+    // Array of users with active positions in each market
+    // Enables O(1) batch iteration during settlement instead of scanning allKnownUsers
+    mapping(bytes32 => address[]) public marketPositionUsers;                           // slot 42
+    
+    // Index for O(1) add/remove from marketPositionUsers
+    // Maps marketId => user => (array index + 1), where 0 = not in array
+    mapping(bytes32 => mapping(address => uint256)) public marketPositionUserIndex;     // slot 43
 }

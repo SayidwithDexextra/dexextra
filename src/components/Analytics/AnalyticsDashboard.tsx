@@ -1145,6 +1145,127 @@ function OnChainTradesTab({
     }
   }, [trades, tradedMarkets])
 
+  // Calculate realized PnL per trade (for showing when positions are closed)
+  const tradeRealizedPnL = useMemo((): Map<string, { pnl: number; closedSize: number; wasLiquidated: boolean }> => {
+    const result = new Map<string, { pnl: number; closedSize: number; wasLiquidated: boolean }>()
+    if (trades.length === 0) return result
+
+    console.log('[Analytics PnL Calc] Processing', trades.length, 'trades')
+
+    // Group trades by market
+    const tradesByMarket = new Map<string, OnChainTrade[]>()
+    for (const trade of trades) {
+      const existing = tradesByMarket.get(trade.marketId) || []
+      existing.push(trade)
+      tradesByMarket.set(trade.marketId, existing)
+    }
+
+    const LONG_MARGIN_MULTIPLIER = 0.10
+    const SHORT_MARGIN_MULTIPLIER = 0.15
+    const LIQUIDATION_PENALTY_BPS = 0.10
+
+    // Process each market separately
+    for (const [marketId, marketTrades] of tradesByMarket) {
+      const sorted = [...marketTrades].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      
+      // Debug: Show all trades for this market
+      console.log(`[Analytics PnL] Market ${marketId}:`, sorted.map(t => ({
+        side: t.side,
+        price: t.price,
+        qty: t.quantity,
+        time: t.timestamp.toISOString()
+      })))
+      
+      const openLots: Array<{
+        side: 'BUY' | 'SELL'
+        price: number
+        remaining: number
+        fee: number
+      }> = []
+
+      for (const trade of sorted) {
+        const oppositeSide = trade.side === 'BUY' ? 'SELL' : 'BUY'
+        let remaining = trade.quantity
+        const isLiquidationTrade = Boolean(trade.isLiquidation)
+        
+        console.log(`[Analytics PnL] Processing trade: ${trade.side} ${trade.quantity} @ $${trade.price}, isLiquidation=${trade.isLiquidation}, looking for ${oppositeSide} in openLots:`, openLots.map(l => `${l.side} ${l.remaining} @ $${l.price}`))
+
+        let totalPnlForTrade = 0
+        let totalClosedSize = 0
+        let wasLiquidated = false
+
+        // Match against open positions
+        while (remaining > 0) {
+          const matchIdx = openLots.findIndex((l) => l.side === oppositeSide)
+          if (matchIdx === -1) break
+
+          const lot = openLots[matchIdx]
+          const matched = Math.min(remaining, lot.remaining)
+
+          const isLong = lot.side === 'BUY'
+          const entryPrice = lot.price
+          const exitPrice = trade.price
+          const entryValue = entryPrice * matched
+
+          let pnl: number
+
+          if (isLiquidationTrade) {
+            // Liquidation: user loses margin + penalty, plus the trading loss
+            const tradingLoss = isLong
+              ? (exitPrice - entryPrice) * matched
+              : (entryPrice - exitPrice) * matched
+            const penalty = Math.abs(entryValue) * LIQUIDATION_PENALTY_BPS
+            pnl = tradingLoss - penalty // Trading loss is already negative for losing trades
+            if (pnl > 0) pnl = -Math.abs(pnl) // Ensure liquidation is always a loss
+            wasLiquidated = true
+          } else {
+            const rawPnl = isLong
+              ? (exitPrice - entryPrice) * matched
+              : (entryPrice - exitPrice) * matched
+            pnl = rawPnl - trade.fee
+          }
+
+          console.log(`[Analytics PnL] MATCHED: ${matched} units, entry $${entryPrice}, exit $${exitPrice}, pnl: $${pnl.toFixed(2)}, isLiq: ${isLiquidationTrade}`)
+
+          totalPnlForTrade += pnl
+          totalClosedSize += matched
+
+          lot.remaining -= matched
+          remaining -= matched
+          if (lot.remaining <= 0) openLots.splice(matchIdx, 1)
+        }
+        
+        console.log(`[Analytics PnL] After matching: totalClosedSize=${totalClosedSize}, totalPnl=${totalPnlForTrade.toFixed(2)}`)
+
+        // Debug: explicitly check and log
+        const shouldStore = totalClosedSize > 0
+        console.log(`[Analytics PnL] shouldStore=${shouldStore}, typeof totalClosedSize=${typeof totalClosedSize}`)
+        
+        if (shouldStore) {
+          console.log(`[Analytics PnL] STORING: tradeId=${trade.tradeId}, pnl=${totalPnlForTrade}`)
+          result.set(trade.tradeId, { 
+            pnl: totalPnlForTrade, 
+            closedSize: totalClosedSize,
+            wasLiquidated 
+          })
+        }
+
+        if (remaining > 0) {
+          console.log(`[Analytics PnL] Opening new lot: ${trade.side} ${remaining} @ $${trade.price}`)
+          openLots.push({ side: trade.side, price: trade.price, remaining, fee: trade.fee })
+        }
+      }
+    }
+
+    console.log(`[Analytics PnL] FINAL: result map has ${result.size} entries`)
+    if (result.size > 0) {
+      result.forEach((value, key) => {
+        console.log(`[Analytics PnL] - ${key}: pnl=${value.pnl.toFixed(2)}, closedSize=${value.closedSize}`)
+      })
+    }
+    return result
+  }, [trades])
+
   // Loading state with progress
   if (isLoading && trades.length === 0) {
     return (
@@ -1326,70 +1447,100 @@ function OnChainTradesTab({
                 <th className="px-3 py-2.5 font-medium text-right">Price</th>
                 <th className="px-3 py-2.5 font-medium text-right">Quantity</th>
                 <th className="px-3 py-2.5 font-medium text-right">Value</th>
+                <th className="px-3 py-2.5 font-medium text-right">Realized P&L</th>
                 <th className="px-3 py-2.5 font-medium text-right">Fee</th>
-                <th className="px-3 py-2.5 font-medium">Margin</th>
+                <th className="px-3 py-2.5 font-medium">Type</th>
                 <th className="px-3 py-2.5 font-medium text-right">Time</th>
               </tr>
             </thead>
             <tbody>
-              {paginatedTrades.map((trade) => (
-                <tr key={trade.tradeId} className={`border-t border-[#0F0F0F] hover:bg-[#0F0F0F] transition-colors ${trade.isLiquidation ? 'bg-[#1a0505]' : ''}`}>
-                  <td className="px-3 py-2">
-                    <span className="text-[11px] text-[#e0e0e0] font-medium">{trade.marketSymbol}</span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <span className={`text-[11px] font-medium ${trade.side === 'BUY' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
-                        {trade.side}
-                      </span>
-                      {trade.isLiquidation && (
-                        <span className="text-[8px] font-medium text-[#f87171] bg-[#f87171]/20 px-1 py-px rounded border border-[#f87171]/30">
-                          LIQ
+              {console.log(`[Table Render] Rendering ${paginatedTrades.length} trades, PnL map has ${tradeRealizedPnL.size} entries`)}
+              {paginatedTrades.map((trade, idx) => {
+                const realizedData = tradeRealizedPnL.get(trade.tradeId)
+                const hasRealizedPnL = realizedData && realizedData.closedSize > 0
+                const realizedPnL = realizedData?.pnl || 0
+                const wasLiquidated = realizedData?.wasLiquidated || false
+                
+                // Debug: Log first 5 trades
+                if (idx < 5) {
+                  console.log(`[Table Render] Row ${idx}: ${trade.marketSymbol} ${trade.side} @ $${trade.price}, tradeId=${trade.tradeId}, lookup=${realizedData ? 'FOUND' : 'NOT FOUND'}, pnl=${realizedPnL}`)
+                }
+                
+                return (
+                  <tr key={trade.tradeId} className={`border-t border-[#0F0F0F] hover:bg-[#0F0F0F] transition-colors ${trade.isLiquidation || wasLiquidated ? 'bg-[#1a0505]' : ''}`}>
+                    <td className="px-3 py-2">
+                      <span className="text-[11px] text-[#e0e0e0] font-medium">{trade.marketSymbol}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className={`text-[11px] font-medium ${trade.side === 'BUY' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                          {trade.side}
                         </span>
+                        {(trade.isLiquidation || wasLiquidated) && (
+                          <span className="text-[8px] font-medium text-[#f87171] bg-[#f87171]/20 px-1 py-px rounded border border-[#f87171]/30">
+                            LIQ
+                          </span>
+                        )}
+                        {hasRealizedPnL && !wasLiquidated && (
+                          <span className="text-[8px] font-medium text-[#60a5fa] bg-[#3b82f6]/10 px-1 py-px rounded">
+                            CLOSE
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="text-[11px] font-mono text-[#c0c0c0]">
+                        {formatCurrency(trade.price)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="text-[11px] font-mono text-[#c0c0c0]">
+                        {trade.quantity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="text-[11px] font-mono text-[#e0e0e0]">
+                        {formatCurrency(trade.tradeValue)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {hasRealizedPnL ? (
+                        <span className={`text-[11px] font-medium font-mono ${realizedPnL >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                          {realizedPnL >= 0 ? '+' : ''}{formatCurrency(realizedPnL)}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-[#404040] font-mono">—</span>
                       )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="text-[11px] font-mono text-[#c0c0c0]">
-                      {formatCurrency(trade.price)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="text-[11px] font-mono text-[#c0c0c0]">
-                      {trade.quantity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="text-[11px] font-mono text-[#e0e0e0]">
-                      {formatCurrency(trade.tradeValue)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="text-[11px] font-mono text-[#fbbf24]">
-                      {formatCurrency(trade.fee, { minimumDecimals: 4, maximumDecimals: 6 })}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      (trade.side === 'BUY' ? trade.buyerIsMargin : trade.sellerIsMargin)
-                        ? 'bg-[#f59e0b]/10 text-[#fbbf24]' 
-                        : 'bg-[#3b82f6]/10 text-[#60a5fa]'
-                    }`}>
-                      {(trade.side === 'BUY' ? trade.buyerIsMargin : trade.sellerIsMargin) ? 'Margin' : 'Spot'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="text-[10px] text-[#707070]">
-                      {trade.timestamp.toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="text-[11px] font-mono text-[#fbbf24]">
+                        {formatCurrency(trade.fee, { minimumDecimals: 4, maximumDecimals: 6 })}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        (trade.isLiquidation || wasLiquidated)
+                          ? 'bg-[#f87171]/10 text-[#f87171]'
+                          : (trade.side === 'BUY' ? trade.buyerIsMargin : trade.sellerIsMargin)
+                            ? 'bg-[#f59e0b]/10 text-[#fbbf24]' 
+                            : 'bg-[#3b82f6]/10 text-[#60a5fa]'
+                      }`}>
+                        {(trade.isLiquidation || wasLiquidated) ? 'Liquidation' : (trade.side === 'BUY' ? trade.buyerIsMargin : trade.sellerIsMargin) ? 'Margin' : 'Spot'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="text-[10px] text-[#707070]">
+                        {trade.timestamp.toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

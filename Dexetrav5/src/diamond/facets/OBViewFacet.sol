@@ -55,8 +55,21 @@ contract OBViewFacet {
 
     function getActiveOrdersCount() external view returns (uint256 buyCount, uint256 sellCount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        uint256 b = 0; for (uint256 i = 0; i < s.buyPrices.length; i++) { uint256 p = s.buyPrices[i]; OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p]; if (lvl.exists && lvl.firstOrderId != 0) { b++; } }
-        uint256 a = 0; for (uint256 j = 0; j < s.sellPrices.length; j++) { uint256 p2 = s.sellPrices[j]; OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2]; if (lvl2.exists && lvl2.firstOrderId != 0) { a++; } }
+        // Use linked list traversal (gas-optimized storage no longer uses price arrays)
+        uint256 b = 0;
+        uint256 p = s.bestBid;
+        while (p != 0) {
+            OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p];
+            if (lvl.exists && lvl.firstOrderId != 0) { b++; }
+            p = s.buyPriceNext[p];
+        }
+        uint256 a = 0;
+        uint256 p2 = s.bestAsk;
+        while (p2 != 0) {
+            OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2];
+            if (lvl2.exists && lvl2.firstOrderId != 0) { a++; }
+            p2 = s.sellPriceNext[p2];
+        }
         return (b, a);
     }
 

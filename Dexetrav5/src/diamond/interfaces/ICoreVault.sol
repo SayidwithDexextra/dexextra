@@ -23,6 +23,21 @@ interface ICoreVault {
     function getTotalMarginLockedInMarket(bytes32 marketId) external view returns (uint256 totalLocked6);
     function liquidateShort(address user, bytes32 marketId, address liquidator, uint256 executionPrice) external;
     function liquidateLong(address user, bytes32 marketId, address liquidator, uint256 executionPrice) external;
+    
+    // Batch settlement for large markets
+    function initBatchSettlement(bytes32 marketId, uint256 finalPrice) external;
+    function batchCalculateTotals(bytes32 marketId, uint256 batchSize) external returns (bool complete);
+    function finalizeHaircutCalculation(bytes32 marketId) external;
+    function batchApplySettlements(bytes32 marketId, uint256 batchSize) external returns (bool complete);
+    function finalizeBatchSettlement(bytes32 marketId) external;
+    function getBatchSettlementState(bytes32 marketId) external view returns (
+        uint8 phase,
+        uint256 cursor,
+        uint256 totalUsers,
+        uint256 scaleRay
+    );
+    function isMarketSettling(bytes32 marketId) external view returns (bool);
+    function getMarketPositionUserCount(bytes32 marketId) external view returns (uint256);
 }
 
 
