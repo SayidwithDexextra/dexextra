@@ -55,16 +55,17 @@ contract OBViewFacet {
 
     function getActiveOrdersCount() external view returns (uint256 buyCount, uint256 sellCount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        // Use linked list traversal (gas-optimized storage no longer uses price arrays)
+        // Use linked list traversal starting from buyPriceHead/sellPriceHead
+        // NOTE: Must use linked list heads, NOT bestBid/bestAsk - they may not be connected to the list
         uint256 b = 0;
-        uint256 p = s.bestBid;
+        uint256 p = s.buyPriceHead;
         while (p != 0) {
             OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p];
             if (lvl.exists && lvl.firstOrderId != 0) { b++; }
             p = s.buyPriceNext[p];
         }
         uint256 a = 0;
-        uint256 p2 = s.bestAsk;
+        uint256 p2 = s.sellPriceHead;
         while (p2 != 0) {
             OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2];
             if (lvl2.exists && lvl2.firstOrderId != 0) { a++; }

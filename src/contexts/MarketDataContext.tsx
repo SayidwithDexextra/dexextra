@@ -345,7 +345,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           const isInvolved = myAddress && (buyer === myAddress || seller === myAddress);
           const isTaker = isInvolved && isRecentTakerTrade(price);
           
-          console.log(`[BlockchainEvents] TradeExecutionCompleted received`, {
+          console.log(`[LiveUpdate][websocket] TradeExecutionCompleted received for ${symbol}`, {
             price: price.toFixed(4),
             amount: amount.toFixed(6),
             buyer: buyer.slice(0, 10) + '...',
@@ -365,6 +365,27 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           console.log(`[BlockchainEvents] Removing liquidity (trade): ${amount.toFixed(6)} @ ${price.toFixed(4)} from both sides`);
           lightweightStore.removeLiquidity(symbol, 'buy', price, amount);
           lightweightStore.removeLiquidity(symbol, 'sell', price, amount);
+          
+          // Dispatch window event so other components (TokenHeader, useAllTrades) can react
+          try {
+            const rawPrice = args.price ? String(args.price) : '0';
+            const rawAmount = args.amount ? String(args.amount) : '0';
+            console.log(`[LiveUpdate][dispatch] symbol=${symbol} price=${price.toFixed(4)} rawPrice=${rawPrice}`);
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                symbol,
+                eventType: 'TradeExecutionCompleted',
+                price: rawPrice,
+                amount: rawAmount,
+                buyer,
+                seller,
+                timestamp: Date.now(),
+                source: 'websocket',
+              }
+            }));
+          } catch (err) {
+            console.error('[LiveUpdate][dispatch] Error:', err);
+          }
         }
       },
       onError: (error) => {
@@ -450,18 +471,17 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     };
     
     // Start fallback polling after a short delay to allow event-based updates to work first
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    
     const startDelay = setTimeout(() => {
       refreshFromApi();
-      const interval = setInterval(refreshFromApi, FALLBACK_INTERVAL);
-      
-      // Store interval ID for cleanup
-      (startDelay as any)._interval = interval;
+      intervalId = setInterval(refreshFromApi, FALLBACK_INTERVAL);
     }, 2000);
     
     return () => {
       clearTimeout(startDelay);
-      if ((startDelay as any)._interval) {
-        clearInterval((startDelay as any)._interval);
+      if (intervalId) {
+        clearInterval(intervalId);
       }
     };
   }, [symbol, marketAddress, lightweightStore]);

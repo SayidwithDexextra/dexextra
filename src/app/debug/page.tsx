@@ -426,6 +426,9 @@ export default function DebugSearchPage() {
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/settlement-lifecycle">
               Settlement Lifecycle
             </a>
+            <a className="rounded border border-orange-500/30 bg-[#141414] px-3 py-2 text-orange-300 hover:bg-orange-500/10" href="/debug/batch-settlement">
+              Batch Settlement
+            </a>
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/lightweight-orderbook">
               Lightweight OrderBook
             </a>

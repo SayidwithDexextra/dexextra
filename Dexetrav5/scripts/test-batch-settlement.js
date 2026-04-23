@@ -59,6 +59,17 @@ const CONFIG = {
   ORDER_BATCH_SIZE: 200,
   CALC_BATCH_SIZE: 100,
   APPLY_BATCH_SIZE: 50,
+  
+  // CSV wallet loading (for mainnet order loading)
+  WALLETS_CSV: path.resolve(__dirname, "../../AdvancedMarketAutomation/wallets.csv"),
+  ORDER_SIZE: ethers.parseUnits("0.01", 18),
+  // Wide spreads to ensure orders REST on book (don't match)
+  BUY_SPREAD_PERCENT: 50,  // Buy orders 10-50% below mark
+  SELL_SPREAD_PERCENT: 50, // Sell orders 10-50% above mark
+  // Minimum distance from best bid/ask to guarantee resting
+  MIN_SPREAD_FROM_BEST_BPS: 1000, // 10% minimum distance
+  MIN_COLLATERAL_PER_USER: ethers.parseUnits("50", 6),
+  CREATE_POSITIONS: true,
 };
 
 // Colors
@@ -108,6 +119,35 @@ function progress(current, total, msg) {
   const pct = Math.round((current / total) * 100);
   const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
   process.stdout.write(`\r  ${c.yellow}[${bar}]${c.reset} ${pct}% - ${msg}        `);
+}
+
+// ============ Wallet Loading (CSV) ============
+
+function loadWalletsFromCSV(csvPath) {
+  if (!fs.existsSync(csvPath)) {
+    throw new Error(`Wallets CSV not found: ${csvPath}`);
+  }
+  
+  const content = fs.readFileSync(csvPath, "utf8");
+  const lines = content.trim().split("\n");
+  
+  const wallets = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(",").map(v => v.trim());
+    if (values.length >= 3 && values[2]) {
+      wallets.push({
+        nickname: values[0],
+        address: values[1],
+        privateKey: values[2],
+      });
+    }
+  }
+  
+  return wallets;
+}
+
+function createSignersFromWallets(wallets, provider) {
+  return wallets.map(w => new ethers.Wallet(w.privateKey, provider));
 }
 
 async function loadDeployment() {
@@ -293,17 +333,17 @@ async function checkSingleMarket(market) {
     logWarn(`Not a standard Diamond or facets() failed: ${e.message?.substring(0, 60)}`);
   }
 
-  // 3. Check for registry() function - V2 diamonds have this
+  // 3. Check for facetRegistry() function - V2 DiamondRegistry has this
   log(`\n  Checking V2 indicators...`, c.bright);
-  
+
   let hasRegistry = false;
   try {
-    const registryABI = ["function registry() view returns (address)"];
+    const registryABI = ["function facetRegistry() view returns (address)"];
     const diamond = new ethers.Contract(diamondAddress, registryABI, ethers.provider);
-    const registryAddr = await diamond.registry();
-    logSuccess(`V2 Diamond: registry() returns ${registryAddr}`);
+    const registryAddr = await diamond.facetRegistry();
+    logSuccess(`V2 DiamondRegistry: facetRegistry() returns ${registryAddr}`);
     hasRegistry = true;
-    
+
     // Check if registry matches our FacetRegistry
     if (facetRegistryAddress && registryAddr.toLowerCase() === facetRegistryAddress.toLowerCase()) {
       logSuccess(`Registry matches FACET_REGISTRY_ADDRESS`);
@@ -313,31 +353,10 @@ async function checkSingleMarket(market) {
       logInfo(`  Actual:   ${registryAddr}`);
     }
   } catch (e) {
-    logWarn(`No registry() function - likely V1 Diamond`);
+    logWarn(`No facetRegistry() function - likely V1 Diamond`);
   }
 
-  // 4. Try calling getSettlementRequirements()
-  log(`\n  Testing getSettlementRequirements()...`, c.bright);
-  try {
-    const settlement = await ethers.getContractAt("OBSettlementFacet", diamondAddress);
-    const result = await settlement.getSettlementRequirements();
-    logSuccess(`Function exists and returned data:`);
-    logInfo(`  Position count: ${result[0]}`);
-    logInfo(`  Buy price levels: ${result[1]}`);
-    logInfo(`  Sell price levels: ${result[2]}`);
-    logInfo(`  Estimated orders: ${result[3]}`);
-    logInfo(`  Requires batch: ${result[4]}`);
-  } catch (e) {
-    logError(`getSettlementRequirements() failed`);
-    logInfo(`  Error: ${e.message?.substring(0, 100)}`);
-    
-    // Try to understand why
-    if (e.message?.includes("CALL_EXCEPTION") || e.message?.includes("missing revert")) {
-      logWarn(`Function doesn't exist on this diamond`);
-    }
-  }
-
-  // 5. Try calling isSettled()
+  // 4. Try calling isSettled()
   log(`\n  Testing other settlement functions...`, c.bright);
   try {
     const settlement = await ethers.getContractAt("OBSettlementFacet", diamondAddress);
@@ -347,27 +366,31 @@ async function checkSingleMarket(market) {
     logError(`isSettled() failed: ${e.message?.substring(0, 60)}`);
   }
 
-  // 6. Try calling settleMarket.selector to see facet address
+  // 6. Check FacetRegistry mappings for key settlement selectors
   if (facetRegistryAddress) {
     log(`\n  Checking FacetRegistry mappings...`, c.bright);
     try {
       const registry = await ethers.getContractAt("FacetRegistry", facetRegistryAddress);
       
-      // settleMarket selector
-      const settleSelector = "0x6c9c1d9a"; // settleMarket(uint256)
+      // Compute selectors dynamically (don't hardcode!)
+      const settleSelector = ethers.id("settleMarket(uint256)").substring(0, 10);
       const settleFacet = await registry.getFacet(settleSelector);
-      logInfo(`settleMarket selector -> ${settleFacet}`);
+      logInfo(`settleMarket ${settleSelector} -> ${settleFacet}`);
       
-      // getSettlementRequirements selector
-      const reqSelector = "0xbcfe31ee"; // getSettlementRequirements()
-      const reqFacet = await registry.getFacet(reqSelector);
-      logInfo(`getSettlementRequirements selector -> ${reqFacet}`);
+      // Check isSettled selector
+      const isSettledSelector = ethers.id("isSettled()").substring(0, 10);
+      const isSettledFacet = await registry.getFacet(isSettledSelector);
+      logInfo(`isSettled ${isSettledSelector} -> ${isSettledFacet}`);
       
-      // Check if they point to the same facet
-      if (settleFacet === reqFacet && settleFacet !== ethers.ZeroAddress) {
-        logSuccess(`Both selectors point to same OBSettlementFacet`);
-      } else if (reqFacet === ethers.ZeroAddress) {
-        logError(`getSettlementRequirements not registered in FacetRegistry!`);
+      // Check batch settlement
+      const batchSelector = ethers.id("initBatchSettlement(uint256)").substring(0, 10);
+      const batchFacet = await registry.getFacet(batchSelector);
+      logInfo(`initBatchSettlement ${batchSelector} -> ${batchFacet}`);
+      
+      if (settleFacet !== ethers.ZeroAddress) {
+        logSuccess(`Settlement selectors registered`);
+      } else {
+        logError(`settleMarket not registered in FacetRegistry!`);
       }
     } catch (e) {
       logError(`FacetRegistry check failed: ${e.message?.substring(0, 60)}`);
@@ -378,15 +401,311 @@ async function checkSingleMarket(market) {
   banner("DIAGNOSIS", hasRegistry ? c.green : c.yellow);
   
   if (hasRegistry) {
-    log(`  This appears to be a V2 Diamond (has registry())`, c.green);
-    log(`  If getSettlementRequirements() fails, the FacetRegistry may`, c.dim);
-    log(`  not have the updated OBSettlementFacet selectors registered.`, c.dim);
+    log(`  This is a V2 DiamondRegistry (has facetRegistry())`, c.green);
+    log(`  V2 markets automatically inherit FacetRegistry upgrades.`, c.dim);
   } else {
-    log(`  This appears to be a V1 Diamond (no registry())`, c.yellow);
+    log(`  This appears to be a V1 Diamond (no facetRegistry())`, c.yellow);
     log(`  V1 diamonds have facets embedded directly and cannot`, c.dim);
     log(`  automatically receive FacetRegistry upgrades.`, c.dim);
   }
   console.log();
+}
+
+// ============ Phase: LOAD ORDERS (Mainnet) ============
+
+async function phaseLoadOrders(selectedMarket) {
+  banner("LOAD ORDERS (Multi-Wallet)", c.yellow);
+  
+  const networkName = process.env.HARDHAT_NETWORK || "localhost";
+  const isMainnet = networkName === "hyperliquid";
+  
+  // Load wallets from CSV
+  log("\n  Loading wallets from CSV...", c.dim);
+  
+  let walletData;
+  try {
+    walletData = loadWalletsFromCSV(CONFIG.WALLETS_CSV);
+    logSuccess(`Loaded ${walletData.length} wallets from CSV`);
+  } catch (e) {
+    logError(`Failed to load wallets: ${e.message}`);
+    return;
+  }
+  
+  // Create signers from wallets
+  const userSigners = createSignersFromWallets(walletData, ethers.provider);
+  logInfo(`Created ${userSigners.length} signers`);
+  
+  const [adminSigner] = await ethers.getSigners();
+  logInfo(`Admin: ${adminSigner.address}`);
+  
+  // Get contract addresses from env (strip any inline comments)
+  let coreVaultAddr = process.env.CORE_VAULT_ADDRESS || process.env.NEXT_PUBLIC_CORE_VAULT_ADDRESS;
+  if (coreVaultAddr) {
+    coreVaultAddr = coreVaultAddr.split('#')[0].split(' ')[0].trim();
+  }
+  
+  if (!coreVaultAddr) {
+    logError("CORE_VAULT_ADDRESS not set in .env.local");
+    return;
+  }
+  
+  logInfo(`CoreVault: ${coreVaultAddr}`);
+  
+  // Load contracts
+  const coreVault = await ethers.getContractAt("CoreVault", coreVaultAddr);
+  const obPlacement = await ethers.getContractAt("OBOrderPlacementFacet", selectedMarket.address);
+  const obView = await ethers.getContractAt("OBViewFacet", selectedMarket.address);
+  const obPricing = await ethers.getContractAt("OBPricingFacet", selectedMarket.address);
+  
+  // Get current market state
+  banner("MARKET STATE", c.blue);
+  
+  let markPrice;
+  try {
+    markPrice = await obPricing.getMarkPrice();
+  } catch (e) {
+    try {
+      markPrice = await coreVault.getMarkPrice(selectedMarket.marketId);
+    } catch (e2) {
+      markPrice = ethers.parseUnits("0.25", 6); // Default for SEI
+    }
+  }
+  
+  const bestBid = await obView.bestBid();
+  const bestAsk = await obView.bestAsk();
+  
+  logInfo(`Mark Price: $${ethers.formatUnits(markPrice, 6)}`);
+  logInfo(`Best Bid: $${ethers.formatUnits(bestBid, 6)}`);
+  logInfo(`Best Ask: $${ethers.formatUnits(bestAsk, 6)}`);
+  
+  // Check liquidity
+  if (bestBid === 0n || bestAsk === 0n) {
+    logWarn("No liquidity in order book - positions cannot be created");
+    logInfo("Only resting orders will be placed");
+    CONFIG.CREATE_POSITIONS = false;
+  }
+  
+  // Check collateral for sample wallets (use staticCall since getAvailableCollateral isn't marked view)
+  banner("COLLATERAL CHECK", c.yellow);
+  let walletsWithCollateral = 0;
+  let totalCollateral = 0n;
+  const sampleSize = Math.min(5, userSigners.length);
+  
+  log(`\n  Checking collateral for first ${sampleSize} wallets...`, c.dim);
+  for (let i = 0; i < sampleSize; i++) {
+    const user = userSigners[i];
+    try {
+      // Use staticCall because getAvailableCollateral uses delegateView internally
+      const available = await coreVault.getAvailableCollateral.staticCall(user.address);
+      if (available > 0n) {
+        walletsWithCollateral++;
+        totalCollateral += available;
+        logSuccess(`${walletData[i].nickname}: $${ethers.formatUnits(available, 6)} USDC available`);
+      } else {
+        logWarn(`${walletData[i].nickname}: No collateral deposited`);
+      }
+    } catch (e) {
+      logWarn(`${walletData[i].nickname}: Could not check collateral - ${e.message?.substring(0, 50)}`);
+    }
+  }
+  
+  if (walletsWithCollateral === 0) {
+    logError("\n  ⚠️  NO WALLETS HAVE COLLATERAL DEPOSITED!");
+    logInfo("  Users need USDC deposited in CoreVault to place margin orders.");
+    logInfo("  Options:");
+    logInfo("    1. Run: npx hardhat run scripts/fund-users.js --network hyperliquid");
+    logInfo("    2. Have each user deposit USDC via the app UI");
+    logInfo("    3. Use a batch deposit script");
+    
+    const continueAnyway = await ask(`\n${c.yellow}  Continue anyway? Orders will fail without collateral (y/N): ${c.reset}`);
+    if (continueAnyway.toLowerCase() !== 'y' && continueAnyway.toLowerCase() !== 'yes') {
+      logInfo("Aborted.");
+      return;
+    }
+  } else {
+    logSuccess(`${walletsWithCollateral}/${sampleSize} sample wallets have collateral`);
+    logInfo(`Average available: $${ethers.formatUnits(totalCollateral / BigInt(sampleSize), 6)} USDC`);
+  }
+  
+  logInfo(`\nReady to load ${userSigners.length} wallets`);
+  
+  // Show order placement strategy
+  banner("ORDER PLACEMENT STRATEGY", c.magenta);
+  const minDistanceBps = BigInt(CONFIG.MIN_SPREAD_FROM_BEST_BPS);
+  const buyPriceMin = (bestBid * (10000n - minDistanceBps - 3200n)) / 10000n; // Lowest buy
+  const buyPriceMax = (bestBid * (10000n - minDistanceBps)) / 10000n; // Highest buy
+  const sellPriceMin = (bestAsk * (10000n + minDistanceBps)) / 10000n; // Lowest sell
+  const sellPriceMax = (bestAsk * (10000n + minDistanceBps + 3200n)) / 10000n; // Highest sell
+  
+  logInfo(`Market orders: 75% buys, 25% sells (upward pressure)`);
+  logInfo(`Limit orders will REST on book (not match):`);
+  logInfo(`  Buy orders:  $${ethers.formatUnits(buyPriceMin, 6)} - $${ethers.formatUnits(buyPriceMax, 6)} (below best bid $${ethers.formatUnits(bestBid, 6)})`);
+  logInfo(`  Sell orders: $${ethers.formatUnits(sellPriceMin, 6)} - $${ethers.formatUnits(sellPriceMax, 6)} (above best ask $${ethers.formatUnits(bestAsk, 6)})`);
+
+  // Load orders SEQUENTIALLY to avoid nonce collisions
+  banner("LOADING ORDERS & POSITIONS", c.green);
+  
+  let totalPositions = 0;
+  let totalOrders = 0;
+  let failedUsers = 0;
+  
+  // Track first few errors for debugging
+  let errorSamples = [];
+  const MAX_ERROR_SAMPLES = 5;
+  
+  // Configuration for upward price action
+  const BUY_BIAS = 0.75; // 75% of users will be buyers to push price up
+  const TX_DELAY_MS = 150; // Delay between transactions to avoid nonce issues
+  const PRICE_INCREMENT_BPS = 10; // Each successive buyer group pushes price 0.1% higher
+  
+  // Helper to wait for tx confirmation
+  async function sendAndWait(txPromise) {
+    const tx = await txPromise;
+    await tx.wait();
+    return tx;
+  }
+  
+  // Process users SEQUENTIALLY (one at a time)
+  for (let i = 0; i < userSigners.length; i++) {
+    const user = userSigners[i];
+    // Bias toward buying for upward price action
+    const isBuySide = Math.random() < BUY_BIAS;
+    let userPositions = 0;
+    let userOrders = 0;
+    
+    try {
+      // Step 1: Create a position via market order with higher slippage tolerance
+      if (CONFIG.CREATE_POSITIONS) {
+        try {
+          // Use 500bps (5%) slippage to ensure fills
+          await sendAndWait(
+            obPlacement.connect(user).placeMarginMarketOrderWithSlippage(CONFIG.ORDER_SIZE, isBuySide, 500)
+          );
+          userPositions++;
+          await new Promise(resolve => setTimeout(resolve, TX_DELAY_MS));
+        } catch (e) {
+          // Fallback to regular market order if slippage variant not available
+          try {
+            await sendAndWait(
+              obPlacement.connect(user).placeMarginMarketOrder(CONFIG.ORDER_SIZE, isBuySide)
+            );
+            userPositions++;
+            await new Promise(resolve => setTimeout(resolve, TX_DELAY_MS));
+          } catch (e2) {
+            if (errorSamples.length < MAX_ERROR_SAMPLES) {
+              let errorMsg = e2.reason || e2.shortMessage || e2.message?.substring(0, 100);
+              if (errorMsg?.includes('lc')) {
+                errorMsg = 'Insufficient collateral';
+              } else if (errorMsg?.includes('nl')) {
+                errorMsg = 'No liquidity on opposite side';
+              } else if (errorMsg?.includes('nonce') || errorMsg?.includes('replacement')) {
+                errorMsg = 'Nonce collision';
+              } else if (errorMsg?.includes('sl')) {
+                errorMsg = 'Slippage exceeded';
+              }
+              errorSamples.push({ user: i, type: 'position', side: isBuySide ? 'BUY' : 'SELL', error: errorMsg });
+            }
+          }
+        }
+      }
+      
+      // Step 2: Place RESTING limit orders (guaranteed to not match)
+      // Buy orders: placed BELOW best bid
+      // Sell orders: placed ABOVE best ask
+      const numOrders = CONFIG.ORDERS_PER_USER;
+      
+      // Use best bid/ask as reference to ensure orders REST (don't match)
+      const minDistanceBps = BigInt(CONFIG.MIN_SPREAD_FROM_BEST_BPS);
+      
+      for (let j = 0; j < numOrders; j++) {
+        let price;
+        
+        if (isBuySide) {
+          // Buy orders: place 10-50% BELOW the best bid (guaranteed to rest)
+          // Each order is progressively lower
+          const offsetBps = minDistanceBps + (BigInt(j) * 800n); // 10%, 18%, 26%, 34%, 42%
+          price = (bestBid * (10000n - offsetBps)) / 10000n;
+          
+          // Add small per-user variation to spread out the book
+          const userVariation = (bestBid * BigInt(i % 10) * 10n) / 10000n; // 0-0.9% variation
+          price = price - userVariation;
+        } else {
+          // Sell orders: place 10-50% ABOVE the best ask (guaranteed to rest)
+          const offsetBps = minDistanceBps + (BigInt(j) * 800n); // 10%, 18%, 26%, 34%, 42%
+          price = (bestAsk * (10000n + offsetBps)) / 10000n;
+          
+          // Add small per-user variation
+          const userVariation = (bestAsk * BigInt(i % 10) * 10n) / 10000n;
+          price = price + userVariation;
+        }
+        
+        if (price <= 0n) continue;
+        
+        try {
+          await sendAndWait(
+            obPlacement.connect(user).placeMarginLimitOrder(price, CONFIG.ORDER_SIZE, isBuySide)
+          );
+          userOrders++;
+          await new Promise(resolve => setTimeout(resolve, TX_DELAY_MS));
+        } catch (e) {
+          if (errorSamples.length < MAX_ERROR_SAMPLES) {
+            let errorMsg = e.reason || e.shortMessage || e.message?.substring(0, 100);
+            if (errorMsg?.includes('lc')) {
+              errorMsg = 'Insufficient collateral';
+            } else if (errorMsg?.includes('nl')) {
+              errorMsg = 'No liquidity';
+            } else if (errorMsg?.includes('nonce') || errorMsg?.includes('replacement')) {
+              errorMsg = 'Nonce collision';
+            }
+            errorSamples.push({ 
+              user: i, 
+              type: 'order', 
+              price: ethers.formatUnits(price, 6),
+              side: isBuySide ? 'BUY' : 'SELL',
+              error: errorMsg
+            });
+          }
+        }
+      }
+      
+      totalPositions += userPositions;
+      totalOrders += userOrders;
+      
+    } catch (e) {
+      if (errorSamples.length < MAX_ERROR_SAMPLES) {
+        errorSamples.push({ user: i, type: 'general', error: e.reason || e.shortMessage || e.message?.substring(0, 100) });
+      }
+      failedUsers++;
+    }
+    
+    progress(i + 1, userSigners.length, `${totalPositions} pos, ${totalOrders} orders`);
+  }
+  console.log();
+
+  // Show error samples if any orders failed
+  if (errorSamples.length > 0) {
+    log("\n  Sample errors (first 3):", c.yellow);
+    for (const e of errorSamples) {
+      logWarn(`User ${e.user} [${e.type}]: ${e.error}`);
+      if (e.price) logInfo(`  Price: $${e.price}`);
+    }
+  }
+
+  // Summary
+  banner("LOAD COMPLETE", c.green);
+  
+  const finalBid = await obView.bestBid();
+  const finalAsk = await obView.bestAsk();
+  
+  logSuccess(`Users processed: ${userSigners.length - failedUsers}/${userSigners.length}`);
+  logSuccess(`Positions created: ${totalPositions}`);
+  logSuccess(`Orders placed: ${totalOrders}`);
+  logInfo(`Final Best Bid: $${ethers.formatUnits(finalBid, 6)}`);
+  logInfo(`Final Best Ask: $${ethers.formatUnits(finalAsk, 6)}`);
+  
+  if (failedUsers > 0) logWarn(`Failed during loading: ${failedUsers}`);
+  
+  log(`\n  Market loaded with ${totalPositions} positions + ${totalOrders} orders!`, c.bright);
 }
 
 // ============ Phase 1: LOAD ============
@@ -789,20 +1108,87 @@ async function main() {
   // Main menu
   log("\n  Select operation:", c.bright);
   log("    1. LIST MARKETS  - View all markets from Supabase + check V2");
-  log("    2. LOAD TEST     - Create positions & test regular settlement (localhost)");
-  log("    3. BATCH SETTLE  - Run batch settlement");
-  log("    4. FULL TEST     - Load + Batch settle (localhost)\n");
+  log("    2. LOAD ORDERS   - Load orders onto a market (mainnet, uses CSV wallets)");
+  log("    3. LOAD TEST     - Create positions & test settlement (localhost)");
+  log("    4. BATCH SETTLE  - Run batch settlement");
+  log("    5. FULL TEST     - Load + Batch settle (localhost)\n");
   
-  const choice = await ask(`${c.cyan}  Enter choice (1/2/3/4): ${c.reset}`);
+  const choice = await ask(`${c.cyan}  Enter choice (1-5): ${c.reset}`);
 
   if (choice === "1") {
     await phaseListMarkets();
     rl.close();
     return;
   }
+  
+  if (choice === "2") {
+    // Load orders onto a selected market using CSV wallets
+    if (!supabase) {
+      logError("Supabase not configured - cannot list markets");
+      rl.close();
+      return;
+    }
+    
+    // Fetch markets from Supabase
+    log("\n  Fetching markets from Supabase...", c.dim);
+    const { data: markets, error } = await supabase
+      .from("markets")
+      .select("*")
+      .eq("market_status", "ACTIVE")
+      .order("created_at", { ascending: false });
+    
+    if (error || !markets || markets.length === 0) {
+      logError("No active markets found in Supabase");
+      if (error) logInfo(`Error: ${error.message}`);
+      rl.close();
+      return;
+    }
+    
+    logSuccess(`Found ${markets.length} active markets`);
+    
+    // Display markets
+    log("\n  Active Markets:", c.bright);
+    markets.slice(0, 20).forEach((m, i) => {
+      const addr = m.market_address || m.diamond_address;
+      log(`    ${i + 1}. ${m.symbol} - ${addr?.substring(0, 18) || 'N/A'}...`, c.green);
+    });
+    
+    if (markets.length > 20) {
+      logInfo(`... and ${markets.length - 20} more`);
+    }
+    
+    // Select market
+    const selection = await ask(`\n${c.cyan}  Select market (1-${Math.min(markets.length, 20)}): ${c.reset}`);
+    const marketIndex = parseInt(selection) - 1;
+    
+    if (isNaN(marketIndex) || marketIndex < 0 || marketIndex >= markets.length) {
+      logError("Invalid selection");
+      rl.close();
+      return;
+    }
+    
+    const selectedMarket = {
+      symbol: markets[marketIndex].symbol,
+      address: markets[marketIndex].market_address || markets[marketIndex].diamond_address,
+      marketId: markets[marketIndex].market_id_bytes32 || markets[marketIndex].market_id,
+    };
+    
+    logSuccess(`Selected: ${selectedMarket.symbol}`);
+    logInfo(`Address: ${selectedMarket.address}`);
+    
+    if (!selectedMarket.address) {
+      logError("Market has no diamond address!");
+      rl.close();
+      return;
+    }
+    
+    await phaseLoadOrders(selectedMarket);
+    rl.close();
+    return;
+  }
 
-  // For options 2-4, we need localhost deployment
-  if (networkName !== "localhost" && (choice === "2" || choice === "4")) {
+  // For options 3 and 5, we need localhost deployment
+  if (networkName !== "localhost" && (choice === "3" || choice === "5")) {
     logError("LOAD TEST requires localhost network");
     logInfo("Use: npx hardhat run scripts/test-batch-settlement.js --network localhost");
     rl.close();
@@ -848,13 +1234,13 @@ async function main() {
     return;
   }
 
-  if (choice === "2" || choice === "4") {
+  if (choice === "3" || choice === "5") {
     const needsBatch = await phaseLoad();
     
-    if (choice === "4" && needsBatch) {
+    if (choice === "5" && needsBatch) {
       await phaseSettle();
     }
-  } else if (choice === "3") {
+  } else if (choice === "4") {
     await phaseSettle();
   }
 

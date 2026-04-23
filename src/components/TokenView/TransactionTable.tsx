@@ -498,7 +498,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   const obError = md.error;
 
   // All-trades paginated state (on-chain getAllTrades)
-  const allTradesHook = useAllTrades(md.orderBookAddress);
+  // Pass marketIdentifier so the hook can listen for real-time trade events
+  const allTradesHook = useAllTrades(md.orderBookAddress, validMarketIdentifier);
 
   useEffect(() => {
     if (view === 'transactions' && !allTradesHook.active && md.orderBookAddress) {

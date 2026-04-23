@@ -1933,6 +1933,47 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openOrders, openOrdersOverlayTick]);
+
+  // Track newly arrived orders for subtle entrance animation
+  const prevOrderKeysRef = useRef<Set<string>>(new Set());
+  const [newlyArrivedOrderKeys, setNewlyArrivedOrderKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const currentKeys = new Set(displayedOpenOrders.map(o => getOrderCompositeKey(o.symbol, o.id)));
+    const prevKeys = prevOrderKeysRef.current;
+    
+    // Find orders that are new (in current but not in previous)
+    const newKeys: string[] = [];
+    for (const key of currentKeys) {
+      if (!prevKeys.has(key)) {
+        newKeys.push(key);
+      }
+    }
+    
+    // Always update the ref for next comparison
+    prevOrderKeysRef.current = currentKeys;
+    
+    // Only animate if there were already orders displayed (not initial load)
+    if (newKeys.length > 0 && prevKeys.size > 0) {
+      setNewlyArrivedOrderKeys(prev => {
+        const next = new Set(prev);
+        for (const k of newKeys) next.add(k);
+        return next;
+      });
+      
+      // Clear animation state after animation completes (~600ms)
+      const timer = setTimeout(() => {
+        setNewlyArrivedOrderKeys(prev => {
+          const next = new Set(prev);
+          for (const k of newKeys) next.delete(k);
+          return next;
+        });
+      }, 600);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [displayedOpenOrders]);
+
   const lastUiLogRef = useRef<{ key: string } | null>(null);
 
   useEffect(() => {
@@ -2909,10 +2950,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         const slidePhase = slideOutOrderKeys.get(removalKey);
                         const isCancelWaiting = slidePhase === 'waiting';
                         const isSliding = slidePhase === 'sliding';
+                        const isNewOrder = newlyArrivedOrderKeys.has(removalKey);
                         return (
                         <React.Fragment key={uiKey}>
                           <tr
-                            className={`mat-slide-rtl group/row hover:bg-t-card-hover transition-all duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-t-stroke-sub' : ''} ${isSliding ? 'order-row-slide-out' : ''} ${isCancelWaiting ? 'opacity-50' : ''}`}
+                            className={`mat-slide-rtl group/row hover:bg-t-card-hover transition-all duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-t-stroke-sub' : ''} ${isSliding ? 'order-row-slide-out' : ''} ${isCancelWaiting ? 'opacity-50' : ''} ${isNewOrder ? 'order-row-new-arrival' : ''}`}
                             style={{ animationDelay: `${index * 50}ms` }}
                             onAnimationEnd={(e) => {
                               if (e.animationName !== 'order-row-slide-out') return;
@@ -4252,6 +4294,18 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           transform: translateX(12px);
           animation: matSlideRtl 300ms ease-out forwards;
           will-change: transform, opacity;
+        }
+        /* Subtle highlight animation for newly arrived orders */
+        @keyframes orderNewArrival {
+          0% {
+            background-color: rgba(59, 130, 246, 0.15);
+          }
+          100% {
+            background-color: transparent;
+          }
+        }
+        .order-row-new-arrival {
+          animation: orderNewArrival 600ms ease-out forwards;
         }
       `}</style>
 

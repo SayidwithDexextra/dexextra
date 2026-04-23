@@ -100,11 +100,11 @@ async function main() {
   console.log(`\n${c.bright}  KEY SELECTOR CHECK:${c.reset}`);
   const keyFunctions = [
     "settleMarket(uint256)",
-    "getSettlementRequirements()",
     "isSettled()",
     "placeMarginLimitOrder(uint256,uint256,bool)",
     "placeMarginMarketOrder(uint256,bool)",
     "cancelOrder(uint256)",
+    "initBatchSettlement(uint256)",
   ];
 
   let missingCount = 0;

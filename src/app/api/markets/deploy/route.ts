@@ -543,9 +543,17 @@ export async function POST(req: Request) {
     const gaslessEnabled = String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
     const metaAbi = [
       'function metaCreateFuturesMarketDiamond(string,string,uint256,uint256,string,string[],address,(address,uint8,bytes4[])[],address,address,uint256,uint256,bytes) returns (address,bytes32)',
+      'function metaCreateFuturesMarketV2(string,string,uint256,uint256,string,string[],address,address,uint256,uint256,bytes) returns (address,bytes32)',
       'function metaCreateNonce(address) view returns (uint256)',
     ];
-    const factoryAbi = Array.isArray(baseFactoryAbi) ? [...baseFactoryAbi, ...(gaslessEnabled ? metaAbi : [])] : (gaslessEnabled ? metaAbi : baseFactoryAbi);
+    const v2Abi = [
+      'function createFuturesMarketV2(string,string,uint256,uint256,string,string[],address) returns (address,bytes32)',
+      'function facetRegistry() view returns (address)',
+      'function initFacetAddress() view returns (address)',
+    ];
+    const factoryAbi = Array.isArray(baseFactoryAbi)
+      ? [...baseFactoryAbi, ...v2Abi, ...(gaslessEnabled ? metaAbi : [])]
+      : [...v2Abi, ...(gaslessEnabled ? metaAbi : baseFactoryAbi)];
     const factory = new ethers.Contract(factoryAddress, factoryAbi, wallet);
     const factoryIface = new ethers.Interface(factoryAbi);
     const feeRecipient = (body?.feeRecipient && ethers.isAddress(body.feeRecipient)) ? body.feeRecipient : (creatorWalletAddress || ownerAddress);
@@ -917,20 +925,24 @@ export async function POST(req: Request) {
         });
       }
     } else {
-      // ---- LEGACY DIRECT CREATE ----
-      logS('factory_static_call', 'start');
+      // ---- DIRECT CREATE (V2 preferred, fallback to V1) ----
+      // V2 uses DiamondRegistry with FacetRegistry for auto-upgradeable markets
+      const useDirectV2 = body?.v2 !== false; // Default to V2 unless explicitly disabled
+      const factoryMethodDirect = useDirectV2 ? 'createFuturesMarketV2' : 'createFuturesMarketDiamond';
+      const directArgsV2 = [symbol, metricUrl, settlementTs, startPrice6, dataSource, tags, ownerAddress];
+      const directArgsV1 = [...directArgsV2, cutArg, initFacet, '0x'];
+      const directArgs = useDirectV2 ? directArgsV2 : directArgsV1;
+
+      logS('factory_static_call', 'start', { v2: useDirectV2 });
       try {
-        await factory.getFunction('createFuturesMarketDiamond').staticCall(
-          symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-          ownerAddress, cutArg, initFacet, '0x'
-        );
-        logS('factory_static_call', 'success');
+        await factory.getFunction(factoryMethodDirect).staticCall(...directArgs);
+        logS('factory_static_call', 'success', { v2: useDirectV2 });
       } catch (e: any) {
         const { raw, customError, rawData, selector, dug } = handleDeployContractError(
           e, factoryIface, 'static call failed',
         );
         logS('factory_static_call', 'error', {
-          error: raw, customError, selector, rawData,
+          error: raw, customError, selector, rawData, v2: useDirectV2,
           hint: hintForAccessControlRawData(rawData),
           rpcDetail: dug.rpcDetail,
           ethersCode: dug.ethersCode,
@@ -939,30 +951,26 @@ export async function POST(req: Request) {
         return revertJsonBody(400, raw, customError, rawData, dug);
       }
 
-      logS('factory_send_tx', 'start');
+      logS('factory_send_tx', 'start', { v2: useDirectV2 });
       const overrides = await nonceMgr.nextOverrides();
-      const fallbackGasLimitLegacy = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
-      const legacyArgs = [
-        symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-        ownerAddress, cutArg, initFacet, '0x',
-      ];
-      let gasLimitLegacy: bigint;
+      const fallbackGasLimitDirect = BigInt(useDirectV2 ? (process.env.FACTORY_GAS_LIMIT_V2 || '4000000') : (process.env.FACTORY_GAS_LIMIT || '8000000'));
+      let gasLimitDirect: bigint;
       try {
-        const estimated = await factory.getFunction('createFuturesMarketDiamond').estimateGas(...legacyArgs);
-        gasLimitLegacy = (estimated * 130n) / 100n;
-        logS('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimitLegacy) });
+        const estimated = await factory.getFunction(factoryMethodDirect).estimateGas(...directArgs);
+        gasLimitDirect = (estimated * 130n) / 100n;
+        logS('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimitDirect), v2: useDirectV2 });
       } catch {
-        gasLimitLegacy = fallbackGasLimitLegacy;
-        logS('factory_estimate_gas', 'error', { fallback: String(gasLimitLegacy) });
+        gasLimitDirect = fallbackGasLimitDirect;
+        logS('factory_estimate_gas', 'error', { fallback: String(gasLimitDirect), v2: useDirectV2 });
       }
 
-      const gasPriceLegacy = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
-      const requiredBalanceLegacy = gasLimitLegacy * BigInt(gasPriceLegacy);
-      const balanceLegacy = await provider.getBalance(ownerAddress);
-      if (balanceLegacy < requiredBalanceLegacy) {
-        const balEth = ethers.formatEther(balanceLegacy);
-        const reqEth = ethers.formatEther(requiredBalanceLegacy);
-        logS('factory_send_tx', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+      const gasPriceDirect = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+      const requiredBalanceDirect = gasLimitDirect * BigInt(gasPriceDirect);
+      const balanceDirect = await provider.getBalance(ownerAddress);
+      if (balanceDirect < requiredBalanceDirect) {
+        const balEth = ethers.formatEther(balanceDirect);
+        const reqEth = ethers.formatEther(requiredBalanceDirect);
+        logS('factory_send_tx', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress, v2: useDirectV2 });
         return NextResponse.json({
           error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
           wallet: ownerAddress, balance: balEth, required: reqEth,
@@ -970,16 +978,16 @@ export async function POST(req: Request) {
       }
 
       try {
-        tx = await factory.getFunction('createFuturesMarketDiamond')(
-          ...legacyArgs,
-          { ...overrides, gasLimit: gasLimitLegacy } as any
+        tx = await factory.getFunction(factoryMethodDirect)(
+          ...directArgs,
+          { ...overrides, gasLimit: gasLimitDirect } as any
         );
       } catch (e: any) {
         const { raw, customError, rawData, selector, dug } = handleDeployContractError(
           e, factoryIface, 'send tx failed',
         );
         logS('factory_send_tx', 'error', {
-          error: raw, customError, selector, rawData,
+          error: raw, customError, selector, rawData, v2: useDirectV2,
           hint: hintForAccessControlRawData(rawData),
           rpcDetail: dug.rpcDetail,
           ethersCode: dug.ethersCode,
@@ -987,16 +995,14 @@ export async function POST(req: Request) {
         });
         return revertJsonBody(500, raw, customError, rawData, dug);
       }
-      logS('factory_send_tx_sent', 'success', { hash: tx.hash });
-      // Progressive checkpoint: tx hash available
+      logS('factory_send_tx_sent', 'success', { hash: tx.hash, v2: useDirectV2 });
       await checkpointDraft(supabase, draftId, {
         transaction_hash: tx.hash,
-        pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString() } },
+        pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString(), v2: useDirectV2 } },
       });
       logS('factory_confirm', 'start');
       receipt = await tx.wait();
-      logS('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
-      // Progressive checkpoint: block number available
+      logS('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber, v2: useDirectV2 });
       await checkpointDraft(supabase, draftId, {
         block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
         pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },

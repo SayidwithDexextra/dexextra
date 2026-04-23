@@ -2,8 +2,8 @@
 /**
  * Upgrade OBSettlementFacet
  * 
- * Deploys the new OBSettlementFacet with getSettlementRequirements()
- * and updates the FacetRegistry to point to the new implementation.
+ * Deploys the new OBSettlementFacet and updates the FacetRegistry
+ * to point to the new implementation.
  * 
  * Usage:
  *   npx hardhat run scripts/upgrade-settlement-facet.js --network hyperliquid
@@ -108,12 +108,6 @@ async function main() {
   console.log(`  Selectors updated: ${selectors.length}`);
   
   console.log("\n  ✓ FacetRegistry updated - all V2 Diamonds will use new facet.");
-  
-  // Show new function
-  console.log("\n  New function available:");
-  console.log("    getSettlementRequirements() → (positionCount, buyPriceLevels,");
-  console.log("                                   sellPriceLevels, estimatedOrderCount,");
-  console.log("                                   requiresBatchSettlement)");
   
   // Remind to update .env.local
   console.log("\n  📝 Update .env.local with:");

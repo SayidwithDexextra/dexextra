@@ -592,6 +592,16 @@ contract MarketLifecycleFacet {
     }
 
     // === Testing controls (owner-only, safe defaults) ===
+    
+    /**
+     * @notice Toggle dev mode on/off. Owner-only.
+     * @dev When enabled, bypasses settlement timestamp checks for testing.
+     */
+    function setLifecycleDevMode(bool enabled) external onlyOwner {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        s.lifecycleDevMode = enabled;
+    }
+    
     function enableTestingMode(bool enabled) external onlyOwner {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         s.testingMode = enabled;

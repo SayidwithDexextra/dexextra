@@ -1773,6 +1773,21 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   orderType: 'MARKET',
                 }
               }));
+              // Also dispatch TradeExecutionCompleted for market orders since they execute immediately
+              // This triggers mark price refresh in TokenHeader and page.tsx
+              console.log(`[LiveUpdate][dispatch] Market order executed, triggering mark price refresh for ${metricId}`);
+              window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                detail: {
+                  symbol: String(metricId || '').toUpperCase(),
+                  eventType: 'TradeExecutionCompleted',
+                  price: BigInt(Math.round(estimatedPriceForEvent * 1e6)).toString(),
+                  amount: (sizeWei as unknown as bigint)?.toString?.(),
+                  buyer: isBuy ? address : '',
+                  seller: isBuy ? '' : address,
+                  timestamp: now,
+                  source: 'tradingPanel',
+                }
+              }));
             }
           } catch {}
           await refreshOrders();

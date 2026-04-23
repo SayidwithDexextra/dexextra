@@ -113,7 +113,38 @@ function parseRawTrade(t: any): OnChainTrade | null {
   };
 }
 
-export function useAllTrades(orderBookAddress: string | null | undefined) {
+// Helper to parse trade event detail from ordersUpdated events for real-time updates
+function parseTradeFromEvent(detail: any): OnChainTrade | null {
+  if (!detail) return null;
+  
+  const eventType = String(detail.eventType || '');
+  if (eventType !== 'TradeExecutionCompleted' && eventType !== 'trade') return null;
+  
+  try {
+    const price = detail.price ? Number(detail.price) / 1e6 : 0;
+    const amount = detail.amount ? Number(detail.amount) / 1e18 : 0;
+    const timestamp = detail.timestamp ? Math.floor(detail.timestamp / 1000) : Math.floor(Date.now() / 1000);
+    const tradeValue = price * amount;
+    
+    if (price <= 0 || amount <= 0) return null;
+    
+    return {
+      tradeId: `rt-${Date.now()}`,
+      buyer: detail.buyer || '',
+      seller: detail.seller || '',
+      price,
+      amount,
+      timestamp,
+      tradeValue,
+      buyerFee: 0,
+      sellerFee: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function useAllTrades(orderBookAddress: string | null | undefined, marketSymbol?: string) {
   const [trades, setTrades] = useState<OnChainTrade[]>([]);
   const [stats, setStats] = useState<TradeStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -252,6 +283,55 @@ export function useAllTrades(orderBookAddress: string | null | undefined) {
   const deactivate = useCallback(() => {
     setActive(false);
   }, []);
+
+  // Listen for real-time trade events and add them to the list optimistically
+  useEffect(() => {
+    if (!active || !marketSymbol || typeof window === 'undefined') return;
+    
+    const handleOrdersUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail) return;
+      
+      // Check if this event is for our market
+      const eventSymbol = String(detail.symbol || '').toUpperCase();
+      const ourSymbol = marketSymbol.toUpperCase();
+      if (eventSymbol !== ourSymbol) return;
+      
+      // Try to parse the trade from the event
+      const trade = parseTradeFromEvent(detail);
+      if (!trade) return;
+      
+      // Add trade to the beginning of the list (newest first)
+      setTrades(prev => {
+        // Avoid duplicates by checking tradeId prefix
+        if (prev.some(t => t.tradeId === trade.tradeId || t.tradeId.startsWith('rt-'))) {
+          // Check if we already have a recent real-time trade at the same price/amount
+          const duplicate = prev.find(
+            t => t.tradeId.startsWith('rt-') && 
+                 Math.abs(t.price - trade.price) < 0.0001 && 
+                 Math.abs(t.amount - trade.amount) < 0.0001
+          );
+          if (duplicate) return prev;
+        }
+        return [trade, ...prev];
+      });
+      
+      // Optimistically update stats
+      setStats(prev => {
+        if (!prev) return { totalTrades: 1, totalVolume: trade.tradeValue, totalFees: 0 };
+        return {
+          ...prev,
+          totalTrades: prev.totalTrades + 1,
+          totalVolume: prev.totalVolume + trade.tradeValue,
+        };
+      });
+      
+      console.log('[useAllTrades] Real-time trade added:', { symbol: eventSymbol, price: trade.price, amount: trade.amount });
+    };
+    
+    window.addEventListener('ordersUpdated', handleOrdersUpdated as EventListener);
+    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated as EventListener);
+  }, [active, marketSymbol]);
 
   return {
     trades,

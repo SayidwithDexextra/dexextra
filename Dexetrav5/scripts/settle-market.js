@@ -374,27 +374,6 @@ async function main() {
     logWarn("OBBatchSettlementFacet not installed - only regular settlement available");
   }
   
-  // Get settlement requirements
-  banner("SETTLEMENT ANALYSIS", c.blue);
-  
-  let requirements;
-  try {
-    requirements = await obSettlement.getSettlementRequirements();
-    logInfo(`Positions: ${requirements.positionCount}`);
-    logInfo(`Buy price levels: ${requirements.buyPriceLevels}`);
-    logInfo(`Sell price levels: ${requirements.sellPriceLevels}`);
-    logInfo(`Estimated orders: ${requirements.estimatedOrderCount}`);
-    
-    if (requirements.requiresBatchSettlement) {
-      logWarn("Market size suggests BATCH SETTLEMENT is required");
-    } else {
-      logSuccess("Market size allows REGULAR SETTLEMENT");
-    }
-  } catch (e) {
-    logWarn("Could not get settlement requirements (older facet version)");
-    requirements = { requiresBatchSettlement: false };
-  }
-  
   // Get settlement price
   const priceInput = await ask(`\n${c.cyan}  Enter settlement price (USD, e.g. 2600): ${c.reset}`);
   const finalPrice = ethers.parseUnits(priceInput, 6);
@@ -407,65 +386,53 @@ async function main() {
   
   logInfo(`Settlement price: $${priceInput}`);
   
-  // Determine settlement method
-  let useBatch = requirements.requiresBatchSettlement;
+  // Try regular settlement first
+  banner("ATTEMPTING REGULAR SETTLEMENT", c.yellow);
+  logInfo(`Gas limit: ${CONFIG.REGULAR_SETTLEMENT_GAS.toLocaleString()}`);
   
-  if (!useBatch) {
-    // Try regular settlement first
-    banner("ATTEMPTING REGULAR SETTLEMENT", c.yellow);
-    
-    const result = await tryRegularSettlement(obSettlement, finalPrice, CONFIG.REGULAR_SETTLEMENT_GAS);
-    
-    if (result.success) {
-      banner("SETTLEMENT COMPLETE", c.green);
-      logSuccess(`Market settled in single transaction`);
-      logInfo(`Transaction: ${result.txHash}`);
-      logInfo(`Gas used: ${result.gasUsed.toLocaleString()}`);
-      rl.close();
-      return;
-    }
-    
-    // Regular settlement failed
-    logWarn(`Regular settlement failed: ${result.reason}`);
-    if (result.error) logInfo(`Error: ${result.error}`);
-    
-    if (!obBatchSettlement) {
-      logError("Batch settlement not available - cannot proceed");
-      rl.close();
-      return;
-    }
-    
-    const fallback = await ask(`\n${c.yellow}  Fall back to batch settlement? (yes/no): ${c.reset}`);
-    if (fallback.toLowerCase() !== 'yes') {
-      log("  Aborted.", c.red);
-      rl.close();
-      return;
-    }
-    
-    useBatch = true;
+  const result = await tryRegularSettlement(obSettlement, finalPrice, CONFIG.REGULAR_SETTLEMENT_GAS);
+  
+  if (result.success) {
+    banner("SETTLEMENT COMPLETE", c.green);
+    logSuccess(`Market settled in single transaction`);
+    logInfo(`Transaction: ${result.txHash}`);
+    logInfo(`Gas used: ${result.gasUsed.toLocaleString()}`);
+    rl.close();
+    return;
+  }
+  
+  // Regular settlement failed - offer batch fallback
+  logWarn(`Regular settlement failed: ${result.reason}`);
+  if (result.estimatedGas) logInfo(`Estimated gas: ${result.estimatedGas.toLocaleString()}`);
+  if (result.error) logInfo(`Error: ${result.error}`);
+  
+  if (!obBatchSettlement) {
+    logError("Batch settlement not available - cannot proceed");
+    logInfo("The OBBatchSettlementFacet needs to be installed on this market.");
+    rl.close();
+    return;
+  }
+  
+  const fallback = await ask(`\n${c.yellow}  Fall back to batch settlement? (yes/no): ${c.reset}`);
+  if (fallback.toLowerCase() !== 'yes') {
+    log("  Aborted.", c.red);
+    rl.close();
+    return;
   }
   
   // Run batch settlement
-  if (useBatch) {
-    if (!obBatchSettlement) {
-      logError("Batch settlement facet not installed!");
-      rl.close();
-      return;
-    }
-    
-    banner("RUNNING BATCH SETTLEMENT", c.magenta);
-    
-    const result = await runBatchSettlement(obBatchSettlement, obSettlement, finalPrice);
-    
-    if (result.success) {
-      banner("BATCH SETTLEMENT COMPLETE", c.green);
-      logSuccess(`Market settled successfully`);
-      logInfo(`Total transactions: ${result.txCount}`);
-      logInfo(`Total gas used: ${result.totalGas.toLocaleString()}`);
-      logInfo(`Duration: ${result.duration} seconds`);
-    } else {
-      logError("Batch settlement failed");
-    }
+  banner("RUNNING BATCH SETTLEMENT", c.magenta);
+  
+  const batchResult = await runBatchSettlement(obBatchSettlement, obSettlement, finalPrice);
+  
+  if (batchResult.success) {
+    banner("BATCH SETTLEMENT COMPLETE", c.green);
+    logSuccess(`Market settled successfully`);
+    logInfo(`Total transactions: ${batchResult.txCount}`);
+    logInfo(`Total gas used: ${batchResult.totalGas.toLocaleString()}`);
+    logInfo(`Duration: ${batchResult.duration} seconds`);
+  } else {
+    logError("Batch settlement failed");
   }
   
   // Verify final state

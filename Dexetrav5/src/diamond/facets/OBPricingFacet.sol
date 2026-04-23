@@ -40,11 +40,12 @@ contract OBPricingFacet {
         returns (uint256[] memory bidPrices, uint256[] memory bidAmounts, uint256[] memory askPrices, uint256[] memory askAmounts)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        // Bids: walk from bestBid downward
+        // Bids: walk from buyPriceHead (linked list head) downward
+        // NOTE: Use buyPriceHead instead of bestBid - bestBid may not be connected to linked list
         uint256[] memory tmpBidPrices = new uint256[](levels);
         uint256[] memory tmpBidAmounts = new uint256[](levels);
         uint256 bCount = 0;
-        uint256 p = s.bestBid;
+        uint256 p = s.buyPriceHead;
         while (bCount < levels && p != 0) {
             OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p];
             if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
@@ -58,11 +59,12 @@ contract OBPricingFacet {
         bidAmounts = new uint256[](bCount);
         for (uint256 i = 0; i < bCount; i++) { bidPrices[i] = tmpBidPrices[i]; bidAmounts[i] = tmpBidAmounts[i]; }
 
-        // Asks: walk from bestAsk upward
+        // Asks: walk from sellPriceHead (linked list head) upward
+        // NOTE: Use sellPriceHead instead of bestAsk - bestAsk may not be connected to linked list
         uint256[] memory tmpAskPrices = new uint256[](levels);
         uint256[] memory tmpAskAmounts = new uint256[](levels);
         uint256 aCount = 0;
-        uint256 p2 = s.bestAsk;
+        uint256 p2 = s.sellPriceHead;
         while (aCount < levels && p2 != 0) {
             OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2];
             if (lvl2.exists && lvl2.totalAmount > 0 && lvl2.firstOrderId != 0) {

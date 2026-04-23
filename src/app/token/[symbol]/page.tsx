@@ -346,7 +346,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     
     const fetchMarkPriceOnEvent = async () => {
       const now = Date.now();
-      if (now - lastEventRefreshRef.current < 500) return;
+      if (now - lastEventRefreshRef.current < 500) {
+        console.log(`[LiveUpdate][page] Debounced, last fetch was ${now - lastEventRefreshRef.current}ms ago`);
+        return;
+      }
       lastEventRefreshRef.current = now;
       
       const obAddr =
@@ -354,7 +357,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         ((md.market as any)?.market_address as string | null) ||
         null;
       
-      if (!obAddr || typeof obAddr !== 'string' || !obAddr.startsWith('0x') || obAddr.length !== 42) return;
+      console.log(`[LiveUpdate][page] orderBookAddress=${obAddr || 'null'} for ${symUpper}`);
+      if (!obAddr || typeof obAddr !== 'string' || !obAddr.startsWith('0x') || obAddr.length !== 42) {
+        console.log(`[LiveUpdate][page] Invalid orderBookAddress, skipping fetch`);
+        return;
+      }
       
       const ORDERBOOK_ABI = [
         { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
@@ -372,10 +379,13 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         const OB_DEFAULT = 1.0;
         
         if (Number.isFinite(ob) && ob > 0 && Math.abs(ob - OB_DEFAULT) > 0.0001) {
+          console.log(`[LiveUpdate][${ob.toFixed(4)}] Setting liveMarkPrice for ${symUpper}`);
           setLiveMarkPrice(ob);
+        } else {
+          console.log(`[LiveUpdate][page] Price invalid or default: ob=${ob}`);
         }
-      } catch {
-        // Silently fail - next event will retry
+      } catch (err) {
+        console.error(`[LiveUpdate][page] fetchMarkPriceOnEvent error:`, err);
       }
     };
     
@@ -393,21 +403,43 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       } catch {}
     };
     
+    // Uses 5-second trailing debounce for OrderPlaced/OrderRested to avoid RPC flooding
+    const DEBOUNCE_MS = 5000;
     const handleOrderEvent = (e: Event) => {
       try {
         const detail = (e as CustomEvent).detail;
         if (!detail) return;
         const eventSymbol = String(detail.symbol || '').toUpperCase();
-        if (eventSymbol !== symUpper) return;
-        
         const eventType = String(detail.eventType || '');
+        console.log(`[LiveUpdate][page] Received ordersUpdated: eventSymbol=${eventSymbol} mySymbol=${symUpper} eventType=${eventType}`);
+        if (eventSymbol !== symUpper) {
+          return;
+        }
+        
+        // Trades - fetch with short delay since price definitely changed
         if (eventType === 'TradeExecutionCompleted') {
+          console.log(`[LiveUpdate][page] Trade event, scheduling immediate fetch`);
           if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
           eventRefreshTimeoutRef.current = setTimeout(() => {
+            console.log(`[LiveUpdate][page] Fetching mark price for ${symUpper}`);
             void fetchMarkPriceOnEvent();
           }, 150);
+          return;
         }
-      } catch {}
+        
+        // OrderPlaced/OrderRested - use 5-second trailing debounce
+        // Each new event resets the timer; fetch only after 5s of quiet
+        if (eventType === 'OrderPlaced' || eventType === 'OrderRested') {
+          console.log(`[LiveUpdate][page] Reset 5s timer for ${symUpper} (${eventType})`);
+          if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+          eventRefreshTimeoutRef.current = setTimeout(() => {
+            console.log(`[LiveUpdate][page] 5s quiet, fetching mark price for ${symUpper}`);
+            void fetchMarkPriceOnEvent();
+          }, DEBOUNCE_MS);
+        }
+      } catch (err) {
+        console.error('[LiveUpdate][page] handleOrderEvent error:', err);
+      }
     };
 
     if (typeof window !== 'undefined') {

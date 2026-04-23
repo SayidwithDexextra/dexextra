@@ -516,7 +516,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const fetchMarkPriceOnEvent = async () => {
       const now = Date.now();
       // Debounce rapid events (e.g., multiple fills in same block)
-      if (now - lastEventRefreshRef.current < 500) return;
+      if (now - lastEventRefreshRef.current < 500) {
+        console.log(`[LiveUpdate][debounce] Skipping fetch, last refresh was ${now - lastEventRefreshRef.current}ms ago`);
+        return;
+      }
       lastEventRefreshRef.current = now;
       
       const orderBookAddressCandidate =
@@ -531,7 +534,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           ? (orderBookAddressCandidate as Address)
           : null;
       
-      if (!orderBookAddress) return;
+      console.log(`[LiveUpdate][fetch] orderBookAddress=${orderBookAddress || 'null'} for ${symbolUpper}`);
+      if (!orderBookAddress) {
+        console.log(`[LiveUpdate][skip] No orderBookAddress available`);
+        return;
+      }
       
       const ORDERBOOK_ABI = [
         { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
@@ -569,6 +576,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             const vault = Number(vaultRaw) / 1e6;
             if (Number.isFinite(vault) && vault > 0) {
+              console.log(`[LiveUpdate][${vault.toFixed(4)}] Setting mark price from CoreVault for ${symbolUpper}`);
               setEffectiveMarkPrice(vault);
               setCoreVaultMarkPrice(vault);
               setMarkPricesLoading(false);
@@ -578,12 +586,15 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         }
         
         if (Number.isFinite(ob) && ob > 0 && obRaw !== OB_DEFAULT_RAW) {
+          console.log(`[LiveUpdate][${ob.toFixed(4)}] Setting mark price from OrderBook for ${symbolUpper}`);
           setEffectiveMarkPrice(ob);
           setOrderBookMarkPrice(ob);
           setMarkPricesLoading(false);
+        } else {
+          console.log(`[LiveUpdate][skip] OB price invalid or default: ob=${ob} obRaw=${obRaw}`);
         }
       } catch (e) {
-        // Silently fail - we'll get the price on the next event
+        console.error(`[LiveUpdate][error] fetchMarkPriceOnEvent failed:`, e);
       }
     };
     
@@ -604,23 +615,43 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
     
     // Handler for order events (orderbook changed, may affect mark price)
+    // Uses 5-second trailing debounce for OrderPlaced/OrderRested to avoid RPC flooding
+    const DEBOUNCE_MS = 5000;
     const handleOrderEvent = (e: Event) => {
       try {
         const detail = (e as CustomEvent).detail;
         if (!detail) return;
         const eventSymbol = String(detail.symbol || '').toUpperCase();
-        if (eventSymbol !== symbolUpper) return;
-        
-        // Trades dispatched via ordersUpdated have eventType TradeExecutionCompleted
         const eventType = String(detail.eventType || '');
+        console.log(`[LiveUpdate][received] eventSymbol=${eventSymbol} mySymbol=${symbolUpper} eventType=${eventType}`);
+        if (eventSymbol !== symbolUpper) {
+          return;
+        }
+        
+        // Trades - fetch with short delay since price definitely changed
         if (eventType === 'TradeExecutionCompleted') {
-          // This is a trade, refresh mark price
+          console.log(`[LiveUpdate][trade] Scheduling immediate mark price refresh for ${symbolUpper}`);
           if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
           eventRefreshTimeoutRef.current = setTimeout(() => {
+            console.log(`[LiveUpdate][fetch] Fetching mark price for ${symbolUpper}`);
             void fetchMarkPriceOnEvent();
           }, 150);
+          return;
         }
-      } catch {}
+        
+        // OrderPlaced/OrderRested - use 5-second trailing debounce
+        // Each new event resets the timer; fetch only after 5s of quiet
+        if (eventType === 'OrderPlaced' || eventType === 'OrderRested') {
+          console.log(`[LiveUpdate][debounce] Reset 5s timer for ${symbolUpper} (${eventType})`);
+          if (eventRefreshTimeoutRef.current) clearTimeout(eventRefreshTimeoutRef.current);
+          eventRefreshTimeoutRef.current = setTimeout(() => {
+            console.log(`[LiveUpdate][fetch-after-debounce] 5s quiet, fetching mark price for ${symbolUpper}`);
+            void fetchMarkPriceOnEvent();
+          }, DEBOUNCE_MS);
+        }
+      } catch (err) {
+        console.error('[LiveUpdate][error] handleOrderEvent:', err);
+      }
     };
 
     if (typeof window !== 'undefined') {

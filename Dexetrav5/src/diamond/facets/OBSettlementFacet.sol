@@ -26,6 +26,26 @@ contract OBSettlementFacet {
         return abi.decode(data, (bool));
     }
 
+    /// @dev Check if we've reached the settlement timestamp (or dev mode is enabled).
+    ///      Returns true if no lifecycle is configured (backwards compatible).
+    function _isPastSettlementTimestamp() private view returns (bool) {
+        // Check if dev mode is enabled - bypass timestamp check for testing
+        (bool devOk, bytes memory devData) = address(this).staticcall(
+            abi.encodeWithSignature("isLifecycleDevMode()")
+        );
+        if (devOk && devData.length >= 32 && abi.decode(devData, (bool))) {
+            return true; // Dev mode bypasses timestamp check
+        }
+        
+        (bool ok, bytes memory data) = address(this).staticcall(
+            abi.encodeWithSignature("getSettlementTimestamp()")
+        );
+        if (!ok || data.length < 32) return true; // If no lifecycle, allow settlement
+        uint256 settlementTs = abi.decode(data, (uint256));
+        if (settlementTs == 0) return true; // If not set, allow settlement
+        return block.timestamp >= settlementTs;
+    }
+
     /**
      * @dev Settle this order book's market at the provided final price.
      *      Oracle-agnostic: price is provided by caller.
@@ -33,6 +53,7 @@ contract OBSettlementFacet {
      */
     function settleMarket(uint256 finalPrice) external {
         require(finalPrice > 0, "OB: !price");
+        require(_isPastSettlementTimestamp(), "OB: before settlement time");
         require(!_isInChallengeWindow(), "OB: challenge window active");
         OrderBookStorage.State storage s = OrderBookStorage.state();
         // 1) Cancel all resting orders and release their reserved margin before settlement
@@ -107,35 +128,6 @@ contract OBSettlementFacet {
     function isSettled() external view returns (bool) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         return s.vault.marketSettled(s.marketId);
-    }
-
-    /**
-     * @notice Get market settlement requirements to determine if batch settlement is needed.
-     * @return positionCount Number of positions in this market
-     * @return buyPriceLevels Number of buy price levels with orders
-     * @return sellPriceLevels Number of sell price levels with orders
-     * @return estimatedOrderCount Rough estimate of total orders (price levels as proxy)
-     * @return requiresBatchSettlement True if market likely exceeds single-tx gas limits
-     */
-    function getSettlementRequirements() external view returns (
-        uint256 positionCount,
-        uint256 buyPriceLevels,
-        uint256 sellPriceLevels,
-        uint256 estimatedOrderCount,
-        bool requiresBatchSettlement
-    ) {
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        
-        positionCount = s.vault.getMarketPositionUserCount(s.marketId);
-        buyPriceLevels = s.buyPrices.length;
-        sellPriceLevels = s.sellPrices.length;
-        estimatedOrderCount = buyPriceLevels + sellPriceLevels;
-        
-        // Heuristic: batch settlement recommended if:
-        // - More than 50 positions, OR
-        // - More than 100 price levels (proxy for order count)
-        // These thresholds are conservative for ~30M gas limit
-        requiresBatchSettlement = (positionCount > 50) || (estimatedOrderCount > 100);
     }
 }
 
