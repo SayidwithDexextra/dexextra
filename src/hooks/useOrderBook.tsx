@@ -79,12 +79,25 @@ export interface TradeHistoryItem {
   orderBookAddress?: Address;
 }
 
+export interface GasFeeConfig {
+  hypeUsdcRate6: bigint;
+  maxGasFee6: bigint;
+  gasEstimate: bigint;
+}
+
+export const DEFAULT_GAS_FEE_CONFIG: GasFeeConfig = {
+  hypeUsdcRate6: 0n,
+  maxGasFee6: 0n,
+  gasEstimate: 2_000_000n,
+};
+
 export interface MarketParams {
   takerFeeBps: number;
   makerFeeBps: number;
   marginReqBps: number;
   maxLeverage: number;
   leverageEnabled: boolean;
+  gasFeeConfig: GasFeeConfig;
 }
 
 export const DEFAULT_MARKET_PARAMS: MarketParams = {
@@ -93,7 +106,25 @@ export const DEFAULT_MARKET_PARAMS: MarketParams = {
   marginReqBps: 10000,
   maxLeverage: 1,
   leverageEnabled: false,
+  gasFeeConfig: DEFAULT_GAS_FEE_CONFIG,
 };
+
+export function estimateGasFeeUsdc(
+  gasFeeConfig: GasFeeConfig,
+  gasPriceWei: bigint
+): number {
+  if (gasFeeConfig.hypeUsdcRate6 === 0n) {
+    return 0;
+  }
+  // Use gasEstimate from config, fallback to 2M if not set
+  const gasEstimate = gasFeeConfig.gasEstimate > 0n ? gasFeeConfig.gasEstimate : 2_000_000n;
+  const gasCostWei = gasEstimate * gasPriceWei;
+  let gasFee6 = (gasCostWei * gasFeeConfig.hypeUsdcRate6) / BigInt(1e18);
+  if (gasFeeConfig.maxGasFee6 > 0n && gasFee6 > gasFeeConfig.maxGasFee6) {
+    gasFee6 = gasFeeConfig.maxGasFee6;
+  }
+  return Number(gasFee6) / 1e6;
+}
 
 export interface OrderBookState {
   bestBid: number;
@@ -674,6 +705,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           fetchedMarketParams.marginReqBps = mr > 0 ? mr : 10000;
         } catch (e) {
           console.warn('[ALTKN] ⚠️ getLeverageInfo unavailable, using defaults', e);
+        }
+        try {
+          const [hypeUsdcRate6, maxGasFee6, gasEstimate] = await contracts.obView.getGasFeeConfig();
+          fetchedMarketParams.gasFeeConfig = {
+            hypeUsdcRate6: BigInt(hypeUsdcRate6),
+            maxGasFee6: BigInt(maxGasFee6),
+            gasEstimate: BigInt(gasEstimate),
+          };
+        } catch (e) {
+          console.warn('[ALTKN] getGasFeeConfig unavailable, using defaults', e);
+          fetchedMarketParams.gasFeeConfig = DEFAULT_GAS_FEE_CONFIG;
         }
 
         console.log(`[ALTKN] 📊 [RPC] OrderBook market data fetch complete for ${marketId}`, {

@@ -11,6 +11,8 @@ export const preferredRegion = 'iad1'
 //   uint256 price, uint256 amount, uint256 buyerFee, uint256 sellerFee, uint256 timestamp, uint256 liquidationPrice)
 const TRADE_RECORDED_TOPIC = '0x728bed593a905dc538dfce2542eb359251213509bd5f44012a2fc977c3e48fac'
 const FEE_STRUCTURE_UPDATED_TOPIC = '0xb678e9191cf9254064a297a28478e1d3fcbc1dd3ec4b77edca977ce85865aab3'
+// GasFeeCharged(address indexed taker, uint256 gasFee6)
+const GAS_FEE_CHARGED_TOPIC = '0x95dd1fba19e5d11cbff10700ef6ff002447732569cbebb02c3c2b0ee4b568409'
 
 const TRADE_RECORDED_ABI = [
   'event TradeRecorded(bytes32 indexed marketId, address indexed buyer, address indexed seller, uint256 price, uint256 amount, uint256 buyerFee, uint256 sellerFee, uint256 timestamp, uint256 liquidationPrice)'
@@ -18,9 +20,13 @@ const TRADE_RECORDED_ABI = [
 const FEE_STRUCTURE_UPDATED_ABI = [
   'event FeeStructureUpdated(uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps)'
 ]
+const GAS_FEE_CHARGED_ABI = [
+  'event GasFeeCharged(address indexed taker, uint256 gasFee6)'
+]
 
 const tradeIface = new ethers.Interface(TRADE_RECORDED_ABI)
 const feeStructIface = new ethers.Interface(FEE_STRUCTURE_UPDATED_ABI)
+const gasFeeIface = new ethers.Interface(GAS_FEE_CHARGED_ABI)
 
 const processedSet = new Set<string>()
 const MAX_PROCESSED = 50_000
@@ -84,15 +90,33 @@ function determineTakerMaker(
   sellerFee: bigint,
   _config: FeeConfig | undefined
 ): { buyerRole: 'taker' | 'maker'; sellerRole: 'taker' | 'maker' } {
-  // Taker always pays the higher fee (0.045%) vs maker (0.015%).
-  // Compare the raw fee amounts directly — no config needed.
+  // IMPORTANT: In batch execution (obExecuteTradeBatch), the taker's fee is aggregated
+  // and charged ONCE at the end, so individual TradeRecorded events show taker fee = 0.
+  // The maker's fee is recorded per-match and is > 0.
+  //
+  // So if one fee is 0 and the other is > 0:
+  //   - The party with fee = 0 is the TAKER (fee aggregated elsewhere)
+  //   - The party with fee > 0 is the MAKER
+  //
+  // If both fees are > 0 (single trade via obExecuteTrade):
+  //   - Higher fee = taker (takerFeeBps > makerFeeBps)
+
+  if (buyerFee === 0n && sellerFee > 0n) {
+    // Buyer fee = 0 → buyer is taker (fee aggregated), seller is maker
+    return { buyerRole: 'taker', sellerRole: 'maker' }
+  }
+  if (sellerFee === 0n && buyerFee > 0n) {
+    // Seller fee = 0 → seller is taker (fee aggregated), buyer is maker
+    return { buyerRole: 'maker', sellerRole: 'taker' }
+  }
+  // Both have fees (single trade mode) → higher fee = taker
   if (buyerFee > sellerFee) {
     return { buyerRole: 'taker', sellerRole: 'maker' }
   }
   if (sellerFee > buyerFee) {
     return { buyerRole: 'maker', sellerRole: 'taker' }
   }
-  // Equal fees (legacy flat-fee mode or identical amounts): default buyer as taker
+  // Equal fees (legacy flat-fee mode): default buyer as taker
   return { buyerRole: 'taker', sellerRole: 'maker' }
 }
 
@@ -134,11 +158,22 @@ async function processTradeRecordedLog(
   const buyerFee = parsed.args[5] as bigint
   const sellerFee = parsed.args[6] as bigint
 
-  console.log(`[fees] TradeRecorded parsed → buyer=${buyer} seller=${seller} price=${price} amount=${amount} buyerFee=${buyerFee} sellerFee=${sellerFee} marketId=${marketIdBytes32.slice(0, 18)}…`)
+  const { buyerRole, sellerRole } = determineTakerMaker(buyerFee, sellerFee, undefined)
+  
+  console.log(`[fees] TradeRecorded parsed:`)
+  console.log(`[fees]   buyer=${buyer} (${buyerRole}) fee=${buyerFee}`)
+  console.log(`[fees]   seller=${seller} (${sellerRole}) fee=${sellerFee}`)
+  console.log(`[fees]   price=${price} amount=${amount} marketId=${marketIdBytes32.slice(0, 18)}…`)
 
   if (buyerFee === 0n && sellerFee === 0n) {
     console.log('[fees]   Both fees are 0 — skipping')
     return 0
+  }
+  
+  // Note: In batch trades (obExecuteTradeBatch), taker's fee shows as 0 because it's
+  // aggregated and charged once at the end. We can only record maker's fee per-match.
+  if (buyerFee === 0n || sellerFee === 0n) {
+    console.log(`[fees]   Batch trade detected (one fee is 0) — only recording maker fee`)
   }
 
   const contractAddress = log.address.toLowerCase()
@@ -159,8 +194,6 @@ async function processTradeRecordedLog(
   const protocolRecipient = config?.protocolFeeRecipient
     ?? ((process.env.PROTOCOL_FEE_RECIPIENT || process.env.NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '').toLowerCase() || null)
   const marketOwner = market?.creator_wallet_address ?? null
-
-  const { buyerRole, sellerRole } = determineTakerMaker(buyerFee, sellerFee, config)
 
   const rows: any[] = []
 
@@ -249,6 +282,85 @@ function processFeeStructureUpdatedLog(log: StandardLog) {
   } catch (e: any) {
     console.error('[fees] Failed to parse FeeStructureUpdated:', e?.message)
   }
+}
+
+async function processGasFeeChargedLog(
+  log: StandardLog,
+  sb: ReturnType<typeof createSbClient>
+): Promise<number> {
+  const parsed = gasFeeIface.parseLog({ topics: log.topics, data: log.data })
+  if (!parsed) return 0
+
+  const taker = (parsed.args[0] as string).toLowerCase()  // indexed
+  const gasFee6 = parsed.args[1] as bigint
+
+  console.log(`[fees] GasFeeCharged parsed: taker=${taker} gasFee6=${gasFee6}`)
+
+  if (gasFee6 === 0n) {
+    console.log('[fees]   Gas fee is 0 — skipping')
+    return 0
+  }
+
+  const contractAddress = log.address.toLowerCase()
+  const blockNumber = normalizeBlockNumber(log.blockNumber)
+  const txHash = log.transactionHash
+
+  // Resolve market
+  const market = await resolveMarket(sb, contractAddress)
+  const marketId = market?.symbol || contractAddress.slice(0, 18)
+
+  // Fee config for protocol share
+  const config = feeConfigCache.get(contractAddress)
+  const protocolShareBps = config?.protocolFeeShareBps ?? 8000
+  const protocolRecipient = config?.protocolFeeRecipient
+    ?? ((process.env.PROTOCOL_FEE_RECIPIENT || process.env.NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '').toLowerCase() || null)
+  const marketOwner = market?.creator_wallet_address ?? null
+
+  const logIdx = typeof log.logIndex === 'string'
+    ? (log.logIndex.startsWith('0x') ? parseInt(log.logIndex, 16) : parseInt(log.logIndex, 10))
+    : (log.logIndex ?? 0)
+  // Use a different trade_id scheme for gas fees to avoid conflicts
+  // Prefix with 9 to distinguish from regular trade fees
+  const syntheticTradeId = 900000000 + blockNumber * 100 + logIdx
+
+  const gasFeeUsdc = Number(gasFee6) / 1e6
+  const { protocol, owner } = splitFee(gasFeeUsdc, protocolShareBps)
+
+  const row = {
+    market_id: marketId,
+    market_address: contractAddress,
+    trade_id: syntheticTradeId,
+    trade_price: '0',  // No price for gas fees
+    trade_amount: '0', // No amount for gas fees
+    trade_notional: 0,
+    tx_hash: txHash,
+    block_number: blockNumber,
+    chain_id: 999,
+    protocol_fee_recipient: protocolRecipient,
+    market_owner_address: marketOwner,
+    user_address: taker,
+    fee_role: 'gas_fee',  // Special role for gas fees
+    fee_amount: ethers.formatUnits(gasFee6, 6),
+    fee_amount_usdc: gasFeeUsdc,
+    protocol_share: protocol,
+    owner_share: owner,
+    counterparty_address: null,  // No counterparty for gas fees
+  }
+
+  console.log(`[fees]   Upserting gas fee row:`, JSON.stringify({ user: row.user_address, role: row.fee_role, fee_usdc: row.fee_amount_usdc, market: row.market_id }))
+  
+  const { error } = await sb.from('trading_fees').upsert([row], {
+    onConflict: 'market_address,trade_id,user_address,fee_role',
+    ignoreDuplicates: true,
+  })
+  
+  if (error) {
+    console.error('[fees] Supabase insert error for gas fee:', error.message, error.details, error.hint)
+    return 0
+  }
+  
+  console.log(`[fees]   Gas fee upsert successful`)
+  return 1
 }
 
 function extractLogs(webhookData: any): StandardLog[] {
@@ -362,6 +474,18 @@ export async function POST(request: NextRequest) {
         } catch (e: any) {
           console.error(`[fees] Failed to process TradeRecorded: ${e?.message}`)
         }
+        continue
+      }
+
+      if (topic0 === GAS_FEE_CHARGED_TOPIC) {
+        try {
+          const count = await processGasFeeChargedLog(log, sb)
+          inserted += count
+          processedSet.add(eventId)
+        } catch (e: any) {
+          console.error(`[fees] Failed to process GasFeeCharged: ${e?.message}`)
+        }
+        continue
       }
     }
 
@@ -394,9 +518,10 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: 'healthy',
-    description: 'Trading fee ingestion webhook for TradeRecorded + FeeStructureUpdated events',
+    description: 'Trading fee ingestion webhook for TradeRecorded, GasFeeCharged + FeeStructureUpdated events',
     topics: {
       TradeRecorded: TRADE_RECORDED_TOPIC,
+      GasFeeCharged: GAS_FEE_CHARGED_TOPIC,
       FeeStructureUpdated: FEE_STRUCTURE_UPDATED_TOPIC,
     },
     processedCount: processedSet.size,

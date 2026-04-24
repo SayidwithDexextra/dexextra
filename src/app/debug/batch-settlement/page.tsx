@@ -37,10 +37,32 @@ interface SettlementResult {
     batches?: number;
     gasUsed?: string;
     error?: string;
+    txHash?: string;
+    txHashes?: string[];
   }>;
   settlementPrice?: string;
   alreadySettled?: boolean;
   error?: string;
+  txHash?: string;
+}
+
+interface StreamEvent {
+  type: 'phase_start' | 'tx' | 'batch_tx' | 'phase_complete' | 'error' | 'complete' | 'info';
+  phase?: string;
+  txHash?: string;
+  batchNum?: number;
+  totalBatches?: number;
+  gasUsed?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+interface LiveTransaction {
+  phase: string;
+  txHash: string;
+  batchNum?: number;
+  gasUsed?: string;
+  timestamp: number;
 }
 
 const PHASE_NAMES: Record<number, string> = {
@@ -52,12 +74,35 @@ const PHASE_NAMES: Record<number, string> = {
   5: 'Complete',
 };
 
+const PHASE_DISPLAY_NAMES: Record<string, string> = {
+  dev_mode: 'Dev Mode',
+  init: 'Initialize',
+  regular: 'Regular Settlement',
+  cancel_buy_orders: 'Cancel Buy Orders',
+  cancel_sell_orders: 'Cancel Sell Orders',
+  calculate_totals: 'Calculate Totals',
+  finalize_haircut: 'Finalize Haircut',
+  apply_settlements: 'Apply Settlements',
+  complete: 'Complete',
+};
+
+const PHASE_COLORS: Record<string, string> = {
+  dev_mode: 'text-purple-400',
+  init: 'text-blue-400',
+  regular: 'text-cyan-400',
+  cancel_buy_orders: 'text-orange-400',
+  cancel_sell_orders: 'text-orange-400',
+  calculate_totals: 'text-yellow-400',
+  finalize_haircut: 'text-pink-400',
+  apply_settlements: 'text-green-400',
+  complete: 'text-emerald-400',
+};
+
 export default function BatchSettlementPage() {
   const debugEnabled =
     process.env.NODE_ENV !== 'production' ||
     String(process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES || '').toLowerCase() === 'true';
 
-  const [adminSecret, setAdminSecret] = React.useState('');
   const [markets, setMarkets] = React.useState<Market[]>([]);
   const [selectedMarket, setSelectedMarket] = React.useState<Market | null>(null);
   const [status, setStatus] = React.useState<SettlementStatus | null>(null);
@@ -67,12 +112,26 @@ export default function BatchSettlementPage() {
   const [loadingMarkets, setLoadingMarkets] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   
+  // Live streaming state
+  const [currentPhase, setCurrentPhase] = React.useState<string | null>(null);
+  const [liveTransactions, setLiveTransactions] = React.useState<LiveTransaction[]>([]);
+  const [statusMessages, setStatusMessages] = React.useState<string[]>([]);
+  const liveLogRef = React.useRef<HTMLDivElement>(null);
+  
   // Config options
   const [finalPrice, setFinalPrice] = React.useState('');
   const [tryRegularFirst, setTryRegularFirst] = React.useState(false);
+  const [resumeFromPhase, setResumeFromPhase] = React.useState(false);
   const [orderBatchSize, setOrderBatchSize] = React.useState(10);
   const [calcBatchSize, setCalcBatchSize] = React.useState(10);
   const [applyBatchSize, setApplyBatchSize] = React.useState(10);
+  
+  // Auto-scroll live log
+  React.useEffect(() => {
+    if (liveLogRef.current) {
+      liveLogRef.current.scrollTop = liveLogRef.current.scrollHeight;
+    }
+  }, [liveTransactions, statusMessages]);
 
   const fetchMarkets = React.useCallback(async () => {
     setLoadingMarkets(true);
@@ -94,14 +153,13 @@ export default function BatchSettlementPage() {
   }, []);
 
   const fetchStatus = React.useCallback(async () => {
-    if (!selectedMarket || !adminSecret) return;
+    if (!selectedMarket) return;
     
     setLoadingStatus(true);
     setError(null);
     try {
       const res = await fetch(
-        `/api/debug/batch-settle?marketAddress=${selectedMarket.market_address}`,
-        { headers: { 'x-admin-secret': adminSecret } }
+        `/api/debug/batch-settle?marketAddress=${selectedMarket.market_address}`
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to fetch status');
@@ -111,50 +169,125 @@ export default function BatchSettlementPage() {
     } finally {
       setLoadingStatus(false);
     }
-  }, [selectedMarket, adminSecret]);
+  }, [selectedMarket]);
 
   const runBatchSettle = React.useCallback(async () => {
-    if (!selectedMarket || !adminSecret) return;
+    if (!selectedMarket) return;
     
     setLoading(true);
     setError(null);
     setResult(null);
+    setCurrentPhase(null);
+    setLiveTransactions([]);
+    setStatusMessages([]);
+    
     try {
       const res = await fetch('/api/debug/batch-settle', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-secret': adminSecret,
         },
         body: JSON.stringify({
           marketAddress: selectedMarket.market_address,
           finalPrice: finalPrice || undefined,
           tryRegularFirst,
+          resumeFromPhase,
           orderBatchSize,
           calcBatchSize,
           applyBatchSize,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Settlement failed');
-      setResult(data);
-      fetchStatus();
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Settlement failed');
+      }
+
+      // Handle streaming response
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event: StreamEvent = JSON.parse(line.slice(6));
+              
+              switch (event.type) {
+                case 'phase_start':
+                  setCurrentPhase(event.phase || null);
+                  setStatusMessages(prev => [...prev, `▶ ${PHASE_DISPLAY_NAMES[event.phase || ''] || event.phase}: ${event.message || 'Starting...'}`]);
+                  break;
+                  
+                case 'tx':
+                case 'batch_tx':
+                  if (event.txHash && event.phase) {
+                    setLiveTransactions(prev => [...prev, {
+                      phase: event.phase!,
+                      txHash: event.txHash!,
+                      batchNum: event.batchNum,
+                      gasUsed: event.gasUsed,
+                      timestamp: Date.now(),
+                    }]);
+                  }
+                  break;
+                  
+                case 'phase_complete':
+                  setStatusMessages(prev => [...prev, `✓ ${PHASE_DISPLAY_NAMES[event.phase || ''] || event.phase} complete${event.totalBatches ? ` (${event.totalBatches} batches)` : ''}`]);
+                  break;
+                  
+                case 'info':
+                  setStatusMessages(prev => [...prev, `ℹ ${event.message}`]);
+                  break;
+                  
+                case 'error':
+                  setError(event.message || 'Unknown error');
+                  setStatusMessages(prev => [...prev, `✗ Error: ${event.message}`]);
+                  break;
+                  
+                case 'complete':
+                  setCurrentPhase(null);
+                  if (event.data) {
+                    setResult(event.data as unknown as SettlementResult);
+                  }
+                  setStatusMessages(prev => [...prev, `🎉 ${event.message || 'Settlement complete'}`]);
+                  fetchStatus();
+                  break;
+              }
+            } catch {
+              // Ignore parse errors for incomplete events
+            }
+          }
+        }
+      }
     } catch (e: any) {
       setError(e.message);
+      setStatusMessages(prev => [...prev, `✗ Error: ${e.message}`]);
     } finally {
       setLoading(false);
+      setCurrentPhase(null);
     }
-  }, [selectedMarket, adminSecret, finalPrice, tryRegularFirst, orderBatchSize, calcBatchSize, applyBatchSize, fetchStatus]);
+  }, [selectedMarket, finalPrice, tryRegularFirst, resumeFromPhase, orderBatchSize, calcBatchSize, applyBatchSize, fetchStatus]);
 
   React.useEffect(() => {
     fetchMarkets();
   }, [fetchMarkets]);
 
   React.useEffect(() => {
-    if (selectedMarket && adminSecret) {
+    if (selectedMarket) {
       fetchStatus();
     }
-  }, [selectedMarket, adminSecret, fetchStatus]);
+  }, [selectedMarket, fetchStatus]);
 
   if (!debugEnabled) {
     return (
@@ -186,20 +319,6 @@ export default function BatchSettlementPage() {
             Back to Debug
           </a>
         </div>
-      </div>
-
-      {/* Admin Secret */}
-      <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
-        <label className="block">
-          <div className="text-[10px] text-[#808080] mb-1">Admin Secret (CRON_SECRET)</div>
-          <input
-            type="password"
-            className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
-            value={adminSecret}
-            onChange={(e) => setAdminSecret(e.target.value)}
-            placeholder="Enter admin secret..."
-          />
-        </label>
       </div>
 
       {/* Market Selection */}
@@ -241,7 +360,7 @@ export default function BatchSettlementPage() {
       </div>
 
       {/* Status */}
-      {selectedMarket && adminSecret && (
+      {selectedMarket && (
         <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-[12px] font-medium text-white">Market Status</div>
@@ -282,12 +401,21 @@ export default function BatchSettlementPage() {
               )}
 
               {status.batchProgress && (
-                <div className="mt-2 p-2 rounded bg-[#111] border border-[#222]">
-                  <div className="text-[10px] text-[#666] mb-1">Batch Progress</div>
+                <div className={`mt-2 p-2 rounded border ${status.batchProgress.currentPhase > 0 ? 'bg-orange-500/10 border-orange-500/30' : 'bg-[#111] border-[#222]'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] text-[#666]">Batch Progress</div>
+                    {status.batchProgress.currentPhase > 0 && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-medium">
+                        IN PROGRESS
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
                     <div>
                       <span className="text-[#9CA3AF]">Phase:</span>{' '}
-                      <span className="text-white">{PHASE_NAMES[status.batchProgress.currentPhase] || status.batchProgress.currentPhase}</span>
+                      <span className={status.batchProgress.currentPhase > 0 ? 'text-orange-300' : 'text-white'}>
+                        {PHASE_NAMES[status.batchProgress.currentPhase] || status.batchProgress.currentPhase}
+                      </span>
                     </div>
                     <div>
                       <span className="text-[#9CA3AF]">Progress:</span>{' '}
@@ -302,6 +430,11 @@ export default function BatchSettlementPage() {
                       <span className="text-white">{status.batchProgress.sellOrdersRemaining}</span>
                     </div>
                   </div>
+                  {status.batchProgress.currentPhase > 0 && (
+                    <div className="mt-2 text-[10px] text-orange-200/70">
+                      A batch is already in progress. Enable &quot;Resume from existing batch&quot; to continue.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -312,7 +445,7 @@ export default function BatchSettlementPage() {
       )}
 
       {/* Configuration */}
-      {selectedMarket && adminSecret && !status?.isSettled && (
+      {selectedMarket && !status?.isSettled && (
         <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
           <div className="text-[12px] font-medium text-white mb-3">Settlement Configuration</div>
           
@@ -337,6 +470,16 @@ export default function BatchSettlementPage() {
                 onChange={(e) => setTryRegularFirst(e.target.checked)}
               />
               <span className="text-[11px] text-[#9CA3AF]">Try regular settlement first (faster if market is small)</span>
+            </label>
+
+            <label className="flex items-center gap-2 col-span-2">
+              <input
+                type="checkbox"
+                checked={resumeFromPhase}
+                onChange={(e) => setResumeFromPhase(e.target.checked)}
+                className="accent-orange-500"
+              />
+              <span className="text-[11px] text-orange-300">Resume from existing batch (if one is in progress)</span>
             </label>
 
             <label className="block">
@@ -373,7 +516,7 @@ export default function BatchSettlementPage() {
       )}
 
       {/* Action Button */}
-      {selectedMarket && adminSecret && !status?.isSettled && (
+      {selectedMarket && !status?.isSettled && (
         <div className="rounded-md border border-orange-500/30 bg-orange-500/5 p-4">
           <div className="text-[12px] font-medium text-orange-300 mb-2">Execute Settlement</div>
           <div className="text-[11px] text-orange-200/70 mb-3">
@@ -386,6 +529,88 @@ export default function BatchSettlementPage() {
           >
             {loading ? 'Settling...' : 'Execute Batch Settlement'}
           </button>
+        </div>
+      )}
+
+      {/* Live Transaction Log */}
+      {(loading || liveTransactions.length > 0 || statusMessages.length > 0) && (
+        <div className="rounded-md border border-[#222222] bg-[#0a0a0a] p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="text-[12px] font-medium text-white">Live Transaction Log</div>
+              {loading && currentPhase && (
+                <span className={`text-[10px] px-2 py-0.5 rounded-full bg-[#111] border border-[#333] ${PHASE_COLORS[currentPhase] || 'text-white'}`}>
+                  {PHASE_DISPLAY_NAMES[currentPhase] || currentPhase}
+                </span>
+              )}
+            </div>
+            {loading && (
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-[10px] text-green-400">Streaming</span>
+              </div>
+            )}
+          </div>
+
+          {/* Status Messages */}
+          {statusMessages.length > 0 && (
+            <div className="mb-3 p-2 rounded bg-[#0f0f0f] border border-[#1a1a1a] max-h-32 overflow-y-auto">
+              {statusMessages.map((msg, i) => (
+                <div key={i} className="text-[10px] text-[#9CA3AF] font-mono py-0.5">
+                  {msg}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Transaction Feed */}
+          <div 
+            ref={liveLogRef}
+            className="space-y-1 max-h-64 overflow-y-auto pr-2"
+            style={{ scrollbarWidth: 'thin', scrollbarColor: '#333 #0a0a0a' }}
+          >
+            {liveTransactions.length === 0 && loading && (
+              <div className="text-[11px] text-[#666] text-center py-4">
+                Waiting for transactions...
+              </div>
+            )}
+            {liveTransactions.map((tx, i) => (
+              <div 
+                key={`${tx.txHash}-${i}`} 
+                className="flex items-center gap-2 py-1 px-2 rounded bg-[#111] border border-[#1a1a1a] group hover:bg-[#161616] transition-colors"
+              >
+                <span className={`text-[10px] font-medium min-w-[80px] ${PHASE_COLORS[tx.phase] || 'text-white'}`}>
+                  {tx.batchNum !== undefined ? `Batch ${tx.batchNum}` : PHASE_DISPLAY_NAMES[tx.phase] || tx.phase}
+                </span>
+                <a 
+                  href={`https://explorer.hyperliquid.xyz/tx/${tx.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-mono text-blue-400 hover:text-blue-300 hover:underline flex-1 truncate"
+                >
+                  {tx.txHash}
+                </a>
+                {tx.gasUsed && (
+                  <span className="text-[9px] text-[#666] opacity-0 group-hover:opacity-100 transition-opacity">
+                    {Number(tx.gasUsed).toLocaleString()} gas
+                  </span>
+                )}
+                <span className="text-[9px] text-[#444]">
+                  {new Date(tx.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Summary */}
+          {liveTransactions.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-[#1a1a1a] flex items-center justify-between text-[10px] text-[#666]">
+              <span>{liveTransactions.length} transaction{liveTransactions.length !== 1 ? 's' : ''}</span>
+              <span>
+                Total gas: {liveTransactions.reduce((sum, tx) => sum + (parseInt(tx.gasUsed || '0', 10) || 0), 0).toLocaleString()}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -440,21 +665,68 @@ export default function BatchSettlementPage() {
             </div>
           )}
 
+          {result.txHash && (
+            <div className="text-[11px]">
+              <span className="text-[#9CA3AF]">Transaction:</span>{' '}
+              <a 
+                href={`https://explorer.hyperliquid.xyz/tx/${result.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline font-mono"
+              >
+                {result.txHash.substring(0, 10)}...{result.txHash.substring(result.txHash.length - 8)}
+              </a>
+            </div>
+          )}
+
           {result.phases && result.phases.length > 0 && (
             <div className="mt-3">
               <div className="text-[10px] text-[#666] mb-1">Phases</div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {result.phases.map((p, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px]">
-                    <span className={p.success ? 'text-green-400' : 'text-red-400'}>
-                      {p.success ? '✓' : '✗'}
-                    </span>
-                    <span className="text-white">{p.phase}</span>
-                    {p.batches !== undefined && (
-                      <span className="text-[#666]">({p.batches} batches)</span>
-                    )}
+                  <div key={i} className="p-2 rounded bg-[#0a0a0a] border border-[#1a1a1a]">
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className={p.success ? 'text-green-400' : 'text-red-400'}>
+                        {p.success ? '✓' : '✗'}
+                      </span>
+                      <span className="text-white font-medium">{p.phase}</span>
+                      {p.batches !== undefined && (
+                        <span className="text-[#666]">({p.batches} batch{p.batches !== 1 ? 'es' : ''})</span>
+                      )}
+                    </div>
                     {p.error && (
-                      <span className="text-red-300 text-[10px]">{p.error}</span>
+                      <div className="mt-1 text-red-300 text-[10px]">{p.error}</div>
+                    )}
+                    {p.txHash && (
+                      <div className="mt-1 text-[10px]">
+                        <span className="text-[#666]">tx: </span>
+                        <a 
+                          href={`https://explorer.hyperliquid.xyz/tx/${p.txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline font-mono"
+                        >
+                          {p.txHash.substring(0, 10)}...{p.txHash.substring(p.txHash.length - 8)}
+                        </a>
+                      </div>
+                    )}
+                    {p.txHashes && p.txHashes.length > 0 && (
+                      <div className="mt-1 text-[10px]">
+                        <span className="text-[#666]">txs: </span>
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {p.txHashes.map((hash, j) => (
+                            <a 
+                              key={j}
+                              href={`https://explorer.hyperliquid.xyz/tx/${hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:underline font-mono px-1 py-0.5 bg-[#111] rounded"
+                            >
+                              {j + 1}: {hash.substring(0, 8)}...
+                            </a>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -367,6 +367,43 @@ export async function scheduleDailyPnlSnapshots(): Promise<string | null> {
 }
 
 /**
+ * Schedule a recurring HYPE/USDC rate update for gas fee calculations.
+ * Runs once daily at 00:10 UTC to keep the gas fee conversion rate current.
+ */
+export async function scheduleHypeRateUpdate(): Promise<string | null> {
+  const client = getClient();
+  if (!client) {
+    console.warn('[qstash-scheduler] QSTASH_TOKEN not configured, skipping HYPE rate schedule');
+    return null;
+  }
+
+  const baseUrl = getBaseUrl();
+  const destination = `${baseUrl}/api/cron/update-hype-rate`;
+  const cronSecret = process.env.CRON_SECRET;
+
+  try {
+    // Create a recurring schedule - once daily at 00:10 UTC
+    const res = await client.schedules.create({
+      destination,
+      cron: '10 0 * * *', // 00:10 UTC daily
+      headers: cronSecret ? { 'Authorization': `Bearer ${cronSecret}` } : undefined,
+      retries: 3,
+    });
+
+    console.log('[qstash-scheduler] Created HYPE rate update schedule', {
+      scheduleId: res.scheduleId,
+      cron: '10 0 * * * (00:10 UTC daily)',
+      destination,
+    });
+
+    return res.scheduleId;
+  } catch (e: any) {
+    console.error('[qstash-scheduler] Failed to create HYPE rate schedule:', e?.message || e);
+    return null;
+  }
+}
+
+/**
  * List all QStash schedules (for debugging/management).
  */
 export async function listSchedules(): Promise<Array<{ scheduleId: string; cron: string; destination: string }>> {

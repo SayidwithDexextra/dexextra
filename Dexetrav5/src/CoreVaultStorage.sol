@@ -107,4 +107,8 @@ abstract contract CoreVaultStorage {
     // Index for O(1) add/remove from marketPositionUsers
     // Maps marketId => user => (array index + 1), where 0 = not in array
     mapping(bytes32 => mapping(address => uint256)) public marketPositionUserIndex;     // slot 43
+
+    // ============ Centralized Fee Registry (gas fee config) ============
+    // All markets read gas fee config from this address
+    address public feeRegistry;                                                         // slot 44
 }

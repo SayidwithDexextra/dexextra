@@ -14,9 +14,13 @@ contract FacetRegistry {
     bytes4[] public selectors;
     mapping(bytes4 => bool) public selectorExists;
     
+    // Centralized FeeRegistry address - all markets read from here
+    address public feeRegistry;
+    
     event FacetsUpdated(uint256 indexed version, uint256 selectorCount);
     event FacetRegistered(address indexed facet, uint256 selectorCount);
     event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
+    event FeeRegistryUpdated(address indexed oldFeeRegistry, address indexed newFeeRegistry);
     
     error OnlyAdmin();
     error ArrayLengthMismatch();
@@ -99,6 +103,16 @@ contract FacetRegistry {
         if (_newAdmin == address(0)) revert ZeroAddress();
         emit AdminUpdated(admin, _newAdmin);
         admin = _newAdmin;
+    }
+    
+    /**
+     * @notice Set the global FeeRegistry address (all markets read from here)
+     * @param _feeRegistry FeeRegistry contract address
+     */
+    function setFeeRegistry(address _feeRegistry) external onlyAdmin {
+        address old = feeRegistry;
+        feeRegistry = _feeRegistry;
+        emit FeeRegistryUpdated(old, _feeRegistry);
     }
     
     /**

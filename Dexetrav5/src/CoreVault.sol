@@ -205,6 +205,10 @@ contract CoreVault is
         sessionRegistry = _registry;
     }
 
+    function setFeeRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        feeRegistry = _registry;
+    }
+
     // ============ Delegatecall Helpers ============
 
     function _delegateLiq(bytes memory data) internal returns (bytes memory) {

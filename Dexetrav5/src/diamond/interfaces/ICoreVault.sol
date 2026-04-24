@@ -38,6 +38,9 @@ interface ICoreVault {
     );
     function isMarketSettling(bytes32 marketId) external view returns (bool);
     function getMarketPositionUserCount(bytes32 marketId) external view returns (uint256);
+    
+    // Fee registry for global fee configuration
+    function feeRegistry() external view returns (address);
 }
 
 

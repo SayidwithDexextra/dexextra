@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "../libraries/OrderBookStorage.sol";
 import "../interfaces/ICoreVault.sol";
+import "../interfaces/IFeeRegistry.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract OBTradeExecutionFacet {
@@ -13,6 +14,7 @@ contract OBTradeExecutionFacet {
     event TradeExecutionCompleted(address indexed buyer, address indexed seller, uint256 price, uint256 amount);
     event FeesDeducted(address indexed buyer, uint256 buyerFee, address indexed seller, uint256 sellerFee);
     event PriceUpdated(uint256 lastTradePrice, uint256 currentMarkPrice);
+    event GasFeeCharged(address indexed taker, uint256 gasFee6);
     event TradeRecorded(
         bytes32 indexed marketId,
         address indexed buyer,
@@ -98,6 +100,9 @@ contract OBTradeExecutionFacet {
             if (buyerFee > 0 || sellerFee > 0) {
                 emit FeesDeducted(buyer, buyerFee, seller, sellerFee);
             }
+
+            // Charge gas fee to taker (on top of trading fees, before margin locking)
+            _chargeGasFee(s, buyerIsTaker ? buyer : seller);
         }
 
         // Update positions: margin checked against post-fee collateral
@@ -198,6 +203,7 @@ contract OBTradeExecutionFacet {
         uint256 liqPrice = (s.liquidationMode || buyer == address(this) || seller == address(this)) ? currentMark : 0;
         emit TradeRecorded(s.marketId, buyer, seller, price, amount, buyerFee, sellerFee, block.timestamp, liqPrice);
         emit TradeExecutionCompleted(buyer, seller, price, amount);
+
         s.nonReentrantLock = false;
     }
 
@@ -524,6 +530,9 @@ contract OBTradeExecutionFacet {
                 try s.vault.deductFees(taker, takerTotalFee, s.feeRecipient) { } catch { }
             }
         }
+
+        // Charge gas fee to taker (on top of trading fees, before margin/position updates)
+        _chargeGasFee(s, taker);
         
         (int256 takerOld, uint256 takerEntry, uint256 takerLocked) = _getSummary(s, taker);
         int256 takerDelta = takerIsBuy ? int256(takerTotalAmount) : -int256(takerTotalAmount);
@@ -600,6 +609,60 @@ contract OBTradeExecutionFacet {
         
         uint256 liqPrice = (s.liquidationMode || buyer == address(this) || seller == address(this)) ? s.lastMarkPrice : 0;
         emit TradeRecorded(s.marketId, buyer, seller, price, amount, buyerFee, sellerFee, block.timestamp, liqPrice);
+    }
+
+    /// @dev Charges gas reimbursement fee to the taker based on estimated gas cost
+    /// @param s Storage reference
+    /// @param taker Address of the taker to charge
+    function _chargeGasFee(OrderBookStorage.State storage s, address taker) private {
+        if (taker == address(0) || taker == address(this)) return;
+
+        // Get FeeRegistry from centralized CoreVault (all markets have s.vault)
+        address feeRegistryAddr;
+        try ICoreVaultFeeRegistry(address(s.vault)).feeRegistry() returns (address fr) {
+            feeRegistryAddr = fr;
+        } catch {
+            return;
+        }
+        if (feeRegistryAddr == address(0)) return;
+
+        // Read gas fee config from global FeeRegistry
+        IFeeRegistry registry = IFeeRegistry(feeRegistryAddr);
+        uint256 hypeUsdcRate6 = registry.hypeUsdcRate6();
+        if (hypeUsdcRate6 == 0) return;
+
+        uint256 maxGasFee6 = registry.maxGasFee6();
+        uint256 estimatedGasUsed = registry.gasEstimate();
+        if (estimatedGasUsed == 0) estimatedGasUsed = 2_000_000; // Fallback default
+
+        // Calculate gas cost in wei
+        uint256 gasCostWei = estimatedGasUsed * tx.gasprice;
+        
+        // Convert to USDC: gasCostWei (in wei) * hypeUsdcRate6 (USDC per 1e18 wei) / 1e18
+        uint256 gasFee6 = Math.mulDiv(gasCostWei, hypeUsdcRate6, 1e18);
+        
+        // Apply cap
+        if (maxGasFee6 > 0 && gasFee6 > maxGasFee6) {
+            gasFee6 = maxGasFee6;
+        }
+        
+        if (gasFee6 == 0) return;
+
+        // Charge to protocol fee recipient from FeeRegistry
+        address recipient = registry.protocolFeeRecipient();
+        if (recipient == address(0)) {
+            recipient = s.protocolFeeRecipient;
+        }
+        if (recipient == address(0)) {
+            recipient = s.feeRecipient;
+        }
+        if (recipient == address(0)) return;
+
+        try s.vault.deductFees(taker, gasFee6, recipient) {
+            emit GasFeeCharged(taker, gasFee6);
+        } catch {
+            // Silently fail if user doesn't have enough balance
+        }
     }
 }
 

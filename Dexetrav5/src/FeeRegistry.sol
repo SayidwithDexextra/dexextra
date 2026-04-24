@@ -23,6 +23,11 @@ contract FeeRegistry {
     // Legacy symmetric fee (for backward compatibility)
     uint256 public legacyTradingFeeBps;  // e.g., 10 = 0.10%
     
+    // Gas fee configuration (charged to takers to reimburse relayer gas costs)
+    uint256 public hypeUsdcRate6;   // HYPE price in USDC (6 decimals), e.g., 25_000000 = $25 per HYPE
+    uint256 public maxGasFee6;      // Cap on gas fee in USDC (6 decimals), e.g., 1_000000 = $1 max
+    uint256 public gasEstimate;     // Estimated gas units per trade, e.g., 2_000_000 for ~2x actual
+    
     // ============ Events ============
     
     event FeeStructureUpdated(
@@ -33,6 +38,8 @@ contract FeeRegistry {
     );
     
     event LegacyFeeUpdated(uint256 legacyTradingFeeBps);
+    
+    event GasFeeConfigUpdated(uint256 hypeUsdcRate6, uint256 maxGasFee6, uint256 gasEstimate);
     
     event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
     
@@ -71,6 +78,7 @@ contract FeeRegistry {
         protocolFeeRecipient = _protocolFeeRecipient;
         protocolFeeShareBps = _protocolFeeShareBps;
         legacyTradingFeeBps = 10; // Default 0.10%
+        gasEstimate = 2_000_000;  // Default ~2x typical trade gas (~1M actual)
         
         emit FeeStructureUpdated(_takerFeeBps, _makerFeeBps, _protocolFeeRecipient, _protocolFeeShareBps);
     }
@@ -134,6 +142,22 @@ contract FeeRegistry {
         emit AdminUpdated(oldAdmin, newAdmin);
     }
     
+    /**
+     * @dev Update gas fee configuration (charged to takers for relayer reimbursement)
+     * @param _hypeUsdcRate6 HYPE price in USDC (6 decimals). Set to 0 to disable gas fees.
+     * @param _maxGasFee6 Maximum gas fee in USDC (6 decimals)
+     * @param _gasEstimate Estimated gas units per trade (e.g., 2_000_000 for ~2x buffer)
+     */
+    function updateGasFeeConfig(uint256 _hypeUsdcRate6, uint256 _maxGasFee6, uint256 _gasEstimate) external onlyAdmin {
+        if (_hypeUsdcRate6 > 1000_000000) revert FeeTooHigh(); // Max $1000/HYPE
+        if (_maxGasFee6 > 10_000000) revert FeeTooHigh();      // Max $10 gas fee
+        if (_gasEstimate > 50_000_000) revert FeeTooHigh();    // Max 50M gas units
+        hypeUsdcRate6 = _hypeUsdcRate6;
+        maxGasFee6 = _maxGasFee6;
+        gasEstimate = _gasEstimate;
+        emit GasFeeConfigUpdated(_hypeUsdcRate6, _maxGasFee6, _gasEstimate);
+    }
+    
     // ============ View Functions ============
     
     /**
@@ -168,5 +192,19 @@ contract FeeRegistry {
         uint256 _legacyTradingFeeBps
     ) {
         return (takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps, legacyTradingFeeBps);
+    }
+    
+    /**
+     * @dev Get gas fee configuration
+     * @return _hypeUsdcRate6 HYPE price in USDC (6 decimals)
+     * @return _maxGasFee6 Maximum gas fee in USDC (6 decimals)
+     * @return _gasEstimate Estimated gas units per trade
+     */
+    function getGasFeeConfig() external view returns (
+        uint256 _hypeUsdcRate6,
+        uint256 _maxGasFee6,
+        uint256 _gasEstimate
+    ) {
+        return (hypeUsdcRate6, maxGasFee6, gasEstimate);
     }
 }

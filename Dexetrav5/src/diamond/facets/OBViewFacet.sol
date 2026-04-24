@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "../libraries/OrderBookStorage.sol";
+import "../interfaces/IFeeRegistry.sol";
 
 contract OBViewFacet {
     using OrderBookStorage for OrderBookStorage.State;
@@ -21,6 +22,31 @@ contract OBViewFacet {
     ) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         return (s.takerFeeBps, s.makerFeeBps, s.protocolFeeRecipient, s.protocolFeeShareBps, s.tradingFee, s.feeRecipient);
+    }
+
+    function getFeeRegistry() external view returns (address) {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        try ICoreVaultFeeRegistry(address(s.vault)).feeRegistry() returns (address fr) {
+            return fr;
+        } catch {
+            return address(0);
+        }
+    }
+
+    function getGasFeeConfig() external view returns (
+        uint256 hypeUsdcRate6,
+        uint256 maxGasFee6,
+        uint256 gasEstimate
+    ) {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        address feeRegistryAddr;
+        try ICoreVaultFeeRegistry(address(s.vault)).feeRegistry() returns (address fr) {
+            feeRegistryAddr = fr;
+        } catch {
+            return (0, 0, 0);
+        }
+        if (feeRegistryAddr == address(0)) return (0, 0, 0);
+        return IFeeRegistry(feeRegistryAddr).getGasFeeConfig();
     }
 
     function getLeverageInfo() external view returns (bool enabled, uint256 maxLev, uint256 marginReq, address controller) {

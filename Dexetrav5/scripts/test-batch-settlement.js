@@ -70,6 +70,11 @@ const CONFIG = {
   MIN_SPREAD_FROM_BEST_BPS: 1000, // 10% minimum distance
   MIN_COLLATERAL_PER_USER: ethers.parseUnits("50", 6),
   CREATE_POSITIONS: true,
+  
+  // Light load mode: for testing batch settlement incrementally
+  // Set these to limit total positions/orders across all users
+  MAX_TOTAL_POSITIONS: 20,  // Only create 20 positions total
+  MAX_TOTAL_ORDERS: 50,     // Only place 50 orders total
 };
 
 // Colors
@@ -471,18 +476,24 @@ async function phaseLoadOrders(selectedMarket) {
     }
   }
   
-  const bestBid = await obView.bestBid();
-  const bestAsk = await obView.bestAsk();
+  let bestBid = await obView.bestBid();
+  let bestAsk = await obView.bestAsk();
   
   logInfo(`Mark Price: $${ethers.formatUnits(markPrice, 6)}`);
   logInfo(`Best Bid: $${ethers.formatUnits(bestBid, 6)}`);
   logInfo(`Best Ask: $${ethers.formatUnits(bestAsk, 6)}`);
   
-  // Check liquidity
+  // Check liquidity - if no liquidity, use mark price as reference
   if (bestBid === 0n || bestAsk === 0n) {
-    logWarn("No liquidity in order book - positions cannot be created");
-    logInfo("Only resting orders will be placed");
+    logWarn("No liquidity in order book - using mark price as reference");
+    logInfo("Orders will be placed around the mark price");
     CONFIG.CREATE_POSITIONS = false;
+    
+    // Use mark price as reference for order placement
+    // Set bid slightly below mark and ask slightly above
+    bestBid = (markPrice * 9900n) / 10000n; // 1% below mark
+    bestAsk = (markPrice * 10100n) / 10000n; // 1% above mark
+    logInfo(`Using reference prices: Bid $${ethers.formatUnits(bestBid, 6)}, Ask $${ethers.formatUnits(bestAsk, 6)}`);
   }
   
   // Check collateral for sample wallets (use staticCall since getAvailableCollateral isn't marked view)
@@ -527,7 +538,11 @@ async function phaseLoadOrders(selectedMarket) {
     logInfo(`Average available: $${ethers.formatUnits(totalCollateral / BigInt(sampleSize), 6)} USDC`);
   }
   
+  // Show load plan
+  const maxPos = CONFIG.MAX_TOTAL_POSITIONS || userSigners.length;
+  const maxOrd = CONFIG.MAX_TOTAL_ORDERS || userSigners.length * CONFIG.ORDERS_PER_USER;
   logInfo(`\nReady to load ${userSigners.length} wallets`);
+  logInfo(`Target: ${maxPos} positions, ${maxOrd} orders (light load mode)`);
   
   // Show order placement strategy
   banner("ORDER PLACEMENT STRATEGY", c.magenta);
@@ -537,10 +552,9 @@ async function phaseLoadOrders(selectedMarket) {
   const sellPriceMin = (bestAsk * (10000n + minDistanceBps)) / 10000n; // Lowest sell
   const sellPriceMax = (bestAsk * (10000n + minDistanceBps + 3200n)) / 10000n; // Highest sell
   
-  logInfo(`Market orders: 75% buys, 25% sells (upward pressure)`);
-  logInfo(`Limit orders will REST on book (not match):`);
-  logInfo(`  Buy orders:  $${ethers.formatUnits(buyPriceMin, 6)} - $${ethers.formatUnits(buyPriceMax, 6)} (below best bid $${ethers.formatUnits(bestBid, 6)})`);
-  logInfo(`  Sell orders: $${ethers.formatUnits(sellPriceMin, 6)} - $${ethers.formatUnits(sellPriceMax, 6)} (above best ask $${ethers.formatUnits(bestAsk, 6)})`);
+  logInfo(`Placing resting limit orders around reference price`);
+  logInfo(`  Buy orders:  $${ethers.formatUnits(buyPriceMin, 6)} - $${ethers.formatUnits(buyPriceMax, 6)} (below $${ethers.formatUnits(bestBid, 6)})`);
+  logInfo(`  Sell orders: $${ethers.formatUnits(sellPriceMin, 6)} - $${ethers.formatUnits(sellPriceMax, 6)} (above $${ethers.formatUnits(bestAsk, 6)})`);
 
   // Load orders SEQUENTIALLY to avoid nonce collisions
   banner("LOADING ORDERS & POSITIONS", c.green);
@@ -565,8 +579,23 @@ async function phaseLoadOrders(selectedMarket) {
     return tx;
   }
   
+  // Light load mode limits
+  const maxPositions = CONFIG.MAX_TOTAL_POSITIONS || Infinity;
+  const maxOrders = CONFIG.MAX_TOTAL_ORDERS || Infinity;
+  const isLightMode = maxPositions < Infinity || maxOrders < Infinity;
+  
+  if (isLightMode) {
+    logInfo(`Light load mode: max ${maxPositions} positions, max ${maxOrders} orders`);
+  }
+  
   // Process users SEQUENTIALLY (one at a time)
   for (let i = 0; i < userSigners.length; i++) {
+    // Check if we've hit our limits
+    if (totalPositions >= maxPositions && totalOrders >= maxOrders) {
+      logInfo(`Reached limits (${totalPositions} positions, ${totalOrders} orders) - stopping early`);
+      break;
+    }
+    
     const user = userSigners[i];
     // Bias toward buying for upward price action
     const isBuySide = Math.random() < BUY_BIAS;
@@ -574,8 +603,8 @@ async function phaseLoadOrders(selectedMarket) {
     let userOrders = 0;
     
     try {
-      // Step 1: Create a position via market order with higher slippage tolerance
-      if (CONFIG.CREATE_POSITIONS) {
+      // Step 1: Create a position via market order (if under limit)
+      if (CONFIG.CREATE_POSITIONS && totalPositions < maxPositions) {
         try {
           // Use 500bps (5%) slippage to ensure fills
           await sendAndWait(
@@ -609,15 +638,18 @@ async function phaseLoadOrders(selectedMarket) {
         }
       }
       
-      // Step 2: Place RESTING limit orders (guaranteed to not match)
+      // Step 2: Place RESTING limit orders (if under limit)
       // Buy orders: placed BELOW best bid
       // Sell orders: placed ABOVE best ask
-      const numOrders = CONFIG.ORDERS_PER_USER;
+      const remainingOrders = maxOrders - totalOrders;
+      const numOrders = Math.min(CONFIG.ORDERS_PER_USER, remainingOrders);
       
       // Use best bid/ask as reference to ensure orders REST (don't match)
       const minDistanceBps = BigInt(CONFIG.MIN_SPREAD_FROM_BEST_BPS);
       
       for (let j = 0; j < numOrders; j++) {
+        if (totalOrders + userOrders >= maxOrders) break;
+        
         let price;
         
         if (isBuySide) {

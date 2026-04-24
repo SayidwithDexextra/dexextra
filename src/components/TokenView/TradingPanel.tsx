@@ -8,6 +8,7 @@ import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
 import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfolioData';
 import type { OrderBookOrder } from '@/hooks/useOrderBook';
+import { estimateGasFeeUsdc } from '@/hooks/useOrderBook';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts, OBOrderPlacementFacetABI } from '@/lib/contracts';
@@ -570,6 +571,31 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     return `${pct.toFixed(2)}%`;
   };
   const [isContractInfoExpanded, setIsContractInfoExpanded] = useState(false);
+  const [currentGasPrice, setCurrentGasPrice] = useState<bigint>(0n);
+
+  // Fetch gas price for gas fee estimation (refreshes every 30s)
+  useEffect(() => {
+    let mounted = true;
+    const fetchGasPrice = async () => {
+      try {
+        const provider = getReadProvider();
+        const feeData = await provider.getFeeData();
+        const gasPrice = (feeData?.maxFeePerGas ?? feeData?.gasPrice ?? 0n) as bigint;
+        if (mounted && gasPrice > 0n) {
+          setCurrentGasPrice(gasPrice);
+        }
+      } catch {
+        // Silently fail - gas fee display will show 0 if unavailable
+      }
+    };
+    fetchGasPrice();
+    const interval = setInterval(fetchGasPrice, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   // Note: We intentionally avoid syncing amount -> amountInput via effect to not
   // overwrite partial decimal typing like "0." during user input.
 
@@ -3218,6 +3244,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                           <span className="text-[10px] text-t-fg-muted">{orderType === 'limit' ? 'Maker Fee' : 'Taker Fee'}</span>
                           <span className="text-[10px] text-t-fg-label font-mono">${formatNumber(notional * feeRate)}<span className="text-t-fg-muted ml-1">({(feeRate * 100).toFixed(2)}%)</span></span>
                         </div>
+                        {marketParams.gasFeeConfig.hypeUsdcRate6 > 0n && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-t-fg-muted">Gas Fee</span>
+                            <span className="text-[10px] text-t-fg-label font-mono">
+                              {currentGasPrice > 0n
+                                ? `$${formatNumber(estimateGasFeeUsdc(marketParams.gasFeeConfig, currentGasPrice))}`
+                                : '—'}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[10px] text-t-fg-muted">Order Value</span>
                           <span className="text-[10px] text-t-fg-label font-mono">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : '—'}</span>

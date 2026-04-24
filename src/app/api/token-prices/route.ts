@@ -69,6 +69,7 @@ export async function GET(request: NextRequest) {
     
     // Enhanced symbol to CoinGecko ID mapping
     const symbolToId: Record<string, string> = {
+      'HYPE': 'hyperliquid',
       'ETH': 'ethereum',
       'WETH': 'wrapped-ethereum',
       'USDC': 'usd-coin',

@@ -220,7 +220,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     
     console.log(`[BlockchainEvents] Starting WebSocket listeners for ${symbol} at ${marketAddress}`);
     
-    // Watch for OrderPlaced events (logging only - not used for UI updates)
+    // Watch for OrderPlaced events (dispatched for mark price refresh)
     const unwatchOrderPlaced = client.watchContractEvent({
       address: marketAddress,
       abi: [ORDER_PLACED_ABI],
@@ -233,14 +233,36 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           const isBuy = args.isBuy;
           const trader = args.trader ? String(args.trader).toLowerCase() : '';
           const orderId = args.orderId ? String(args.orderId) : '?';
+          const rawPrice = args.price ? String(args.price) : '0';
+          const rawAmount = args.amount ? String(args.amount) : '0';
           
-          console.log(`[BlockchainEvents] OrderPlaced received (LOG ONLY)`, {
+          console.log(`[BlockchainEvents] OrderPlaced received`, {
             orderId,
             price: price.toFixed(4),
             amount: amount.toFixed(6),
             isBuy,
             trader: trader.slice(0, 10) + '...',
           });
+          
+          // Dispatch window event for mark price refresh (debounced in listeners)
+          try {
+            console.log(`[LiveUpdate][dispatch] OrderPlaced symbol=${symbol} price=${price.toFixed(4)}`);
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                symbol,
+                eventType: 'OrderPlaced',
+                orderId,
+                price: rawPrice,
+                amount: rawAmount,
+                isBuy,
+                trader,
+                timestamp: Date.now(),
+                source: 'websocket',
+              }
+            }));
+          } catch (err) {
+            console.error('[LiveUpdate][dispatch] OrderPlaced error:', err);
+          }
         }
       },
       onError: (error) => {
@@ -261,6 +283,8 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           const amount = args.amount ? Number(args.amount) / 1e18 : 0;
           const isBuy = args.isBuy;
           const trader = args.trader ? String(args.trader).toLowerCase() : '';
+          const rawPrice = args.price ? String(args.price) : '0';
+          const rawAmount = args.amount ? String(args.amount) : '0';
           
           console.log(`[BlockchainEvents] OrderRested received`, {
             orderId,
@@ -275,9 +299,29 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
             restingOrdersRef.current.set(orderId, { price, amount, isBuy });
           }
           
-          // Skip own orders - already handled by optimistic updates
+          // Dispatch window event for mark price refresh (debounced in listeners)
+          try {
+            console.log(`[LiveUpdate][dispatch] OrderRested symbol=${symbol} price=${price.toFixed(4)}`);
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                symbol,
+                eventType: 'OrderRested',
+                orderId,
+                price: rawPrice,
+                amount: rawAmount,
+                isBuy,
+                trader,
+                timestamp: Date.now(),
+                source: 'websocket',
+              }
+            }));
+          } catch (err) {
+            console.error('[LiveUpdate][dispatch] OrderRested error:', err);
+          }
+          
+          // Skip own orders for liquidity updates - already handled by optimistic updates
           if (myAddress && trader === myAddress) {
-            console.log(`[BlockchainEvents] Skipping own OrderRested event (but tracked for cancellation)`);
+            console.log(`[BlockchainEvents] Skipping own OrderRested liquidity update (but tracked for cancellation)`);
             continue;
           }
           
