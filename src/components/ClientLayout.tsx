@@ -16,6 +16,7 @@ import { OnchainOrdersProvider } from "@/contexts/OnchainOrdersContextV2";
 import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
 import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
 import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
+import ComingSoonGate from "@/components/ComingSoonOverlay";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -58,8 +59,9 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
   }, []);
 
   return (
-    <WalletProvider>
-      <SessionProvider>
+    <ComingSoonGate>
+      <WalletProvider>
+        <SessionProvider>
         <OnchainOrdersProvider>
         <DeploymentOverlayProvider>
           <ThemeProvider>
@@ -112,5 +114,6 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
         </OnchainOrdersProvider>
       </SessionProvider>
     </WalletProvider>
+    </ComingSoonGate>
   );
 } 

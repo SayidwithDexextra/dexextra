@@ -163,6 +163,9 @@ const envSchema = z.object({
   // Feature Flags
   ENABLE_FEATURE_X: z.string().transform((val) => val === 'true').default('false'),
   DEBUG_MODE: z.string().transform((val) => val === 'true').default('false'),
+  
+  // Coming Soon Overlay (production gate)
+  NEXT_PUBLIC_COMING_SOON_PASSWORD: z.string().optional(),
 })
 
 /**
@@ -289,6 +292,9 @@ const processEnv = {
   
   ENABLE_FEATURE_X: process.env.ENABLE_FEATURE_X || 'false',
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
+  
+  // Coming Soon Overlay
+  NEXT_PUBLIC_COMING_SOON_PASSWORD: process.env.NEXT_PUBLIC_COMING_SOON_PASSWORD,
 }
 
 /**
