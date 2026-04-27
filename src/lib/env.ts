@@ -82,7 +82,8 @@ const envSchema = z.object({
   SPOKE_POLYGON_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon spoke vault address').optional(),
   SPOKE_POLYGON_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon USDC address').optional(),
   SPOKE_ARBITRUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum spoke vault address').optional(),
-  SPOKE_ARBITRUM_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum USDC address').optional(),
+  SPOKE_ARBITRUM_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum Bridged USDC.e address').optional(),
+  SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum Native USDC address').optional(),
   SPOKE_ETHEREUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum spoke vault address').optional(),
   SPOKE_HYPERLIQUID_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Hyperliquid spoke vault address').optional(),
 
@@ -257,6 +258,7 @@ const processEnv = {
   SPOKE_POLYGON_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_POLYGON_VAULT_ADDRESS : process.env.SPOKE_POLYGON_VAULT_ADDRESS,
   SPOKE_ARBITRUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_VAULT_ADDRESS : process.env.SPOKE_ARBITRUM_VAULT_ADDRESS,
   SPOKE_ARBITRUM_USDC_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_USDC_ADDRESS : process.env.SPOKE_ARBITRUM_USDC_ADDRESS,
+  SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS : process.env.SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS,
   SPOKE_ETHEREUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ETHEREUM_VAULT_ADDRESS : process.env.SPOKE_ETHEREUM_VAULT_ADDRESS,
   SPOKE_HYPERLIQUID_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_HYPERLIQUID_VAULT_ADDRESS : process.env.SPOKE_HYPERLIQUID_VAULT_ADDRESS,
   

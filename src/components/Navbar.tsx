@@ -129,7 +129,7 @@ const navigationItems: NavItem[] = [
   { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'watchlist', label: 'Watchlist', icon: WatchlistIcon, route: '/watchlist' },
   { id: 'analytics', label: 'Analytics', icon: AnalyticsIcon, route: '/analytics' },
-  { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
+  // { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
   // { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },
   // { id: 'send', label: 'Send', icon: SendIcon, route: '/send' },
   // { id: 'swap', label: 'Swap', icon: SwapIcon, route: '/swap' },

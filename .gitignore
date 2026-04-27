@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+.env.legacy-contracts
 
 # vercel
 .vercel
@@ -44,6 +45,7 @@ temp-match-test.ts
 
 # secrets / local dev artifacts
 AdvancedMarketAutomation/
+scripts/update-vercel-env.sh
 relayers.generated.json
 relayers.*.json
 relayers.*.csv

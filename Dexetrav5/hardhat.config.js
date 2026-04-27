@@ -115,8 +115,8 @@ const config = {
     },
     // HyperLiquid Network Configuration
     hyperliquid: {
-      url: "https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-",
-      accounts: networkAccounts,
+      url: process.env.HYPERLIQUID_RPC_URL || "https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-",
+      accounts: creatorAccounts,
       chainId: 999,
       gasPrice: "auto",
       gas: "auto",
@@ -138,7 +138,7 @@ const config = {
     // Example: Add more blockchains
     arbitrum: {
       url: process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc",
-      accounts: networkAccounts,
+      accounts: creatorAccounts,
       chainId: 42161,
       gasPrice: "auto",
     },
@@ -169,6 +169,8 @@ const config = {
       polygonMumbai: process.env.POLYGONSCAN_API_KEY || "",
       mainnet: process.env.ETHERSCAN_API_KEY || "",
       sepolia: process.env.ETHERSCAN_API_KEY || "",
+      arbitrumOne: process.env.ARBISCAN_API_KEY || "",
+      optimisticEthereum: process.env.OPTIMISM_ETHERSCAN_API_KEY || "",
     },
     // No customChains for Hyperliquid → enforce Sourcify-only flow
   },

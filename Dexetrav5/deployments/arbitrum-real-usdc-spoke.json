@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-04-26T22:56:32.476Z",
+  "completedAt": "2026-04-26T22:56:34.316Z",
+  "network": "arbitrum",
+  "chainId": 42161,
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "contracts": {
+    "USDC_TOKEN": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
+    "SPOKE_VAULT": "0x12684fE7d4b44c0Ef02AC2815742b46107E86091"
+  },
+  "constructorArgs": {
+    "SpokeVault": {
+      "initialAllowedTokens": [
+        "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8"
+      ],
+      "admin": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+      "bridgeInbox": "0x0000000000000000000000000000000000000000"
+    }
+  },
+  "notes": {
+    "usdcSymbol": "USDC",
+    "usdcDecimals": 6,
+    "bridgeInboxPending": "Set bridge inbox and register spoke on Hyperliquid CollateralHub"
+  }
+}

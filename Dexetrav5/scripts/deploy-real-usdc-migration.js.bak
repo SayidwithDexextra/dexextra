@@ -1,0 +1,594 @@
+#!/usr/bin/env node
+/**
+ * deploy-real-usdc-migration.js
+ * 
+ * Complete deployment script for migrating from MockUSDC to Real USDC.
+ * Deploys fresh infrastructure with accurate margin accounting.
+ * 
+ * Environment Variables Required:
+ *   REAL_USDC_ADDRESS     - The real USDC token address on target network
+ *   TREASURY_ADDRESS      - Protocol fee recipient (defaults to deployer)
+ *   
+ * Optional Environment Variables:
+ *   EXISTING_DEPLOYMENT_JSON - Path to deployment JSON with existing facet addresses
+ *                              (defaults to ./deployments/hyperliquid-deployment.json)
+ *   MARKET_BOND_DEFAULT   - Default bond amount in USDC (6 decimals), default: 100000000 (100 USDC)
+ *   MARKET_BOND_MIN       - Min bond amount, default: 1000000 (1 USDC)
+ *   MARKET_BOND_MAX       - Max bond amount, default: 0 (no max)
+ *   ENABLE_CROSS_CHAIN    - "true" to deploy CollateralHub
+ *
+ * Usage:
+ *   npx hardhat run scripts/deploy-real-usdc-migration.js --network arbitrum
+ */
+
+const { ethers } = require("hardhat");
+const fs = require("fs");
+const path = require("path");
+
+// Load environment
+try {
+  require("dotenv").config({ path: path.resolve(__dirname, "../../.env.local") });
+} catch (_) {}
+try {
+  require("dotenv").config();
+} catch (_) {}
+
+// ============ Helper Functions ============
+
+function getSelectorsFromArtifact(artifact) {
+  const iface = new ethers.Interface(artifact.abi);
+  return iface.fragments
+    .filter(f => f.type === 'function')
+    .map(f => iface.getFunction(f.name).selector);
+}
+
+function saveDeployment(networkName, data) {
+  const deploymentsDir = path.join(__dirname, "../deployments");
+  if (!fs.existsSync(deploymentsDir)) {
+    fs.mkdirSync(deploymentsDir, { recursive: true });
+  }
+  const filePath = path.join(deploymentsDir, `${networkName}-real-usdc-deployment.json`);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  console.log(`\n📝 Deployment saved to: ${filePath}`);
+  return filePath;
+}
+
+function loadExistingDeployment(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (e) {
+    console.log(`⚠️  Could not load existing deployment: ${e.message}`);
+    return null;
+  }
+}
+
+// ============ Main Deployment ============
+
+async function main() {
+  console.log("\n" + "═".repeat(80));
+  console.log("🚀 REAL USDC MIGRATION - FRESH INFRASTRUCTURE DEPLOYMENT");
+  console.log("═".repeat(80));
+
+  // Get network info
+  const network = await ethers.provider.getNetwork();
+  const networkName = process.env.HARDHAT_NETWORK || "unknown";
+  console.log(`\n🌐 Network: ${networkName} (Chain ID: ${network.chainId})`);
+
+  // Get signers
+  const [deployer] = await ethers.getSigners();
+  console.log(`📋 Deployer: ${deployer.address}`);
+  const balance = await ethers.provider.getBalance(deployer.address);
+  console.log(`💰 Balance: ${ethers.formatEther(balance)} ETH`);
+
+  // ============ PHASE 1: Environment Validation ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 1: ENVIRONMENT VALIDATION");
+  console.log("─".repeat(60));
+
+  // Validate REAL_USDC_ADDRESS
+  const realUsdcAddress = process.env.REAL_USDC_ADDRESS;
+  if (!realUsdcAddress || !ethers.isAddress(realUsdcAddress)) {
+    console.error("❌ REAL_USDC_ADDRESS not set or invalid");
+    console.error("   Set REAL_USDC_ADDRESS in your .env.local file");
+    process.exit(1);
+  }
+  console.log(`✅ REAL_USDC_ADDRESS: ${realUsdcAddress}`);
+
+  // Validate USDC has 6 decimals
+  const usdcAbi = ["function decimals() view returns (uint8)", "function symbol() view returns (string)"];
+  const usdc = new ethers.Contract(realUsdcAddress, usdcAbi, deployer);
+  try {
+    const decimals = await usdc.decimals();
+    const symbol = await usdc.symbol();
+    if (decimals !== 6n) {
+      console.error(`❌ USDC decimals mismatch: expected 6, got ${decimals}`);
+      process.exit(1);
+    }
+    console.log(`✅ Token verified: ${symbol} with ${decimals} decimals`);
+  } catch (e) {
+    console.error(`❌ Could not verify USDC token: ${e.message}`);
+    process.exit(1);
+  }
+
+  // Configuration
+  const treasuryAddress = process.env.TREASURY_ADDRESS || deployer.address;
+  const enableCrossChain = String(process.env.ENABLE_CROSS_CHAIN || "true").toLowerCase() === "true";
+  
+  console.log(`\n📋 Configuration:`);
+  console.log(`   Treasury: ${treasuryAddress}`);
+  console.log(`   Cross-Chain: ${enableCrossChain}`);
+
+  // Load existing deployment to reuse facets (automatic - no env flag needed)
+  const existingPath = process.env.EXISTING_DEPLOYMENT_JSON || 
+    path.join(__dirname, "../deployments/hyperliquid-deployment.json");
+  const existingDeployment = loadExistingDeployment(existingPath);
+  if (existingDeployment) {
+    console.log(`\n✅ Found existing deployment: ${existingPath}`);
+    console.log(`   Will reuse stateless facets when available`);
+  } else {
+    console.log(`\n📝 No existing deployment found, will deploy all facets fresh`);
+  }
+
+  // Track all deployed contracts
+  const contracts = {};
+
+  // ============ PHASE 2: Core Infrastructure ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 2: CORE INFRASTRUCTURE");
+  console.log("─".repeat(60));
+
+  // 2.1 Deploy Libraries
+  console.log("\n  2.1 Deploying Libraries...");
+  
+  const VaultAnalytics = await ethers.getContractFactory("VaultAnalytics");
+  const vaultAnalytics = await VaultAnalytics.deploy();
+  await vaultAnalytics.waitForDeployment();
+  contracts.VAULT_ANALYTICS = await vaultAnalytics.getAddress();
+  console.log(`     ✅ VaultAnalytics: ${contracts.VAULT_ANALYTICS}`);
+
+  const PositionManager = await ethers.getContractFactory("PositionManager");
+  const positionManager = await PositionManager.deploy();
+  await positionManager.waitForDeployment();
+  contracts.POSITION_MANAGER = await positionManager.getAddress();
+  console.log(`     ✅ PositionManager: ${contracts.POSITION_MANAGER}`);
+
+  // 2.2 Deploy CoreVault Implementation + Proxy
+  console.log("\n  2.2 Deploying CoreVault (UUPS)...");
+  
+  const CoreVaultImpl = await ethers.getContractFactory("CoreVault", {
+    libraries: { PositionManager: contracts.POSITION_MANAGER },
+  });
+  const coreVaultImpl = await CoreVaultImpl.deploy(realUsdcAddress);
+  await coreVaultImpl.waitForDeployment();
+  contracts.CORE_VAULT_IMPL = await coreVaultImpl.getAddress();
+  console.log(`     ✅ CoreVault Implementation: ${contracts.CORE_VAULT_IMPL}`);
+
+  // Deploy ERC1967Proxy
+  const initData = CoreVaultImpl.interface.encodeFunctionData("initialize", [deployer.address]);
+  const ERC1967Proxy = await ethers.getContractFactory(
+    "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy"
+  );
+  const proxy = await ERC1967Proxy.deploy(contracts.CORE_VAULT_IMPL, initData);
+  await proxy.waitForDeployment();
+  contracts.CORE_VAULT = await proxy.getAddress();
+  const coreVault = CoreVaultImpl.attach(contracts.CORE_VAULT);
+  console.log(`     ✅ CoreVault Proxy: ${contracts.CORE_VAULT}`);
+
+  // 2.3 Deploy Delegatecall Targets
+  console.log("\n  2.3 Deploying Delegatecall Targets...");
+
+  const VaultViewsManager = await ethers.getContractFactory("VaultViewsManager", {
+    libraries: { VaultAnalytics: contracts.VAULT_ANALYTICS },
+  });
+  const viewsManager = await VaultViewsManager.deploy();
+  await viewsManager.waitForDeployment();
+  contracts.VAULT_VIEWS_MANAGER = await viewsManager.getAddress();
+  console.log(`     ✅ VaultViewsManager: ${contracts.VAULT_VIEWS_MANAGER}`);
+
+  const SettlementManager = await ethers.getContractFactory("SettlementManager", {
+    libraries: { PositionManager: contracts.POSITION_MANAGER },
+  });
+  const settlementManager = await SettlementManager.deploy();
+  await settlementManager.waitForDeployment();
+  contracts.SETTLEMENT_MANAGER = await settlementManager.getAddress();
+  console.log(`     ✅ SettlementManager: ${contracts.SETTLEMENT_MANAGER}`);
+
+  const LiquidationManager = await ethers.getContractFactory("LiquidationManager", {
+    libraries: {
+      VaultAnalytics: contracts.VAULT_ANALYTICS,
+      PositionManager: contracts.POSITION_MANAGER,
+    },
+  });
+  const liquidationManager = await LiquidationManager.deploy(realUsdcAddress, deployer.address);
+  await liquidationManager.waitForDeployment();
+  contracts.LIQUIDATION_MANAGER = await liquidationManager.getAddress();
+  console.log(`     ✅ LiquidationManager: ${contracts.LIQUIDATION_MANAGER}`);
+
+  // 2.4 Wire Managers into CoreVault
+  console.log("\n  2.4 Wiring Managers into CoreVault...");
+  
+  let tx = await coreVault.setLiquidationManager(contracts.LIQUIDATION_MANAGER);
+  await tx.wait();
+  tx = await coreVault.setViewsManager(contracts.VAULT_VIEWS_MANAGER);
+  await tx.wait();
+  tx = await coreVault.setSettlementManager(contracts.SETTLEMENT_MANAGER);
+  await tx.wait();
+  console.log(`     ✅ All managers configured`);
+
+  // ============ PHASE 3: Facets ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 3: DIAMOND FACETS");
+  console.log("─".repeat(60));
+
+  const facetNames = [
+    "OrderBookInitFacet",
+    "OBAdminFacet",
+    "OBAdminViewFacet",
+    "OBPricingFacet",
+    "OBOrderPlacementFacet",
+    "OBTradeExecutionFacet",
+    "OBLiquidationFacet",
+    "OBViewFacet",
+    "OBSettlementFacet",
+    "OBBatchSettlementFacet",
+    "OBMaintenanceFacet",
+    "MarketLifecycleFacet",
+    "MetaTradeFacet",
+    "OrderBookVaultAdminFacet",
+  ];
+
+  const facetAddresses = {};
+
+  // Mapping of facet names to possible keys in existing deployment JSON
+  const facetKeyMap = {
+    "OrderBookInitFacet": ["ORDER_BOOK_INIT", "ORDERBOOK_INIT", "OB_INIT_FACET", "ORDER_BOOK_INIT_FACET", "ORDER_BOOK_INIT_FACET"],
+    "OBAdminFacet": ["OB_ADMIN_FACET", "OBADMIN_FACET", "OB_ADMIN"],
+    "OBAdminViewFacet": ["OB_ADMIN_VIEW_FACET", "OBADMINVIEW_FACET"],
+    "OBPricingFacet": ["OB_PRICING_FACET", "OBPRICING_FACET"],
+    "OBOrderPlacementFacet": ["OB_ORDER_PLACEMENT_FACET", "OBORDERPLACEMENT_FACET"],
+    "OBTradeExecutionFacet": ["OB_TRADE_EXECUTION_FACET", "OBTRADEEXECUTION_FACET"],
+    "OBLiquidationFacet": ["OB_LIQUIDATION_FACET", "OBLIQUIDATION_FACET"],
+    "OBViewFacet": ["OB_VIEW_FACET", "OBVIEW_FACET"],
+    "OBSettlementFacet": ["OB_SETTLEMENT_FACET", "OBSETTLEMENT_FACET"],
+    "OBBatchSettlementFacet": ["OB_BATCH_SETTLEMENT_FACET", "OBBATCHSETTLEMENT_FACET"],
+    "OBMaintenanceFacet": ["OB_MAINTENANCE_FACET", "OBMAINTENANCE_FACET"],
+    "MarketLifecycleFacet": ["MARKET_LIFECYCLE_FACET", "MARKETLIFECYCLE_FACET"],
+    "MetaTradeFacet": ["META_TRADE_FACET", "METATRADE_FACET"],
+    "OrderBookVaultAdminFacet": ["ORDERBOOK_VAULT_FACET", "ORDERBOOK_VAULT_ADMIN_FACET", "ORDERBOOKVAULTADMIN_FACET"],
+  };
+
+  function findExistingFacetAddress(facetName, existingContracts) {
+    if (!existingContracts) return null;
+    
+    // Try direct name match first
+    if (existingContracts[facetName]) return existingContracts[facetName];
+    
+    // Try mapped keys
+    const possibleKeys = facetKeyMap[facetName] || [];
+    for (const key of possibleKeys) {
+      if (existingContracts[key] && ethers.isAddress(existingContracts[key])) {
+        return existingContracts[key];
+      }
+    }
+    
+    // Try uppercased with _FACET suffix
+    const upperKey = facetName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
+    if (existingContracts[upperKey]) return existingContracts[upperKey];
+    
+    // Try in notes (for upgraded facets)
+    if (existingContracts.notes) {
+      for (const note of Object.values(existingContracts.notes || {})) {
+        if (note.contracts && note.contracts[facetName]) {
+          return note.contracts[facetName];
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  for (const name of facetNames) {
+    const existingAddr = findExistingFacetAddress(name, existingDeployment?.contracts);
+    
+    // Automatically reuse existing facet if available (stateless, no env flag needed)
+    if (existingAddr && ethers.isAddress(existingAddr)) {
+      // Verify the contract exists on-chain before reusing
+      const code = await ethers.provider.getCode(existingAddr);
+      if (code && code !== "0x") {
+        facetAddresses[name] = existingAddr;
+        console.log(`  ♻️  Reusing ${name}: ${existingAddr}`);
+        continue;
+      }
+      console.log(`  ⚠️  ${name} at ${existingAddr} has no code, deploying fresh`);
+    }
+    
+    // Deploy fresh if no existing address or contract not found on-chain
+    try {
+      const Facet = await ethers.getContractFactory(name);
+      const facet = await Facet.deploy();
+      await facet.waitForDeployment();
+      facetAddresses[name] = await facet.getAddress();
+      console.log(`  ✅ Deployed ${name}: ${facetAddresses[name]}`);
+    } catch (e) {
+      console.log(`  ⚠️  Could not deploy ${name}: ${e.message}`);
+    }
+  }
+
+  // Store facet addresses
+  Object.entries(facetAddresses).forEach(([name, addr]) => {
+    const key = name.replace(/Facet$/, "").toUpperCase().replace(/ORDERBOOK/, "OB_") + 
+                (name.endsWith("Facet") ? "_FACET" : "");
+    contracts[key] = addr;
+  });
+
+  // ============ PHASE 4: Factory Infrastructure ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 4: FACTORY INFRASTRUCTURE");
+  console.log("─".repeat(60));
+
+  // 4.1 Deploy FeeRegistry
+  console.log("\n  4.1 Deploying FeeRegistry...");
+  const takerFeeBps = BigInt(process.env.TAKER_FEE_BPS || "7");   // 0.07% default
+  const makerFeeBps = BigInt(process.env.MAKER_FEE_BPS || "3");   // 0.03% default
+  const protocolFeeShareBps = BigInt(process.env.PROTOCOL_FEE_SHARE_BPS || "8000"); // 80% default
+  
+  const FeeRegistry = await ethers.getContractFactory("FeeRegistry");
+  const feeRegistry = await FeeRegistry.deploy(
+    deployer.address,      // admin
+    takerFeeBps,           // takerFeeBps
+    makerFeeBps,           // makerFeeBps
+    treasuryAddress,       // protocolFeeRecipient
+    protocolFeeShareBps    // protocolFeeShareBps
+  );
+  await feeRegistry.waitForDeployment();
+  contracts.FEE_REGISTRY = await feeRegistry.getAddress();
+  console.log(`     ✅ FeeRegistry: ${contracts.FEE_REGISTRY}`);
+  console.log(`        Taker: ${takerFeeBps}bps, Maker: ${makerFeeBps}bps, Protocol: ${protocolFeeShareBps}bps`);
+
+  // 4.2 Deploy FacetRegistry and register facets
+  console.log("\n  4.2 Deploying FacetRegistry...");
+  const FacetRegistry = await ethers.getContractFactory("FacetRegistry");
+  const facetRegistry = await FacetRegistry.deploy(deployer.address);
+  await facetRegistry.waitForDeployment();
+  contracts.FACET_REGISTRY = await facetRegistry.getAddress();
+  console.log(`     ✅ FacetRegistry: ${contracts.FACET_REGISTRY}`);
+
+  // Register facets (skip OrderBookInitFacet - it's used for initialization only)
+  console.log("\n  4.3 Registering facets...");
+  const facetsToRegister = Object.entries(facetAddresses).filter(([name]) => name !== "OrderBookInitFacet");
+  
+  for (const [name, addr] of facetsToRegister) {
+    try {
+      const artifact = await hre.artifacts.readArtifact(name);
+      const selectors = getSelectorsFromArtifact(artifact);
+      if (selectors.length > 0) {
+        const regTx = await facetRegistry.registerFacet(addr, selectors);
+        await regTx.wait();
+        console.log(`     ✅ Registered ${name}: ${selectors.length} selectors`);
+      }
+    } catch (e) {
+      console.log(`     ⚠️  Could not register ${name}: ${e.message}`);
+    }
+  }
+
+  // Set FeeRegistry on FacetRegistry (markets look up fees from here)
+  console.log("\n  4.3b Setting FeeRegistry on FacetRegistry...");
+  tx = await facetRegistry.setFeeRegistry(contracts.FEE_REGISTRY);
+  await tx.wait();
+  console.log(`     ✅ FacetRegistry.feeRegistry set to ${contracts.FEE_REGISTRY}`);
+
+  // 4.4 Deploy FuturesMarketFactoryV2
+  console.log("\n  4.4 Deploying FuturesMarketFactoryV2...");
+  const FuturesMarketFactory = await ethers.getContractFactory("FuturesMarketFactoryV2");
+  const factory = await FuturesMarketFactory.deploy(
+    contracts.CORE_VAULT,
+    deployer.address,
+    treasuryAddress
+  );
+  await factory.waitForDeployment();
+  contracts.FUTURES_MARKET_FACTORY = await factory.getAddress();
+  console.log(`     ✅ FuturesMarketFactoryV2: ${contracts.FUTURES_MARKET_FACTORY}`);
+
+  // Configure factory
+  tx = await factory.setFacetRegistry(contracts.FACET_REGISTRY);
+  await tx.wait();
+  tx = await factory.setInitFacet(facetAddresses.OrderBookInitFacet);
+  await tx.wait();
+  console.log(`     ✅ Factory configured with FacetRegistry and InitFacet`);
+
+  // 4.5 Deploy MarketBondManager
+  console.log("\n  4.5 Deploying MarketBondManager...");
+  const bondDefault = BigInt(process.env.MARKET_BOND_DEFAULT || "100000000"); // 100 USDC
+  const bondMin = BigInt(process.env.MARKET_BOND_MIN || "1000000"); // 1 USDC
+  const bondMax = BigInt(process.env.MARKET_BOND_MAX || "0"); // no max
+
+  const MarketBondManager = await ethers.getContractFactory("MarketBondManager");
+  const bondManager = await MarketBondManager.deploy(
+    contracts.CORE_VAULT,
+    contracts.FUTURES_MARKET_FACTORY,
+    deployer.address,
+    bondDefault,
+    bondMin,
+    bondMax
+  );
+  await bondManager.waitForDeployment();
+  contracts.MARKET_BOND_MANAGER = await bondManager.getAddress();
+  console.log(`     ✅ MarketBondManager: ${contracts.MARKET_BOND_MANAGER}`);
+
+  // Wire bond manager to factory
+  tx = await factory.setBondManager(contracts.MARKET_BOND_MANAGER);
+  await tx.wait();
+  console.log(`     ✅ Factory.bondManager set`);
+
+  // ============ PHASE 5: Session Registry ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 5: SESSION REGISTRY");
+  console.log("─".repeat(60));
+
+  const GlobalSessionRegistry = await ethers.getContractFactory("GlobalSessionRegistry");
+  const sessionRegistry = await GlobalSessionRegistry.deploy(deployer.address);
+  await sessionRegistry.waitForDeployment();
+  contracts.GLOBAL_SESSION_REGISTRY = await sessionRegistry.getAddress();
+  console.log(`  ✅ GlobalSessionRegistry: ${contracts.GLOBAL_SESSION_REGISTRY}`);
+
+  // Configure on CoreVault
+  tx = await coreVault.setSessionRegistry(contracts.GLOBAL_SESSION_REGISTRY);
+  await tx.wait();
+  console.log(`  ✅ CoreVault.sessionRegistry set`);
+
+  // Set fee registry on vault
+  tx = await coreVault.setFeeRegistry(contracts.FEE_REGISTRY);
+  await tx.wait();
+  console.log(`  ✅ CoreVault.feeRegistry set`);
+
+  // ============ PHASE 6: Cross-Chain (Optional) ============
+  if (enableCrossChain) {
+    console.log("\n" + "─".repeat(60));
+    console.log("📦 PHASE 6: CROSS-CHAIN INFRASTRUCTURE");
+    console.log("─".repeat(60));
+
+    const hubAdmin = process.env.COLLATERAL_HUB_ADMIN || deployer.address;
+    const hubOperator = process.env.CORE_VAULT_OPERATOR_ADDRESS || deployer.address;
+
+    const CollateralHub = await ethers.getContractFactory("CollateralHub");
+    const collateralHub = await CollateralHub.deploy(hubAdmin, contracts.CORE_VAULT, hubOperator);
+    await collateralHub.waitForDeployment();
+    contracts.COLLATERAL_HUB = await collateralHub.getAddress();
+    console.log(`  ✅ CollateralHub: ${contracts.COLLATERAL_HUB}`);
+
+    // Grant EXTERNAL_CREDITOR_ROLE to hub
+    const EXTERNAL_CREDITOR_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EXTERNAL_CREDITOR_ROLE"));
+    tx = await coreVault.grantRole(EXTERNAL_CREDITOR_ROLE, contracts.COLLATERAL_HUB);
+    await tx.wait();
+    console.log(`  ✅ Granted EXTERNAL_CREDITOR_ROLE to CollateralHub`);
+  }
+
+  // ============ PHASE 7: Authorization ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 PHASE 7: AUTHORIZATION");
+  console.log("─".repeat(60));
+
+  const FACTORY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("FACTORY_ROLE"));
+  const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SETTLEMENT_ROLE"));
+
+  // Grant FACTORY_ROLE
+  tx = await coreVault.grantRole(FACTORY_ROLE, contracts.FUTURES_MARKET_FACTORY);
+  await tx.wait();
+  console.log(`  ✅ Granted FACTORY_ROLE to FuturesMarketFactory`);
+
+  tx = await coreVault.grantRole(FACTORY_ROLE, contracts.MARKET_BOND_MANAGER);
+  await tx.wait();
+  console.log(`  ✅ Granted FACTORY_ROLE to MarketBondManager`);
+
+  // Grant SETTLEMENT_ROLE
+  tx = await coreVault.grantRole(SETTLEMENT_ROLE, contracts.FUTURES_MARKET_FACTORY);
+  await tx.wait();
+  console.log(`  ✅ Granted SETTLEMENT_ROLE to FuturesMarketFactory`);
+
+  tx = await coreVault.grantRole(SETTLEMENT_ROLE, deployer.address);
+  await tx.wait();
+  console.log(`  ✅ Granted SETTLEMENT_ROLE to deployer`);
+
+  // Configure MMR params (10% buffer + 10% penalty = 20% total)
+  console.log("\n  Setting MMR params...");
+  tx = await coreVault.setMmrParams(1000, 1000, 2000, 0, 1);
+  await tx.wait();
+  console.log(`  ✅ MMR params set: base=10%, penalty=10%, cap=20%`);
+
+  // ============ SAVE DEPLOYMENT ============
+  console.log("\n" + "─".repeat(60));
+  console.log("📦 SAVING DEPLOYMENT");
+  console.log("─".repeat(60));
+
+  const deploymentInfo = {
+    network: networkName,
+    chainId: Number(network.chainId),
+    timestamp: new Date().toISOString(),
+    usdcToken: realUsdcAddress,
+    deployer: deployer.address,
+    treasury: treasuryAddress,
+    contracts,
+    configuration: {
+      existingDeploymentUsed: existingDeployment ? existingPath : null,
+      crossChainEnabled: enableCrossChain,
+      bondDefault: bondDefault.toString(),
+      bondMin: bondMin.toString(),
+      bondMax: bondMax.toString(),
+      takerFeeBps: takerFeeBps.toString(),
+      makerFeeBps: makerFeeBps.toString(),
+      protocolFeeShareBps: protocolFeeShareBps.toString(),
+    },
+  };
+
+  const savedPath = saveDeployment(networkName, deploymentInfo);
+
+  // ============ SUMMARY ============
+  console.log("\n" + "═".repeat(80));
+  console.log("✅ REAL USDC MIGRATION COMPLETE!");
+  console.log("═".repeat(80));
+
+  console.log("\n📋 DEPLOYED CONTRACTS:");
+  console.log("\n🏛️  CORE:");
+  console.log(`  CORE_VAULT: ${contracts.CORE_VAULT}`);
+  console.log(`  USDC_TOKEN: ${realUsdcAddress}`);
+  
+  console.log("\n📚 LIBRARIES:");
+  console.log(`  VAULT_ANALYTICS: ${contracts.VAULT_ANALYTICS}`);
+  console.log(`  POSITION_MANAGER: ${contracts.POSITION_MANAGER}`);
+
+  console.log("\n🔧 MANAGERS:");
+  console.log(`  LIQUIDATION_MANAGER: ${contracts.LIQUIDATION_MANAGER}`);
+  console.log(`  SETTLEMENT_MANAGER: ${contracts.SETTLEMENT_MANAGER}`);
+  console.log(`  VAULT_VIEWS_MANAGER: ${contracts.VAULT_VIEWS_MANAGER}`);
+
+  console.log("\n🏭 FACTORY:");
+  console.log(`  FUTURES_MARKET_FACTORY: ${contracts.FUTURES_MARKET_FACTORY}`);
+  console.log(`  MARKET_BOND_MANAGER: ${contracts.MARKET_BOND_MANAGER}`);
+  console.log(`  FACET_REGISTRY: ${contracts.FACET_REGISTRY}`);
+  console.log(`  FEE_REGISTRY: ${contracts.FEE_REGISTRY}`);
+  console.log(`    (Taker: ${takerFeeBps}bps, Maker: ${makerFeeBps}bps, Protocol: ${protocolFeeShareBps}bps)`);
+
+  console.log("\n🔐 SESSIONS:");
+  console.log(`  GLOBAL_SESSION_REGISTRY: ${contracts.GLOBAL_SESSION_REGISTRY}`);
+
+  if (contracts.COLLATERAL_HUB) {
+    console.log("\n🌉 CROSS-CHAIN:");
+    console.log(`  COLLATERAL_HUB: ${contracts.COLLATERAL_HUB}`);
+  }
+
+  console.log("\n📋 Update your .env.local with:");
+  console.log(`CORE_VAULT_ADDRESS=${contracts.CORE_VAULT}`);
+  console.log(`NEXT_PUBLIC_CORE_VAULT_ADDRESS=${contracts.CORE_VAULT}`);
+  console.log(`FUTURES_MARKET_FACTORY_ADDRESS=${contracts.FUTURES_MARKET_FACTORY}`);
+  console.log(`NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS=${contracts.FUTURES_MARKET_FACTORY}`);
+  console.log(`FACET_REGISTRY_ADDRESS=${contracts.FACET_REGISTRY}`);
+  console.log(`FEE_REGISTRY_ADDRESS=${contracts.FEE_REGISTRY}`);
+  console.log(`GLOBAL_SESSION_REGISTRY_ADDRESS=${contracts.GLOBAL_SESSION_REGISTRY}`);
+  console.log(`MARKET_BOND_MANAGER_ADDRESS=${contracts.MARKET_BOND_MANAGER}`);
+  if (contracts.COLLATERAL_HUB) {
+    console.log(`COLLATERAL_HUB_ADDRESS=${contracts.COLLATERAL_HUB}`);
+  }
+
+  console.log("\n🎯 NEXT STEPS:");
+  console.log("  1. Verify contracts:");
+  console.log(`     npx hardhat run scripts/verify-real-usdc-migration.js --network ${networkName}`);
+  console.log("  2. Update frontend config with new contract addresses");
+  console.log("  3. Users deposit REAL USDC to new CoreVault");
+  console.log("  4. Market creators call factory.createFuturesMarketV2() for new markets");
+  if (contracts.COLLATERAL_HUB) {
+    console.log("  5. Register spokes on CollateralHub:");
+    console.log(`     npx hardhat run scripts/register-spokes-on-hub.js --network ${networkName}`);
+    console.log("  6. Reconfigure spokes on other chains:");
+    console.log("     npx hardhat run scripts/reconfigure-spokes.js --network mainnet");
+  }
+  console.log("\n" + "═".repeat(80));
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error("\n❌ DEPLOYMENT FAILED:", error.message);
+    console.error(error);
+    process.exit(1);
+  });

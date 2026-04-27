@@ -63,12 +63,22 @@ export default function DepositModal({
     decimals: 18,
     chain: 'Polygon'
   }
+  // Arbitrum has two USDC tokens: Bridged USDC.e and Native USDC
+  const arbitrumUSDCe: Token = {
+    symbol: 'USDC.e',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
+    name: 'Bridged USDC (USDC.e)',
+    decimals: 6,
+    chain: 'Arbitrum',
+    contractAddress: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8'
+  }
   const arbitrumUSDC: Token = {
     symbol: 'USDC',
     icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
-    name: 'USD Coin',
+    name: 'USD Coin (Native)',
     decimals: 6,
-    chain: 'Arbitrum'
+    chain: 'Arbitrum',
+    contractAddress: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'
   }
   const arbitrumUSDT: Token = {
     symbol: 'USDT',
@@ -133,7 +143,7 @@ export default function DepositModal({
 
   const availableTokens: Token[] = [
     polygonUSDC, polygonUSDT, polygonDAI,
-    arbitrumUSDC, arbitrumUSDT, arbitrumDAI,
+    arbitrumUSDCe, arbitrumUSDC, arbitrumUSDT, arbitrumDAI,
     ethereumUSDC, ethereumUSDT, ethereumDAI,
     hyperliquidUSDC, hyperliquidUSDT, hyperliquidDAI
   ]

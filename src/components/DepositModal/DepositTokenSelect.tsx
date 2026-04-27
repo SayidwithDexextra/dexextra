@@ -126,6 +126,12 @@ export default function DepositTokenSelect({
     }
   }, [availableTokens])
 
+  // Determine if a chain is enabled - currently only Arbitrum is live
+  const isChainEnabled = (chain: string) => {
+    const c = (chain || '').toLowerCase()
+    return c === 'arbitrum'
+  }
+
   // Determine if a chain is enabled based on presence of its Spoke Vault address
   const chainHasVault = (chain: string) => {
     const c = (chain || '').toLowerCase()
@@ -188,16 +194,22 @@ export default function DepositTokenSelect({
           {chainNames.map((chain) => {
             const tokens = chainToTokens[chain]
             const opened = openChain === chain
+            const chainEnabled = isChainEnabled(chain)
             return (
-              <div key={chain} className="mb-4">
+              <div key={chain} className={`mb-4 ${!chainEnabled ? 'opacity-40' : ''}`}>
                 {/* Chain header row */}
                 <button
                   data-walkthrough={chain === 'Arbitrum' ? 'deposit-chain-arbitrum' : undefined}
-                  className="w-full flex items-center justify-between p-3 rounded-md border bg-[#0F0F0F] hover:bg-[#1A1A1A] border-[#222222] hover:border-[#333333] transition-all duration-200"
-                  onClick={() => toggleChain(chain)}
+                  className={`w-full flex items-center justify-between p-3 rounded-md border bg-[#0F0F0F] border-[#222222] transition-all duration-200 ${
+                    chainEnabled 
+                      ? 'hover:bg-[#1A1A1A] hover:border-[#333333] cursor-pointer' 
+                      : 'cursor-not-allowed'
+                  }`}
+                  onClick={() => chainEnabled && toggleChain(chain)}
+                  disabled={!chainEnabled}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <div className={`w-1.5 h-1.5 rounded-full ${chainEnabled ? 'bg-blue-400' : 'bg-[#404040]'}`} />
                     {!!CHAIN_LOGOS[chain] && (
                       <div className="w-5 h-5 bg-[#1A1A1A] rounded-md flex items-center justify-center overflow-hidden">
                         <img
@@ -212,21 +224,30 @@ export default function DepositTokenSelect({
                         />
                       </div>
                     )}
-                    <h4 className="text-xs font-medium text-white uppercase tracking-wide">{chain}</h4>
-                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                      {tokens.length}
-                    </div>
+                    <h4 className={`text-xs font-medium uppercase tracking-wide ${chainEnabled ? 'text-white' : 'text-[#606060]'}`}>{chain}</h4>
+                    {!chainEnabled && (
+                      <div className="text-[9px] text-yellow-500/80 bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/20">
+                        Coming Soon
+                      </div>
+                    )}
+                    {chainEnabled && (
+                      <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                        {tokens.length}
+                      </div>
+                    )}
                   </div>
-                  <svg
-                    className={`w-3 h-3 text-[#606060] transition-transform duration-200 ${opened ? 'rotate-180' : 'rotate-0'}`}
-                    viewBox="0 0 24 24" fill="none"
-                  >
-                    <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  {chainEnabled && (
+                    <svg
+                      className={`w-3 h-3 text-[#606060] transition-transform duration-200 ${opened ? 'rotate-180' : 'rotate-0'}`}
+                      viewBox="0 0 24 24" fill="none"
+                    >
+                      <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
                 </button>
 
-                {/* Chain token grid */}
-                <div className={`overflow-hidden transition-all duration-300 ${opened ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'}`}>
+                {/* Chain token grid - only show for enabled chains */}
+                <div className={`overflow-hidden transition-all duration-300 ${opened && chainEnabled ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'}`}>
                   {/* Coming soon banner when vault not configured for this chain */}
                   {!chainHasVault(chain) && (
                     <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 mt-3 mb-3">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
-const COMING_SOON_PASSWORD = process.env.NEXT_PUBLIC_COMING_SOON_PASSWORD || 'dexetera2026'
+const COMING_SOON_PASSWORD = process.env.NEXT_PUBLIC_COMING_SOON_PASSWORD || 'dexetera2026' || '0'
 const SESSION_KEY = 'dexetera_coming_soon_unlocked'
 
 interface ComingSoonGateProps {
