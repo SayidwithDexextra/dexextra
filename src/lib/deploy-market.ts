@@ -950,7 +950,30 @@ export async function deployMarket(
 
     laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(effectiveCoreVaultAddress));
     log('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook });
-    const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, vaultWallet);
+    
+    // Check which wallet has DEFAULT_ADMIN_ROLE - vault admin may not have it
+    const DEFAULT_ADMIN_ROLE = ethers.ZeroHash; // 0x00...00
+    const vaultReadOnly = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, provider);
+    const [adminHasRole, vaultAdminHasRole] = await Promise.all([
+      vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, ownerAddress).catch(() => false),
+      vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, vaultAddr).catch(() => false),
+    ]);
+    
+    // Use whichever wallet has admin role (prefer vault wallet for parallelism)
+    const roleGranterWallet = vaultAdminHasRole ? vaultWallet : (adminHasRole ? wallet : vaultWallet);
+    const roleGranterNonceMgr = vaultAdminHasRole ? vaultNonceMgr : (adminHasRole ? nonceMgr : vaultNonceMgr);
+    const roleGranterAddr = await roleGranterWallet.getAddress();
+    
+    if (!vaultAdminHasRole && adminHasRole) {
+      laneLog('B', 'Role granter override', 'start', `vaultAdmin lacks DEFAULT_ADMIN_ROLE, using admin ${shortAddr(roleGranterAddr)}`);
+      log('grant_roles_wallet_override', 'success', { 
+        vaultAdminHasRole, adminHasRole, 
+        using: roleGranterAddr,
+        reason: 'vaultAdmin lacks DEFAULT_ADMIN_ROLE' 
+      });
+    }
+    
+    const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, roleGranterWallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 
@@ -960,10 +983,10 @@ export async function deployMarket(
       let gasBumpMultiplier = 1n;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          // Always resync nonce before each attempt - the vault wallet may be used
-          // concurrently by other rollover jobs, causing stale nonces even on first try
-          await vaultNonceMgr.resync();
-          const baseOv = await vaultNonceMgr.nextOverrides();
+          // Always resync nonce before each attempt - the wallet may be used
+          // concurrently by other jobs, causing stale nonces even on first try
+          await roleGranterNonceMgr.resync();
+          const baseOv = await roleGranterNonceMgr.nextOverrides();
           // Apply gas bump if this is a retry due to replacement underpriced
           const ov = gasBumpMultiplier > 1n ? {
             ...baseOv,
@@ -973,19 +996,25 @@ export async function deployMarket(
           } : baseOv;
           const tx = await coreVault.grantRole(roleHash, orderBook!, ov);
           laneLog('B', roleName, 'start', `tx sent ${shortTx(tx.hash)}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
-          log(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt });
+          log(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt, granter: roleGranterAddr });
           return tx;
         } catch (e: any) {
           const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
           const code = e?.error?.code ?? e?.code;
           const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
           const isReplacementError = /replacement.*underpriced|REPLACEMENT_UNDERPRICED|replacement fee too low/i.test(msg) || code === 'REPLACEMENT_UNDERPRICED';
+          const isAccessControlError = /AccessControl|e2517d3f|unauthorized/i.test(msg) || e?.data?.includes?.('e2517d3f');
           const isTransient =
             isNonceError ||
             isReplacementError ||
             code === -32100 ||
             code === 'UNKNOWN_ERROR' ||
             /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
+          // Access control errors are not transient - fail fast
+          if (isAccessControlError) {
+            laneLog('B', roleName, 'error', `ACCESS DENIED: ${roleGranterAddr} lacks DEFAULT_ADMIN_ROLE on CoreVault`);
+            throw new Error(`AccessControlUnauthorizedAccount: ${roleGranterAddr} cannot grant roles on CoreVault ${effectiveCoreVaultAddress}`);
+          }
           if (!isTransient || attempt === maxRetries) throw e;
           // Bump gas price for replacement errors (need 10%+ increase to replace pending tx)
           if (isReplacementError) gasBumpMultiplier = gasBumpMultiplier === 1n ? 2n : gasBumpMultiplier + 1n;
