@@ -560,34 +560,44 @@ export async function POST(req: Request) {
       laneLog('A', 'Lane complete', 'success', `total: ${Date.now() - laneAStart}ms`);
     };
 
+    // ── Pre-check: determine which wallet Lane B will use for role grants ──
+    // This affects whether we can run lanes in parallel (different wallets) or must run sequentially (same wallet)
+    let laneBUsesSameWallet = false;
+    let roleGranterWallet = vaultWallet;
+    let roleGranterNonceMgr = vaultNonceMgr;
+    
+    if (needRoles) {
+      const DEFAULT_ADMIN_ROLE = ethers.ZeroHash; // 0x00...00
+      const vaultReadOnly = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, provider);
+      const [adminHasRole, vaultAdminHasRole] = await Promise.all([
+        vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, ownerAddress).catch(() => false),
+        vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, vaultAddr).catch(() => false),
+      ]);
+      
+      if (!vaultAdminHasRole && adminHasRole) {
+        // Vault admin can't grant roles - must use admin wallet
+        roleGranterWallet = wallet;
+        roleGranterNonceMgr = nonceMgr;
+        laneBUsesSameWallet = true;
+        logS('lane_b_wallet_check', 'success', { 
+          vaultAdminHasRole, adminHasRole, 
+          laneBUsesSameWallet,
+          reason: 'vaultAdmin lacks DEFAULT_ADMIN_ROLE, Lane B will use admin wallet' 
+        });
+      }
+    }
+
     // Lane B: vault admin operations (CoreVault role grants)
     const laneB = async () => {
-      laneLog('B', 'Starting lane', 'start', `signer=${shortAddr(vaultAddr)}`);
+      laneLog('B', 'Starting lane', 'start', `signer=${shortAddr(await roleGranterWallet.getAddress())}`);
 
       if (needRoles) {
-        laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(effectiveCoreVaultAddress));
-        logS('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook });
-        
-        // Check which wallet has DEFAULT_ADMIN_ROLE - vault admin may not have it
-        const DEFAULT_ADMIN_ROLE = ethers.ZeroHash; // 0x00...00
-        const vaultReadOnly = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, provider);
-        const [adminHasRole, vaultAdminHasRole] = await Promise.all([
-          vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, ownerAddress).catch(() => false),
-          vaultReadOnly.hasRole(DEFAULT_ADMIN_ROLE, vaultAddr).catch(() => false),
-        ]);
-        
-        // Use whichever wallet has admin role (prefer vault wallet for parallelism)
-        const roleGranterWallet = vaultAdminHasRole ? vaultWallet : (adminHasRole ? wallet : vaultWallet);
-        const roleGranterNonceMgr = vaultAdminHasRole ? vaultNonceMgr : (adminHasRole ? nonceMgr : vaultNonceMgr);
         const roleGranterAddr = await roleGranterWallet.getAddress();
+        laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(effectiveCoreVaultAddress));
+        logS('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook, granter: roleGranterAddr });
         
-        if (!vaultAdminHasRole && adminHasRole) {
-          laneLog('B', 'Role granter override', 'start', `vaultAdmin lacks DEFAULT_ADMIN_ROLE, using admin ${shortAddr(roleGranterAddr)}`);
-          logS('grant_roles_wallet_override', 'success', { 
-            vaultAdminHasRole, adminHasRole, 
-            using: roleGranterAddr,
-            reason: 'vaultAdmin lacks DEFAULT_ADMIN_ROLE' 
-          });
+        if (laneBUsesSameWallet) {
+          laneLog('B', 'Role granter override', 'start', `using admin ${shortAddr(roleGranterAddr)} (same as Lane A)`);
         }
         
         const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, roleGranterWallet);
