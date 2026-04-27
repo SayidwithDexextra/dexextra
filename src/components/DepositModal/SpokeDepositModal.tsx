@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Wallet } from 'lucide-react'
+import { useWalletAddress } from '@/hooks/useWalletAddress'
+import { useArbitrumUSDCBalance } from '@/hooks/useArbitrumUSDCBalance'
 
 interface SpokeDepositModalProps {
   isOpen: boolean
@@ -29,17 +31,36 @@ export default function SpokeDepositModal({
 }: SpokeDepositModalProps) {
   const [amount, setAmount] = useState(defaultAmount)
   const [localError, setLocalError] = useState<string | null>(null)
+  
+  // Get wallet address and USDC balance
+  const { walletAddress } = useWalletAddress()
+  const { balance, isLoading: isBalanceLoading, refetch: refetchBalance } = useArbitrumUSDCBalance(walletAddress)
+
+  // Format balance for display (max 2 decimal places for readability)
+  const formattedBalance = balance ? parseFloat(balance).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }) : '0.00'
+
+  const handleMaxClick = () => {
+    if (balance) {
+      // Use full precision balance for the input
+      setAmount(balance)
+    }
+  }
 
   useEffect(() => {
     if (isOpen) {
       setAmount(defaultAmount)
       setLocalError(null)
       document.body.style.overflow = 'hidden'
+      // Refetch balance when modal opens
+      refetchBalance()
     }
     return () => {
       document.body.style.overflow = ''
     }
-  }, [isOpen, defaultAmount])
+  }, [isOpen, defaultAmount, refetchBalance])
 
   if (!isOpen) return null
 
@@ -118,6 +139,18 @@ export default function SpokeDepositModal({
         <div className="px-6 pt-3 pb-1 text-center space-y-1">
           <h2 className="text-lg font-semibold text-white">Deposit {selectedToken.symbol} (Arbitrum)</h2>
           <p className="text-[11px] text-[#808080]">Enter the amount to deposit to the spoke vault.</p>
+          {/* Wallet Balance Display */}
+          <div className="flex items-center justify-center gap-1.5 pt-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+            <span className="text-[11px] text-[#9CA3AF]">
+              Wallet Balance:{' '}
+              {isBalanceLoading ? (
+                <span className="text-[#606060]">Loading...</span>
+              ) : (
+                <span className="text-white font-medium">{formattedBalance} {selectedToken.symbol}</span>
+              )}
+            </span>
+          </div>
         </div>
 
         {/* Body */}
@@ -138,8 +171,18 @@ export default function SpokeDepositModal({
               <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                 Amount
               </div>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-2 py-0.5 rounded">
-                {selectedToken.symbol}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleMaxClick}
+                  disabled={!balance || isBalanceLoading || parseFloat(balance || '0') <= 0}
+                  className="text-[10px] font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/20 hover:border-blue-500/30 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  MAX
+                </button>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-2 py-0.5 rounded">
+                  {selectedToken.symbol}
+                </div>
               </div>
             </div>
             <div className="p-3">
