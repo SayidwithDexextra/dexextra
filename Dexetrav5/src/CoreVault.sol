@@ -245,42 +245,7 @@ contract CoreVault is
     }
 
     // ============ Collateral Management ============
-
-    function depositCollateral(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) revert InvalidAmount();
-        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
-        userCollateral[msg.sender] += amount;
-        totalCollateralDeposited += amount;
-        _ensureUserTracked(msg.sender);
-        emit CollateralDeposited(msg.sender, amount);
-    }
-
-    function withdrawCollateral(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) revert InvalidAmount();
-        uint256 available = _getWithdrawableCollateral(msg.sender);
-        if (available < amount) revert InsufficientAvailable();
-
-        int256 realizedPnL18 = userRealizedPnL[msg.sender];
-        uint256 realizedPnL6 = realizedPnL18 > 0 ? uint256(realizedPnL18 / int256(DECIMAL_SCALE)) : 0;
-        uint256 fromPnL = amount <= realizedPnL6 ? amount : realizedPnL6;
-        uint256 fromDeposit = amount - fromPnL;
-
-        if (fromPnL > 0) {
-            userRealizedPnL[msg.sender] -= int256(fromPnL * DECIMAL_SCALE);
-        }
-        if (fromDeposit > 0) {
-            if (userCollateral[msg.sender] < fromDeposit) revert InsufficientBalance();
-            userCollateral[msg.sender] -= fromDeposit;
-            if (totalCollateralDeposited >= fromDeposit) {
-                totalCollateralDeposited -= fromDeposit;
-            } else {
-                totalCollateralDeposited = 0;
-            }
-        }
-
-        collateralToken.safeTransfer(msg.sender, amount);
-        emit CollateralWithdrawn(msg.sender, amount);
-    }
+    // NOTE: Direct hub deposits/withdrawals removed - all collateral flows through cross-chain (Arbitrum)
 
     function _consumeUserFunds(address user, uint256 amount) internal returns (uint256 fromExtCredit, uint256 fromCollateral) {
         uint256 extBal = userCrossChainCredit[user];
@@ -306,9 +271,24 @@ contract CoreVault is
     function debitExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
         if (user == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
-        uint256 bal = userCrossChainCredit[user];
-        if (bal < amount) revert InsufficientBalance();
-        userCrossChainCredit[user] = bal - amount;
+        
+        // First debit from positive realized PnL (converted from 18d to 6d)
+        int256 realizedPnL18 = userRealizedPnL[user];
+        uint256 realizedPnL6 = realizedPnL18 > 0 ? uint256(realizedPnL18 / int256(DECIMAL_SCALE)) : 0;
+        uint256 fromPnL = amount <= realizedPnL6 ? amount : realizedPnL6;
+        uint256 remaining = amount - fromPnL;
+        
+        if (fromPnL > 0) {
+            userRealizedPnL[user] -= int256(fromPnL * DECIMAL_SCALE);
+        }
+        
+        // Then debit remaining from cross-chain credit
+        if (remaining > 0) {
+            uint256 bal = userCrossChainCredit[user];
+            if (bal < remaining) revert InsufficientBalance();
+            userCrossChainCredit[user] = bal - remaining;
+        }
+        
         emit ExternalCreditRemoved(user, amount);
     }
 

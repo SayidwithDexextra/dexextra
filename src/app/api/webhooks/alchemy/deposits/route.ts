@@ -826,7 +826,6 @@ export async function POST(request: NextRequest) {
     })
 
     if (!Array.isArray(logs) || logs.length === 0) {
-      console.log('[alchemy-deposits] ⏭️ no logs, ack')
       return NextResponse.json(
         { ok: true, inserted: 0, reason: 'no logs' },
         { status: 200 }

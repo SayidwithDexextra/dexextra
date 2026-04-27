@@ -795,105 +795,56 @@ export function useCoreVault(walletAddress?: string) {
     }
   }, [userAddress, fetchBalances, getWriteContracts]);
 
-  // Withdraw collateral — unified: routes hub-direct and cross-chain portions automatically
+  // Withdraw collateral — all withdrawals route through cross-chain to Arbitrum
+  // Hub direct withdrawals removed (all liquidity is on Arbitrum spoke)
   const withdrawCollateral = useCallback(async (amount: string, preferredSpokeChainId?: number): Promise<string> => {
-    const currentContracts = await getWriteContracts();
-    if (!currentContracts) throw new Error('Contracts not initialized or wallet not connected');
     if (!userAddress) throw new Error('Wallet address not available');
 
     try {
-      console.log(`[withdraw] Starting unified withdrawal for ${userAddress.slice(0, 6)}...`, { amount });
+      console.log(`[withdraw] Starting cross-chain withdrawal for ${userAddress.slice(0, 6)}...`, { amount });
       const requestedAmount = parseFloat(amount);
-
-      let hubWithdrawable = parseFloat(withdrawableBalance || '0') || 0;
-      const ccCredit = parseFloat(crossChainCredit || '0') || 0;
-
-      // Safety: verify the vault actually holds enough USDC for the hub portion.
-      // Prevents ERC20InsufficientBalance revert if the ledger is out of sync
-      // with the vault's token balance (e.g. realized PnL without backing tokens).
-      try {
-        const vaultAddr = CONTRACT_ADDRESSES.CORE_VAULT || await currentContracts.vault.getAddress();
-        const vaultUsdcBal: bigint = await currentContracts.mockUSDC.balanceOf(vaultAddr);
-        const vaultUsdcNum = parseFloat(formatTokenAmount(vaultUsdcBal)) || 0;
-        if (hubWithdrawable > vaultUsdcNum) {
-          console.log(`[withdraw] Clamping hub portion: ledger says ${hubWithdrawable} but vault holds ${vaultUsdcNum} USDC`);
-          hubWithdrawable = vaultUsdcNum;
-        }
-      } catch {
-        // If balance check fails, proceed with ledger value (best-effort)
+      
+      if (requestedAmount <= 0.001) {
+        throw new Error('Withdrawal amount too small');
       }
 
-      // Determine how much goes through hub vs cross-chain, clamping each to actual balance
-      const hubPortion = Math.min(requestedAmount, hubWithdrawable);
-      const crossChainPortion = Math.min(requestedAmount - hubPortion, ccCredit);
+      // All withdrawals go through cross-chain to Arbitrum (default) or specified spoke
+      const targetChain = preferredSpokeChainId || 42161;
+      console.log(`[withdraw] Cross-chain withdrawal: ${requestedAmount.toFixed(6)} USDC → chain ${targetChain}`);
 
-      let hubTxHash = '';
+      const res = await fetch('/api/withdraw/cross-chain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: userAddress,
+          amount: requestedAmount.toFixed(6),
+          targetChainId: targetChain,
+        }),
+      });
 
-      // Part 1: Withdraw hub portion directly from CoreVault
-      if (hubPortion > 0.001) {
-        console.log(`[withdraw] Hub direct portion: ${hubPortion.toFixed(6)} USDC`);
-        const hubAmountWei = parseTokenAmount(hubPortion.toFixed(6));
-        const startTime = Date.now();
-        const withdrawTx = await currentContracts.vault.withdrawCollateral(hubAmountWei);
-        const duration = Date.now() - startTime;
-        console.log(`[withdraw] Hub withdrawal submitted in ${duration}ms`, { txHash: withdrawTx.hash });
-        await withdrawTx.wait();
-        hubTxHash = withdrawTx.hash;
-
-        recordVaultTransaction({
-          wallet_address: userAddress,
-          tx_type: 'withdraw',
-          amount: hubPortion,
-          chain_id: getChainId(),
-          tx_hash: withdrawTx.hash,
-          method: 'hub_direct',
-        });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || `Cross-chain withdrawal failed (HTTP ${res.status})`);
       }
+      console.log(`[withdraw] Cross-chain withdrawal complete`, data);
 
-      // Part 2: Withdraw cross-chain portion via relay API
-      if (crossChainPortion > 0.001) {
-        // Default spoke chain: Arbitrum (42161) unless caller specifies
-        const targetChain = preferredSpokeChainId || 42161;
-        console.log(`[withdraw] Cross-chain portion: ${crossChainPortion.toFixed(6)} USDC → chain ${targetChain}`);
-
-        const res = await fetch('/api/withdraw/cross-chain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user: userAddress,
-            amount: crossChainPortion.toFixed(6),
-            targetChainId: targetChain,
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || `Cross-chain withdrawal failed (HTTP ${res.status})`);
-        }
-        console.log(`[withdraw] Cross-chain withdrawal complete`, data);
-
-        recordVaultTransaction({
-          wallet_address: userAddress,
-          tx_type: 'withdraw',
-          amount: crossChainPortion,
-          chain_id: targetChain,
-          tx_hash: data.withdrawId || undefined,
-          method: 'cross_chain',
-          metadata: { targetChainId: targetChain, withdrawId: data.withdrawId },
-        });
-
-        if (!hubTxHash) {
-          hubTxHash = data.withdrawId || 'cross-chain-complete';
-        }
-      }
+      recordVaultTransaction({
+        wallet_address: userAddress,
+        tx_type: 'withdraw',
+        amount: requestedAmount,
+        chain_id: targetChain,
+        tx_hash: data.withdrawId || undefined,
+        method: 'cross_chain',
+        metadata: { targetChainId: targetChain, withdrawId: data.withdrawId },
+      });
 
       fetchBalances();
-      return hubTxHash || 'withdrawal-complete';
+      return data.withdrawId || 'cross-chain-complete';
     } catch (err) {
       console.error('Withdrawal failed:', err);
       throw err;
     }
-  }, [userAddress, fetchBalances, getWriteContracts, withdrawableBalance, crossChainCredit]);
+  }, [userAddress, fetchBalances]);
 
   // Unified withdrawable = hub withdrawable + cross-chain credit, capped at available
   // balance (which already accounts for margin locked in open positions).

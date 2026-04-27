@@ -462,11 +462,19 @@ export default function DepositModal({
     const currentAllowance: bigint = await token.allowance(userAddress, vaultAddress)
     if (currentAllowance < amountWei) {
       const approveTx = await token.approve(vaultAddress, amountWei)
-      await approveTx.wait()
+      const approveReceipt = await approveTx.wait()
+      if (!approveReceipt || approveReceipt.status === 0) {
+        throw new Error('Token approval failed. Please try again.')
+      }
     }
 
     const depositTx = await vault.deposit(tokenAddress, amountWei)
-    await depositTx.wait()
+    const depositReceipt = await depositTx.wait()
+    
+    // Verify the transaction was successful
+    if (!depositReceipt || depositReceipt.status === 0) {
+      throw new Error('Deposit transaction failed on-chain. Please try again.')
+    }
   }
 
   const handleSpokeDepositSubmit = async (amount: string) => {
@@ -490,21 +498,60 @@ export default function DepositModal({
       setStep('success')
     } catch (err: any) {
       console.error('Function deposit error:', err)
-      const message = err?.message || 'Failed to process deposit'
+      const rawMessage = err?.message || 'Failed to process deposit'
+      
+      // Categorize errors for better user experience
       const isBalanceIssue =
-        typeof message === 'string' && message.toLowerCase().includes('insufficient balance')
+        typeof rawMessage === 'string' && rawMessage.toLowerCase().includes('insufficient balance')
+      const isUserRejection =
+        typeof rawMessage === 'string' && (
+          rawMessage.toLowerCase().includes('user rejected') ||
+          rawMessage.toLowerCase().includes('user denied') ||
+          err?.code === 4001 ||
+          err?.code === 'ACTION_REJECTED'
+        )
+      const isRpcParsingError =
+        typeof rawMessage === 'string' && (
+          rawMessage.includes('invalid value for value.nonce') ||
+          rawMessage.includes('INVALID_ARGUMENT')
+        )
+      const isInsufficientGas =
+        typeof rawMessage === 'string' && (
+          rawMessage.toLowerCase().includes('insufficient funds for gas') ||
+          rawMessage.toLowerCase().includes('gas required exceeds')
+        )
+
+      // Map errors to user-friendly messages
+      let userMessage: string
+      if (isUserRejection) {
+        userMessage = 'Transaction was cancelled. Please try again when ready.'
+      } else if (isInsufficientGas) {
+        userMessage = 'Insufficient ETH for gas fees. Please add ETH to your wallet and try again.'
+      } else if (isRpcParsingError) {
+        userMessage = 'Network communication error. Your deposit may still be processing. Please check your balance in a moment and try again if needed.'
+      } else if (isBalanceIssue) {
+        userMessage = rawMessage
+      } else {
+        userMessage = rawMessage
+      }
 
       if (err?.isNetworkSwitchIssue || isBalanceIssue) {
         // Keep user in spoke modal with a warning/error banner and allow retry.
         setPaymentStatus('pending')
         setStep('spoke')
         setShowSpokeDepositModal(true)
-        setSpokeDepositError(isBalanceIssue ? message : null)
+        setSpokeDepositError(isBalanceIssue ? userMessage : null)
+      } else if (isUserRejection) {
+        // User cancelled - return to spoke modal without showing error step
+        setPaymentStatus('pending')
+        setStep('spoke')
+        setShowSpokeDepositModal(true)
+        setSpokeDepositError(userMessage)
       } else {
         setPaymentStatus('error')
         setStep('error')
-        setError(message)
-        setSpokeDepositError(message)
+        setError(userMessage)
+        setSpokeDepositError(userMessage)
       }
     } finally {
       setIsFunctionDepositLoading(false)

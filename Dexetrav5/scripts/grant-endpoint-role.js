@@ -5,8 +5,9 @@ async function main() {
   const NEW_INBOX = "0x1adeA56c1005CcbAE9B043C974077ABad2Dc3d18";
   const RELAYER = "0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306"; // Actual fallback relayer
 
-  // Admin key for new inbox (0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306)
-  const adminKey = "0x8ec417aba0500c50c84eeae13b4cad3e7d3a31df86beca0c7838227a37539c89";
+  // NEVER hardcode private keys - use environment variables
+  const adminKey = process.env.ADMIN_PRIVATE_KEY;
+  if (!adminKey) throw new Error("ADMIN_PRIVATE_KEY env var required");
 
   console.log("Granting BRIDGE_ENDPOINT_ROLE on SpokeBridgeInbox to relayer...");
   console.log("Inbox:", NEW_INBOX);

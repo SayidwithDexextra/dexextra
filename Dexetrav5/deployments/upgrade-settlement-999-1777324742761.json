@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-04-27T21:17:24.504Z",
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "network": "hyperliquid",
+  "chainId": 999,
+  "vaultProxy": "0x13C0EE284eF74E10A6442077718D57e2C50Ee88F",
+  "changes": [
+    "CoreVault implementation upgraded (UUPS)"
+  ],
+  "newCoreVaultImpl": "0x4aa6025D4F7860aeE511A44806a78333662b0585",
+  "upgradeToAndCallTx": "0x1a9a1c3f5af289e93419e3c3021c839f39b8c446122845de7d23dac0a59486bc"
+}
