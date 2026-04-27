@@ -141,9 +141,11 @@ export default function DepositModal({
     chain: 'Hyperliquid'
   }
 
+  // Only Native USDC on Arbitrum is supported for deposits (withdrawal API uses Native USDC)
+  // Bridged USDC.e and other tokens show as disabled in UI
   const availableTokens: Token[] = [
     polygonUSDC, polygonUSDT, polygonDAI,
-    arbitrumUSDCe, arbitrumUSDC, arbitrumUSDT, arbitrumDAI,
+    arbitrumUSDC, arbitrumUSDCe, arbitrumUSDT, arbitrumDAI, // Native USDC first (enabled), others disabled
     ethereumUSDC, ethereumUSDT, ethereumDAI,
     hyperliquidUSDC, hyperliquidUSDT, hyperliquidDAI
   ]

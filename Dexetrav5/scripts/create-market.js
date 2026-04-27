@@ -1188,8 +1188,9 @@ async function main() {
 
   let deployer = (await ethers.getSigners())[0];
   if (!deployer) {
+    // Use RELAYER_PRIVATE_KEY as fallback (0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306)
     const fallbackPk =
-      "0xe5b1ad83fbb29db6b094e70507476573ca17d5ba1bbbe81fd00363d7ffbe35bb";
+      "0x8ec417aba0500c50c84eeae13b4cad3e7d3a31df86beca0c7838227a37539c89";
     if (!fallbackPk) {
       throw new Error(
         "No signer available. Set PRIVATE_KEY or PRIVATE_KEY_DEPLOYER in env."

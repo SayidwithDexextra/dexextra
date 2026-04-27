@@ -24,8 +24,8 @@ const SPOKE_INBOX_ABI = [
 type SpokeChainConfig = {
   name: string
   chainId: number
-  usdcEnv: string
-  inboxEnv: string
+  usdcAddress: string
+  inboxAddress: string
   rpcList: (string | undefined)[]
 }
 
@@ -34,8 +34,8 @@ function getSpokeConfig(chainId: number): SpokeChainConfig {
     return {
       name: 'polygon',
       chainId: 137,
-      usdcEnv: 'SPOKE_POLYGON_USDC_ADDRESS',
-      inboxEnv: 'SPOKE_INBOX_ADDRESS_POLYGON',
+      usdcAddress: process.env.SPOKE_POLYGON_USDC_ADDRESS || '',
+      inboxAddress: process.env.SPOKE_INBOX_ADDRESS_POLYGON || process.env.SPOKE_INBOX_ADDRESS || '',
       rpcList: [
         process.env.ALCHEMY_POLYGON_HTTP,
         process.env.RPC_URL_POLYGON,
@@ -47,12 +47,15 @@ function getSpokeConfig(chainId: number): SpokeChainConfig {
     return {
       name: 'arbitrum',
       chainId: 42161,
-      usdcEnv: 'SPOKE_ARBITRUM_USDC_ADDRESS',
-      inboxEnv: 'SPOKE_INBOX_ADDRESS_ARBITRUM',
+      // Use Native USDC for withdrawals (matches deposit token in SpokeVault)
+      // Hardcoded fallback due to Vercel env var sync issues
+      usdcAddress: process.env.SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS || '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+      inboxAddress: process.env.SPOKE_INBOX_ADDRESS_ARBITRUM || '0x1adeA56c1005CcbAE9B043C974077ABad2Dc3d18',
       rpcList: [
         process.env.ALCHEMY_ARBITRUM_HTTP,
         process.env.RPC_URL_ARBITRUM,
         process.env.ARBITRUM_RPC_URL,
+        'https://arb-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
       ],
     }
   }
@@ -102,9 +105,18 @@ export async function POST(request: NextRequest) {
 
     const spokeCfg = getSpokeConfig(targetChainId)
     const amountWei = ethers.parseUnits(amount, 6)
+    
+    // Debug: log the config being used
+    console.log(`${tag} Using spoke config:`, {
+      name: spokeCfg.name,
+      usdcAddress: spokeCfg.usdcAddress,
+      inboxAddress: spokeCfg.inboxAddress,
+      envInboxValue: process.env.SPOKE_INBOX_ADDRESS_ARBITRUM || 'NOT_SET',
+    })
 
-    const collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS
-    const hubOutboxAddr = process.env.HUB_OUTBOX_ADDRESS
+    // Hardcoded fallbacks due to Vercel env var sync issues
+    const collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS || '0xB4d81a5093dB98de9088a061fb1b3982Fe09D3b5'
+    const hubOutboxAddr = process.env.HUB_OUTBOX_ADDRESS || '0x4c32ff22b927a134a3286d5E33212debF951AcF5'
     if (!collateralHubAddr || !ethers.isAddress(collateralHubAddr)) {
       return NextResponse.json({ error: 'COLLATERAL_HUB_ADDRESS not configured' }, { status: 500 })
     }
@@ -112,7 +124,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'HUB_OUTBOX_ADDRESS not configured' }, { status: 500 })
     }
 
-    const spokeUsdcAddr = (process.env as any)[spokeCfg.usdcEnv] || ''
+    const spokeUsdcAddr = spokeCfg.usdcAddress
     if (!spokeUsdcAddr || !ethers.isAddress(spokeUsdcAddr)) {
       return NextResponse.json(
         { error: `USDC address not configured for ${spokeCfg.name}` },
@@ -120,8 +132,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const spokeInboxAddr =
-      (process.env as any)[spokeCfg.inboxEnv] || process.env.SPOKE_INBOX_ADDRESS || ''
+    const spokeInboxAddr = spokeCfg.inboxAddress
     if (!spokeInboxAddr || !ethers.isAddress(spokeInboxAddr)) {
       return NextResponse.json(
         { error: `Spoke inbox not configured for ${spokeCfg.name}` },

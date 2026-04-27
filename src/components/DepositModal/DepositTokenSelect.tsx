@@ -132,6 +132,18 @@ export default function DepositTokenSelect({
     return c === 'arbitrum'
   }
 
+  // Determine if a specific token is enabled for deposits
+  // Currently only Native USDC on Arbitrum is supported (withdrawal API uses Native USDC)
+  const isTokenEnabled = (token: Token) => {
+    const chain = (token.chain || '').toLowerCase()
+    if (chain === 'arbitrum') {
+      // Only Native USDC is enabled - Bridged USDC.e and others are disabled
+      return token.symbol === 'USDC' && token.contractAddress === '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'
+    }
+    // Other chains are disabled at chain level
+    return false
+  }
+
   // Determine if a chain is enabled based on presence of its Spoke Vault address
   const chainHasVault = (chain: string) => {
     const c = (chain || '').toLowerCase()
@@ -268,6 +280,7 @@ export default function DepositTokenSelect({
                   <div className="grid grid-cols-2 gap-3 mt-3">
                     {tokens.map((t) => {
                       const isActive = localSelected === t.symbol && selectedToken?.chain === t.chain
+                      const tokenEnabled = isTokenEnabled(t)
                       return (
                         <div
                           key={`${t.chain}-${t.symbol}`}
@@ -278,13 +291,15 @@ export default function DepositTokenSelect({
                           }
                           className={[
                             'group rounded-md border transition-all duration-200',
-                            'bg-[#0F0F0F] hover:bg-[#1A1A1A]',
-                            isActive ? 'border-[#333333]' : 'border-[#222222] hover:border-[#333333]'
+                            tokenEnabled ? 'bg-[#0F0F0F] hover:bg-[#1A1A1A]' : 'bg-[#0F0F0F] opacity-40 cursor-not-allowed',
+                            isActive && tokenEnabled ? 'border-[#333333]' : 'border-[#222222]',
+                            tokenEnabled ? 'hover:border-[#333333]' : ''
                           ].join(' ')}
                         >
                           <button 
                             className="w-full flex items-center justify-between p-3"
-                            onClick={() => handleSelect(t)}
+                            onClick={() => tokenEnabled && handleSelect(t)}
+                            disabled={!tokenEnabled}
                           >
                             <div className="flex items-center gap-2 min-w-0 flex-1">
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-400' : 'bg-[#404040]'}`} />
@@ -311,21 +326,29 @@ export default function DepositTokenSelect({
                                 </div>
                               </div>
                             </div>
-                            <svg className="w-3 h-3 text-[#404040] group-hover:text-[#606060] transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
-                            </svg>
+                            {tokenEnabled ? (
+                              <svg className="w-3 h-3 text-[#404040] group-hover:text-[#606060] transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
+                              </svg>
+                            ) : (
+                              <span className="text-[9px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded whitespace-nowrap">
+                                Coming Soon
+                              </span>
+                            )}
                           </button>
                           
-                          {/* Expandable Details on Hover */}
-                          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
-                            <div className="px-3 pb-3 border-t border-[#1A1A1A]">
-                              <div className="text-[9px] pt-2">
-                                <span className="text-[#606060]">
-                                  {isActive ? 'Selected for deposit' : `Click to select ${t.symbol} on ${t.chain}`}
-                                </span>
+                          {/* Expandable Details on Hover - only for enabled tokens */}
+                          {tokenEnabled && (
+                            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
+                              <div className="px-3 pb-3 border-t border-[#1A1A1A]">
+                                <div className="text-[9px] pt-2">
+                                  <span className="text-[#606060]">
+                                    {isActive ? 'Selected for deposit' : `Click to select ${t.symbol} on ${t.chain}`}
+                                  </span>
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       )
                     })}
