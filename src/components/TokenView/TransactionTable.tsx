@@ -120,8 +120,11 @@ function formatPriceDisplay(value: number, displayDecimals = 4): string {
   return value.toFixed(Math.max(2, displayDecimals));
 }
 
-function formatAmountDisplay(value: number, displayDecimals = 4): string {
+function formatAmountDisplay(value: number, displayDecimals = 4, showLessThan = false): string {
   if (!value || value === 0) return '0.0000';
+  if (showLessThan && value > 0 && value < 0.01) {
+    return '< 0.01';
+  }
   if (value < 0.00000001 && value > 0) {
     return value.toFixed(12);
   }
@@ -129,6 +132,19 @@ function formatAmountDisplay(value: number, displayDecimals = 4): string {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: displayDecimals,
     maximumFractionDigits: displayDecimals
+  }).format(value);
+}
+
+function formatCurrencyDisplay(value: number, showLessThan = false): string {
+  if (!value || value === 0) return '$0.00';
+  if (showLessThan && value > 0 && value < 0.01) {
+    return '< $0.01';
+  }
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(value);
 }
 
@@ -563,7 +579,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
       }))
-        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0.0001)
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
         .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first (best bid first)
 
       // Ask prices should be treated as best→worse internally (lowest→highest),
@@ -578,7 +594,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
       }))
-        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0.0001)
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
         .sort((a, b) => (a.price || 0) - (b.price || 0)); // Lowest ask first (best ask first)
 
       const askOrders = [...askBestFirst].reverse(); // Display order: highest→lowest (best ask at bottom)
@@ -687,20 +703,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     // Ensure best ask (lowest) is visible nearest to the spread.
     el.scrollTop = el.scrollHeight;
   }, [view, obData?.lastUpdated, asks.length]);
-
-  // Total active orders (not capped by UI depth rendering).
-  // Fall back to the rendered depth lengths if the on-chain count isn't available.
-  const totalAskOrders = useMemo(() => {
-    const n = md.activeSellOrders;
-    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
-    return asks.length;
-  }, [md.activeSellOrders, asks.length]);
-
-  const totalBidOrders = useMemo(() => {
-    const n = md.activeBuyOrders;
-    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
-    return bids.length;
-  }, [md.activeBuyOrders, bids.length]);
 
   const orderBookHasOrders = (bids?.length || 0) + (asks?.length || 0) > 0;
   const dataFetchComplete = isConnected && !obLoading && !!obData?.lastUpdated;
@@ -885,10 +887,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                               ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
                             <div className="flex items-center justify-center text-t-fg-label font-mono tabular-nums">
-                              {formatAmountDisplay(remainingQuantity, 4)}
+                              {formatAmountDisplay(remainingQuantity, 4, true)}
                             </div>
                             <div className="flex items-center justify-center text-t-fg font-mono text-[10px] tabular-nums">
-                              {formatCurrency(lineUsd)}
+                              {formatCurrencyDisplay(lineUsd, true)}
                             </div>
                           </div>
                         </AnimatedOrderRow>
@@ -902,7 +904,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {/* Ask Orders Label */}
             <div className="text-[9px] text-t-fg px-1 py-0.5 flex items-center justify-between">
               <span>ASKS (SELL)</span>
-              <span className="text-[#FF4747]">{totalAskOrders} orders</span>
+              <span className="text-[#FF4747]">{asks.length} orders</span>
             </div>
 
             {/* Spread Display */}
@@ -928,7 +930,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
               <div className="text-[9px] text-t-fg mb-1 px-1 flex items-center justify-between">
                 <span>BIDS (BUY)</span>
-                <span className="text-[#00D084]">{totalBidOrders} orders</span>
+                <span className="text-[#00D084]">{bids.length} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
                 {bids.length === 0 ? (
@@ -965,10 +967,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                               ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
                             <div className="flex items-center justify-center text-t-fg-label font-mono tabular-nums">
-                              {formatAmountDisplay(remainingQuantity, 4)}
+                              {formatAmountDisplay(remainingQuantity, 4, true)}
                             </div>
                             <div className="flex items-center justify-center text-t-fg font-mono text-[10px] tabular-nums">
-                              {formatCurrency(lineUsd)}
+                              {formatCurrencyDisplay(lineUsd, true)}
                             </div>
                           </div>
                         </AnimatedOrderRow>

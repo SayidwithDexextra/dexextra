@@ -544,7 +544,7 @@ export async function deployMarket(
   phaseHeader('CONFIGURE', shortAddr(orderBook!));
   laneOverview(
     !!useParallelSigners,
-    { signer: shortAddr(ownerAddress), tasks: 'Selectors, Registry Allow + Attach, Fees, Speed-run' },
+    { signer: shortAddr(ownerAddress), tasks: 'Registry Allow + Attach, Fees, Speed-run' },
     useParallelSigners
       ? { signer: shortAddr(vaultAddr), tasks: 'CoreVault Role Grants' }
       : undefined,
@@ -562,31 +562,12 @@ export async function deployMarket(
   const hasRegistry = registryAddress && ethers.isAddress(registryAddress);
 
   // ── Phase 1: Parallel reads ──
-  const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
-  const loupe = new ethers.Contract(orderBook, LoupeABI, provider);
-  const placementSigs = [
-    'placeLimitOrder(uint256,uint256,bool)',
-    'placeMarginLimitOrder(uint256,uint256,bool)',
-    'placeMarketOrder(uint256,bool)',
-    'placeMarginMarketOrder(uint256,bool)',
-    'placeMarketOrderWithSlippage(uint256,bool,uint256)',
-    'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
-    'cancelOrder(uint256)',
-  ];
-  const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
-
   const regAbi = [
     'function allowedOrderbook(address) view returns (bool)',
     'function setAllowedOrderbook(address,bool) external',
   ];
 
-  const [selectorResults, registryAllowed, currentRegistry, tradingParams] = await Promise.all([
-    Promise.all(requiredSelectors.map(async (sel) => {
-      try {
-        const addr: string = await loupe.facetAddress(sel);
-        return (!addr || addr.toLowerCase() === ethers.ZeroAddress) ? sel : null;
-      } catch { return sel; }
-    })),
+  const [registryAllowed, currentRegistry, tradingParams] = await Promise.all([
     hasRegistry
       ? new ethers.Contract(registryAddress, regAbi, provider).allowedOrderbook(orderBook).catch(() => false)
       : Promise.resolve(true),
@@ -598,12 +579,10 @@ export async function deployMarket(
     ], provider).getTradingParameters().catch(() => [0n, 0n, ethers.ZeroAddress]),
   ]);
 
-  const missingSelectors = selectorResults.filter((s): s is string => s !== null);
   const needRegistryAllow = hasRegistry && !registryAllowed;
   const needRegistryAttach = hasRegistry && (!currentRegistry || String(currentRegistry).toLowerCase() !== String(registryAddress).toLowerCase());
 
   log('parallel_reads', 'success', {
-    missingSelectors: missingSelectors.length,
     needRegistryAllow,
     needRegistryAttach,
   });
@@ -628,28 +607,7 @@ export async function deployMarket(
     };
     const pending: PendingTx[] = [];
 
-    // 1. Ensure selectors
-    if (missingSelectors.length > 0) {
-      try {
-        laneLog('A', 'Ensure selectors', 'start', `${missingSelectors.length} missing`);
-        log('ensure_selectors', 'start', { missingCount: missingSelectors.length });
-        const CutABI = ['function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)'];
-        const diamondCut = new ethers.Contract(orderBook!, CutABI, wallet);
-        const patchCut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missingSelectors }];
-        const ov = await nonceMgr.nextOverrides();
-        const txCut = await diamondCut.diamondCut(patchCut as any, ethers.ZeroAddress, '0x', ov as any);
-        laneLog('A', 'Ensure selectors', 'start', `tx sent ${shortTx(txCut.hash)}`);
-        pending.push({ label: 'Ensure selectors', logKey: 'ensure_selectors', tx: txCut, extra: { patched: missingSelectors.length } });
-      } catch (e: any) {
-        laneLog('A', 'Ensure selectors', 'error', e?.shortMessage || e?.message || String(e));
-        log('ensure_selectors', 'error', { error: e?.message || String(e) });
-      }
-    } else {
-      laneLog('A', 'Ensure selectors', 'success', 'all present');
-      log('ensure_selectors', 'success', { message: 'All present' });
-    }
-
-    // 2. Allow orderbook on registry (requires diamond owner / ADMIN_PRIVATE_KEY)
+    // 1. Allow orderbook on registry (requires diamond owner / ADMIN_PRIVATE_KEY)
     if (needRegistryAllow) {
       try {
         laneLog('A', 'Allow orderbook on registry', 'start');
@@ -664,7 +622,7 @@ export async function deployMarket(
       }
     }
 
-    // 3. Attach session registry (diamond owner only)
+    // 2. Attach session registry (diamond owner only)
     if (needRegistryAttach) {
       try {
         laneLog('A', 'Attach session registry', 'start', shortAddr(registryAddress));
@@ -679,7 +637,7 @@ export async function deployMarket(
       }
     }
 
-    // 4. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
+    // 3. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
     const feeRegistryAddress = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS || '';
     let takerFeeBps = 7;
     let makerFeeBps = 3;
@@ -741,7 +699,7 @@ export async function deployMarket(
       log('set_fee_recipient', 'error', { error: e?.message || String(e) });
     }
 
-    // 5. Initialize lifecycle controller with explicit timing
+    // 4. Initialize lifecycle controller with explicit timing
     try {
       const hasExplicitTiming = speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeWindowSeconds > 0;
       const rolloverLead = hasExplicitTiming ? speedRunConfig.rolloverLeadSeconds : 0;
@@ -783,7 +741,7 @@ export async function deployMarket(
       log('initialize_lifecycle', 'error', { error: e?.message || String(e) });
     }
 
-    // 6. Configure challenge bond
+    // 5. Configure challenge bond
     const CHALLENGE_BOND_USDC = 500_000_000; // 500 USDC (6 decimals)
     const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
     try {
@@ -800,7 +758,7 @@ export async function deployMarket(
       log('challenge_bond_config', 'error', { error: e?.message || String(e), market: orderBook });
     }
 
-    // 7. Register lifecycle operators + grant bond exemptions (relayers need both to submit gasless challenges)
+    // 6. Register lifecycle operators + grant bond exemptions (relayers need both to submit gasless challenges)
     try {
       let relayerPoolSource = 'none';
       let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });

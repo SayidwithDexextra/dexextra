@@ -2168,18 +2168,11 @@ export default function Settings({ className }: SettingsProps) {
                 <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Vault & Withdrawals</h4>
                 <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">USDC</div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                 <div className="rounded-md border border-t-stroke bg-t-card p-3">
                   <p className="text-[11px] font-medium text-t-fg-sub mb-1">Available (Trading)</p>
                   <p className="text-[11px] text-t-fg font-mono">
                     {(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-t-fg-muted">USDC</span>
-                  </p>
-                </div>
-                <div className="rounded-md border border-t-stroke bg-t-card p-3">
-                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Withdrawable (Hub)</p>
-                  <p className="text-[11px] text-t-fg font-mono">
-                    {(parseFloat(coreVault?.withdrawableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
                     <span className="text-t-fg-muted">USDC</span>
                   </p>
                 </div>

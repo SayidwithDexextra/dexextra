@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
 import {
-  OBOrderPlacementFacetABI,
   CoreVaultABI,
   resolveFactoryVault,
   FeeRegistryABI,
@@ -165,7 +164,6 @@ export async function POST(req: Request) {
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
     const pk = process.env.ADMIN_PRIVATE_KEY;
     const coreVaultAddress = process.env.CORE_VAULT_ADDRESS || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS;
-    const placementFacet = process.env.OB_ORDER_PLACEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
 
     if (!rpcUrl) return NextResponse.json({ error: 'RPC_URL not configured' }, { status: 400 });
     if (!pk) return NextResponse.json({ error: 'ADMIN_PRIVATE_KEY not configured' }, { status: 400 });
@@ -219,7 +217,7 @@ export async function POST(req: Request) {
     phaseHeader('CONFIGURE MARKET', shortAddr(orderBook));
     laneOverview(
       !!useParallelSigners,
-      { signer: shortAddr(ownerAddress), tasks: 'Selectors, Registry, Fees, Speed-run' },
+      { signer: shortAddr(ownerAddress), tasks: 'Registry, Fees, Speed-run' },
       useParallelSigners
         ? { signer: shortAddr(vaultAddr), tasks: 'CoreVault Role Grants' }
         : undefined,
@@ -233,33 +231,15 @@ export async function POST(req: Request) {
     const registryAddress = process.env.SESSION_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS || '';
     const hasRegistry = registryAddress && ethers.isAddress(registryAddress);
 
-    const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
-    const loupe = new ethers.Contract(orderBook, LoupeABI, provider);
-    const placementSigs = [
-      'placeLimitOrder(uint256,uint256,bool)',
-      'placeMarginLimitOrder(uint256,uint256,bool)',
-      'placeMarketOrder(uint256,bool)',
-      'placeMarginMarketOrder(uint256,bool)',
-      'placeMarketOrderWithSlippage(uint256,bool,uint256)',
-      'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
-      'cancelOrder(uint256)',
-    ];
-    const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
-
     const regAbi = [
       'function allowedOrderbook(address) view returns (bool)',
       'function setAllowedOrderbook(address,bool) external',
     ];
 
-    const [selectorResults, registryAllowed, currentRegistry, tradingParams] = await Promise.all([
-      !configState.selectors_verified
-        ? Promise.all(requiredSelectors.map(async (sel) => {
-            try {
-              const addr: string = await loupe.facetAddress(sel);
-              return (!addr || addr.toLowerCase() === ethers.ZeroAddress.toLowerCase()) ? sel : null;
-            } catch { return sel; }
-          }))
-        : Promise.resolve([]),
+    // All markets are V2 (DiamondRegistry) - selectors managed by central FacetRegistry, no per-market patching needed
+    configState.selectors_verified = true;
+
+    const [registryAllowed, currentRegistry, tradingParams] = await Promise.all([
       hasRegistry && !configState.session_registry_attached
         ? new ethers.Contract(registryAddress, regAbi, provider).allowedOrderbook(orderBook).catch(() => false)
         : Promise.resolve(true),
@@ -272,9 +252,6 @@ export async function POST(req: Request) {
           ], provider).getTradingParameters().catch(() => [0n, 0n, ethers.ZeroAddress])
         : Promise.resolve([0n, 0n, ethers.ZeroAddress]),
     ]);
-
-    const missingSelectors = selectorResults.filter((s): s is string => s !== null);
-    const needSelectors = !configState.selectors_verified && missingSelectors.length > 0;
     const needRegistryAllow = hasRegistry && !configState.session_registry_attached && !registryAllowed;
     const needRegistryAttach = hasRegistry && !configState.session_registry_attached &&
       (!currentRegistry || String(currentRegistry).toLowerCase() !== String(registryAddress).toLowerCase());
@@ -282,7 +259,6 @@ export async function POST(req: Request) {
     const needFees = !configState.fees_configured || !configState.fee_recipient_set;
 
     logS('parallel_reads', 'success', {
-      missingSelectors: missingSelectors.length,
       needRegistryAllow,
       needRegistryAttach,
       needRoles,
@@ -292,7 +268,7 @@ export async function POST(req: Request) {
     // =========================================================================
     // Phase 2: Parallel writes across two signers
     //   Lane A (diamond owner / ADMIN_PRIVATE_KEY):
-    //     selectors, allow orderbook, attach session registry, fees, speed-run
+    //     allow orderbook, attach session registry, fees, speed-run
     //   Lane B (vault admin / ROLE_GRANTER_PRIVATE_KEY):
     //     CoreVault role grants (ORDERBOOK_ROLE, SETTLEMENT_ROLE)
     // =========================================================================
@@ -318,37 +294,7 @@ export async function POST(req: Request) {
       };
       const pending: PendingTx[] = [];
 
-      // 1. Ensure selectors
-      if (!configState.selectors_verified) {
-        if (needSelectors && placementFacet && ethers.isAddress(placementFacet)) {
-          try {
-            laneLog('A', 'Ensure selectors', 'start', `${missingSelectors.length} missing`);
-            logS('ensure_selectors_missing', 'start', { missingCount: missingSelectors.length });
-            const CutABI = ['function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)'];
-            const diamondCut = new ethers.Contract(orderBook, CutABI, wallet);
-            const cutData = [{ facetAddress: placementFacet, action: 0, functionSelectors: missingSelectors }];
-            const ov = await nonceMgr.nextOverrides();
-            const txCut = await diamondCut.diamondCut(cutData as any, ethers.ZeroAddress, '0x', ov as any);
-            const sentAt = Date.now();
-            laneLog('A', 'Ensure selectors', 'start', `tx sent ${shortTx(txCut.hash)} +${sentAt - laneAStart}ms`);
-            logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash, elapsedMs: sentAt - laneAStart });
-            pending.push({
-              label: 'Ensure selectors', logKey: 'ensure_selectors_diamondCut', tx: txCut, sentAt,
-              extra: { patched: missingSelectors.length },
-              onMined: () => { configState.selectors_verified = true; },
-            });
-          } catch (e: any) {
-            laneLog('A', 'Ensure selectors', 'error', e?.shortMessage || e?.message || String(e));
-            logS('ensure_selectors', 'error', { error: e?.message || String(e) });
-          }
-        } else {
-          laneLog('A', 'Ensure selectors', 'success', 'all present');
-          logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
-          configState.selectors_verified = true;
-        }
-      }
-
-      // 2. Allow orderbook on registry (requires diamond owner / ADMIN_PRIVATE_KEY)
+      // 1. Allow orderbook on registry (requires diamond owner / ADMIN_PRIVATE_KEY)
       if (needRegistryAllow) {
         try {
           laneLog('A', 'Allow orderbook on registry', 'start');
@@ -368,7 +314,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // 3. Attach session registry on MetaTradeFacet (diamond owner only)
+      // 2. Attach session registry on MetaTradeFacet (diamond owner only)
       if (needRegistryAttach) {
         try {
           laneLog('A', 'Attach session registry', 'start', shortAddr(registryAddress));
@@ -389,7 +335,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // 4. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
+      // 3. Configure fees from FeeRegistry (centralized) or fallback to env/defaults
       if (needFees) {
         const feeRegistryAddress = process.env.FEE_REGISTRY_ADDRESS || (process.env as any).NEXT_PUBLIC_FEE_REGISTRY_ADDRESS || '';
         let takerFeeBps = 7;
@@ -468,7 +414,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // 5. Initialize lifecycle controller with explicit timing
+      // 4. Initialize lifecycle controller with explicit timing
       if (settlementTs > 0 && !configState.lifecycle_initialized) {
         try {
           const hasExplicitTiming = speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeWindowSeconds > 0;
@@ -506,7 +452,7 @@ export async function POST(req: Request) {
         'function isLifecycleOperator(address account) external view returns (bool)',
       ], wallet);
 
-      // 6. Configure challenge bond
+      // 5. Configure challenge bond
       {
         const CHALLENGE_BOND_USDC = 500_000_000; // 500 USDC (6 decimals)
         const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
@@ -523,7 +469,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // 7. Register lifecycle operators + grant bond exemptions
+      // 6. Register lifecycle operators + grant bond exemptions
       {
         const { loadRelayerPoolFromEnv } = await import('@/lib/relayerKeys');
         let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
