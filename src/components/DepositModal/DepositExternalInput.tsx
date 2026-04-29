@@ -41,13 +41,10 @@ export default function DepositExternalInput({
 }: DepositExternalInputProps) {
   if (!isOpen) return null
 
-  const chain = (selectedToken?.chain || 'External')
+  const chain = (selectedToken?.chain || 'Arbitrum')
   const depositAddress = useMemo(() => {
     const c = chain.toLowerCase()
-    if (c === 'polygon') return env.SPOKE_POLYGON_VAULT_ADDRESS || ''
     if (c === 'arbitrum') return env.SPOKE_ARBITRUM_VAULT_ADDRESS || ''
-    if (c === 'ethereum') return env.SPOKE_ETHEREUM_VAULT_ADDRESS || ''
-    if (c === 'hyperliquid') return env.SPOKE_HYPERLIQUID_VAULT_ADDRESS || ''
     return ''
   }, [chain])
 

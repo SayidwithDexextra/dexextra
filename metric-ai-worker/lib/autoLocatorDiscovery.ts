@@ -8,6 +8,15 @@
 import * as cheerio from 'cheerio';
 import { fetchHtmlWithJina } from './jinaReader';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LOCATOR LOGGING - Structured trace logs for selector discovery/extraction
+// ═══════════════════════════════════════════════════════════════════════════
+const LOCATOR_PREFIX = '🎯 [LOCATOR]';
+const locatorLog = (action: string, data: Record<string, unknown>) => {
+  const ts = new Date().toISOString();
+  console.log(`${LOCATOR_PREFIX} [${ts}] ${action}`, JSON.stringify(data, null, 2));
+};
+
 // ─── Types ─────────────────────────────────────────────────────────
 
 export interface DiscoveredSelector {
@@ -158,25 +167,55 @@ export async function discoverLocators(
 ): Promise<AiSourceLocatorData | null> {
   const started = Date.now();
 
+  locatorLog('DISCOVER_START', {
+    url,
+    confirmedValue,
+    primaryEvidenceType,
+    purpose: 'Find CSS selectors for fast-path extraction on future fetches',
+  });
+
   try {
     const numericStr = String(confirmedValue).replace(/[^0-9.\-]/g, '');
     if (!numericStr || !Number.isFinite(Number(numericStr))) {
-      console.log('[AutoLocator] Skipped — confirmed value not numeric');
+      locatorLog('DISCOVER_SKIPPED', { 
+        reason: 'Confirmed value not numeric',
+        confirmedValue,
+      });
       return null;
     }
 
-    console.log(`[AutoLocator] Fetching rendered HTML via Jina for ${url}`);
     const htmlResult = await fetchHtmlWithJina(url, { timeoutMs: 30_000 });
+    
+    locatorLog('DISCOVER_HTML_FETCHED', {
+      success: htmlResult.success,
+      htmlLength: htmlResult.html?.length || 0,
+      durationMs: Date.now() - started,
+    });
+    
     if (!htmlResult.success || !htmlResult.html) {
-      console.log(`[AutoLocator] Failed to fetch HTML: ${htmlResult.error}`);
+      locatorLog('DISCOVER_HTML_FAILED', { error: htmlResult.error });
       return null;
     }
 
     const $ = cheerio.load(htmlResult.html);
     const candidates = findCandidates($, numericStr);
+    
+    locatorLog('DISCOVER_CANDIDATES_FOUND', {
+      candidateCount: candidates.length,
+      searchingFor: numericStr,
+      topCandidates: candidates.slice(0, 3).map(c => ({
+        css: c.css?.slice(0, 60),
+        text: c.text?.slice(0, 30),
+        specificity: c.specificity,
+      })),
+    });
 
     if (candidates.length === 0) {
-      console.log(`[AutoLocator] No DOM matches for "${numericStr}" on ${url} (${Date.now() - started}ms)`);
+      locatorLog('DISCOVER_NO_CANDIDATES', {
+        url,
+        searchedFor: numericStr,
+        durationMs: Date.now() - started,
+      });
       return null;
     }
 
@@ -196,7 +235,11 @@ export async function discoverLocators(
     }
 
     if (verified.length === 0) {
-      console.log(`[AutoLocator] Candidates found but none re-verified on ${url}`);
+      locatorLog('DISCOVER_VERIFICATION_FAILED', {
+        candidatesCount: candidates.length,
+        verifiedCount: 0,
+        reason: 'Candidates found but none re-verified to the target value',
+      });
       return null;
     }
 
@@ -227,11 +270,25 @@ export async function discoverLocators(
       version: 2,
     };
 
-    console.log(`[AutoLocator] Discovered ${topSelectors.length} selectors for ${url} in ${Date.now() - started}ms (via Jina + cheerio)`);
+    locatorLog('DISCOVER_SUCCESS', {
+      url,
+      selectorCount: topSelectors.length,
+      selectors: topSelectors.map(s => ({
+        selector: s.selector?.slice(0, 60),
+        confidence: s.confidence,
+        sampleValue: s.sample_value,
+      })),
+      textPattern,
+      durationMs: Date.now() - started,
+      futureImpact: 'Next fetch will use FAST PATH (~1-2s instead of ~30-60s)',
+    });
+    
     return result;
 
   } catch (err) {
-    console.error('[AutoLocator] Discovery failed:', err instanceof Error ? err.message : err);
+    locatorLog('DISCOVER_ERROR', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -246,23 +303,47 @@ export async function fastExtract(
 ): Promise<{ value: string; method: string; selector: string; extractTimeMs: number } | null> {
   const started = Date.now();
 
+  locatorLog('FAST_EXTRACT_START', {
+    url,
+    selectorCount: selectors.length,
+    selectors: selectors.slice(0, 3).map(s => ({
+      type: s.type,
+      selector: s.selector?.slice(0, 60),
+      confidence: s.confidence,
+    })),
+  });
+
   try {
-    console.log(`[FastExtract] Fetching rendered HTML via Jina for ${url}`);
     const htmlResult = await fetchHtmlWithJina(url, { timeoutMs: 25_000 });
+    
+    locatorLog('FAST_EXTRACT_HTML_FETCHED', {
+      success: htmlResult.success,
+      htmlLength: htmlResult.html?.length || 0,
+      durationMs: Date.now() - started,
+      error: htmlResult.error || null,
+    });
+    
     if (!htmlResult.success || !htmlResult.html) {
-      console.log(`[FastExtract] Failed to fetch HTML: ${htmlResult.error}`);
+      locatorLog('FAST_EXTRACT_HTML_FAILED', { error: htmlResult.error });
       return null;
     }
 
     const $ = cheerio.load(htmlResult.html);
     const sorted = [...selectors].sort((a, b) => b.confidence - a.confidence);
 
-    for (const sel of sorted) {
+    for (let i = 0; i < sorted.length; i++) {
+      const sel = sorted[i];
       try {
         if (sel.type !== 'css' || !sel.selector) continue;
 
         const el = $(sel.selector).first();
-        if (!el.length) continue;
+        if (!el.length) {
+          locatorLog('FAST_EXTRACT_SELECTOR_NO_MATCH', {
+            selectorIndex: i,
+            selector: sel.selector?.slice(0, 80),
+          });
+          continue;
+        }
 
         const rawText = el.text().trim();
         if (!rawText) continue;
@@ -274,22 +355,37 @@ export async function fastExtract(
         const num = Number(numMatch[0]);
         if (!Number.isFinite(num) || num <= 0) continue;
 
-        console.log(`[FastExtract] ✓ Extracted "${numMatch[0]}" via ${sel.selector} in ${Date.now() - started}ms`);
+        const extractTimeMs = Date.now() - started;
+        locatorLog('FAST_EXTRACT_SUCCESS', {
+          value: numMatch[0],
+          selector: sel.selector?.slice(0, 80),
+          selectorIndex: i,
+          rawText: rawText.slice(0, 50),
+          extractTimeMs,
+          comparedToFullPipeline: `${extractTimeMs}ms vs ~30000-60000ms`,
+        });
+        
         return {
           value: numMatch[0],
           method: sel.type,
           selector: sel.selector,
-          extractTimeMs: Date.now() - started,
+          extractTimeMs,
         };
       } catch {
         continue;
       }
     }
 
-    console.log(`[FastExtract] No selectors matched on ${url}`);
+    locatorLog('FAST_EXTRACT_NO_MATCH', {
+      url,
+      selectorsTriedCount: sorted.length,
+      reason: 'No selectors resolved to a valid numeric value',
+    });
     return null;
   } catch (err) {
-    console.error('[FastExtract] Failed:', err instanceof Error ? err.message : err);
+    locatorLog('FAST_EXTRACT_ERROR', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }

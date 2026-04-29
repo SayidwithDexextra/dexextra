@@ -7,10 +7,7 @@ import { env } from '@/lib/env'
 
 // Chain logo mapping for header icons
 const CHAIN_LOGOS: Record<string, string> = {
-  Polygon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/polygon-matic-logo.png',
   Arbitrum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/arbitrum-arb-logo.png',
-  Ethereum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/ethereum-eth-logo.png',
-  Hyperliquid: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/HyperlIquid.png',
 }
 
 interface DepositTokenSelectProps {
@@ -46,10 +43,8 @@ export default function DepositTokenSelect({
       if (!acc[chain]) acc[chain] = []
       acc[chain].push(t)
       return acc
-    }, {})
-  }, [availableTokens])
-
-  // Ensure Hyperliquid appears only if tokens exist; no forced empty section
+  }, {})
+    }, [availableTokens])
 
   const chainNames = useMemo(() => Object.keys(chainToTokens), [chainToTokens])
 
@@ -147,11 +142,8 @@ export default function DepositTokenSelect({
   // Determine if a chain is enabled based on presence of its Spoke Vault address
   const chainHasVault = (chain: string) => {
     const c = (chain || '').toLowerCase()
-    if (c === 'polygon') return false
     if (c === 'arbitrum') return !!env.SPOKE_ARBITRUM_VAULT_ADDRESS
-    if (c === 'ethereum') return !!env.SPOKE_ETHEREUM_VAULT_ADDRESS
-    if (c === 'hyperliquid') return !!env.SPOKE_HYPERLIQUID_VAULT_ADDRESS
-    return true
+    return false
   }
 
   if (!isOpen) return null

@@ -2726,11 +2726,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         document.body
       )}
       
-      <div className="rounded-md bg-t-page border border-t-stroke-hover p-3 h-full flex flex-col overflow-hidden">
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-3 flex-1 min-h-0 flex flex-col overflow-hidden">
 
 
         {/* Header section */}
-        <div className="mb-2">
+        <div className="mb-2 flex-shrink-0">
           {/* Order Type Toggle - Full Width */}
           <div className="bg-t-card rounded-md border border-t-stroke p-1 w-full">
             <div className="flex w-full gap-1">
@@ -2771,10 +2771,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         </div>
 
         {/* Trading Content Area - scrollable within the panel to avoid cut-offs on large screens */}
-        <div className="relative flex-1 min-h-0">
+        <div className="relative flex-1 min-h-0 overflow-hidden">
           <div
             ref={scrollAreaRef}
-            className="h-full space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto"
+            className="absolute inset-0 space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto"
           >
 
           {/* Trading Interface */}
@@ -3286,7 +3286,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         </div>
 
         {/* Trade Button */}
-        <div className="flex gap-2 mt-1.5">
+        <div className="flex gap-2 mt-1.5 flex-shrink-0">
           {!isConnected ? (
             <button 
               onClick={() => setShowWalletModal(true)}

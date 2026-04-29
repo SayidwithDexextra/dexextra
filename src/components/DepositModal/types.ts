@@ -34,6 +34,9 @@ export interface DepositModalReviewProps {
   animationDirection?: 'forward' | 'backward'
   isDirectDeposit?: boolean
   isVaultConnected?: boolean
+  gasFeeUsd?: number
+  gasFeeEth?: number
+  isGasLoading?: boolean
 }
 
 export interface DepositModalStatusProps {
@@ -51,6 +54,8 @@ export interface DepositModalStatusProps {
   walletAddress?: string
   isAnimating?: boolean
   animationDirection?: 'forward' | 'backward'
+  gasFeeUsd?: number
+  gasFeeEth?: number
 }
 
 export interface PaymentMethod {

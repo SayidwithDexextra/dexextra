@@ -9,6 +9,15 @@ const rtMetricLog = (...args: any[]) => console.log(REALTIME_METRIC_PREFIX, ...a
 const rtMetricWarn = (...args: any[]) => console.warn(REALTIME_METRIC_PREFIX, ...args);
 const rtMetricErr = (...args: any[]) => console.error(REALTIME_METRIC_PREFIX, ...args);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CLICKHOUSE INGEST LOGGING - Track metric values flowing into time-series
+// ═══════════════════════════════════════════════════════════════════════════
+const INGEST_PREFIX = '📊 [CH_INGEST]';
+const ingestLog = (action: string, data: Record<string, unknown>) => {
+  const ts = new Date().toISOString();
+  console.log(`${INGEST_PREFIX} [${ts}] ${action}`, JSON.stringify(data, null, 2));
+};
+
 function ensureUrl(value?: string): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -481,7 +490,22 @@ export async function POST(request: NextRequest) {
   try {
     const t0 = Date.now();
     const body = await request.json();
-    const { marketId, metricName, points, source, version } = body || {};
+    const { marketId, metricName, points, source, version, confidence, assetPriceSuggestion, sourcesCount } = body || {};
+    
+    // Determine if this came from fast-path or full pipeline
+    const isFastPath = source === 'fast_path' || source === 'ai_fast_path';
+    const isAiSource = typeof source === 'string' && (source.includes('ai') || source.includes('metric_worker'));
+    
+    ingestLog('RECEIVE', {
+      marketId,
+      metricName,
+      source: source || 'unknown',
+      isFastPath,
+      isAiSource,
+      pointCount: Array.isArray(points) ? points.length : 1,
+      confidence: confidence || null,
+      assetPriceSuggestion: assetPriceSuggestion || null,
+    });
 
     if (!marketId || typeof marketId !== 'string') {
       return NextResponse.json({ error: 'marketId is required (Supabase UUID string)' }, { status: 400 });
@@ -495,7 +519,7 @@ export async function POST(request: NextRequest) {
 
     const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
     if (!url) {
-      rtMetricWarn('insert skipped: clickhouse unconfigured', { marketId, metricName });
+      ingestLog('SKIP_NO_CLICKHOUSE', { marketId, metricName });
       return NextResponse.json({ success: true, inserted: 0, meta: { marketId, metricName, source: 'unconfigured' } });
     }
 
@@ -529,11 +553,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No valid points to insert' }, { status: 400 });
     }
 
-    rtMetricLog('insert begin', {
+    ingestLog('INSERT_START', {
       marketId,
       metricName,
-      nPoints: rows.length,
+      table: 'metric_series_raw',
+      rowCount: rows.length,
+      firstValue: rows[0]?.value,
       source: typeof source === 'string' ? source : 'api',
+      isFastPath,
+      flowDescription: isFastPath 
+        ? 'FAST PATH → ClickHouse (used stored CSS selector)' 
+        : isAiSource 
+          ? 'FULL PIPELINE → ClickHouse (ran AI extraction)'
+          : 'Direct API → ClickHouse',
     });
 
     await client.insert({
@@ -541,7 +573,16 @@ export async function POST(request: NextRequest) {
       values: rows,
       format: 'JSONEachRow',
     });
-    rtMetricLog('insert complete', { marketId, metricName, inserted: rows.length, ms: Date.now() - t0 });
+    
+    const insertDurationMs = Date.now() - t0;
+    ingestLog('INSERT_COMPLETE', {
+      marketId,
+      metricName,
+      inserted: rows.length,
+      durationMs: insertDurationMs,
+      isFastPath,
+      nextStep: 'MV aggregates to metric_series_1m for charting',
+    });
 
     // Best-effort realtime: broadcast the latest inserted point so chart overlays can update immediately.
     // Never fail the write if realtime is not configured.

@@ -578,19 +578,24 @@ async function postMetricPoint(params: {
   metricName: string;
   value: number;
   tsMs: number;
+  source?: string;
 }) {
   const endpoint = `${params.baseUrl}/api/charts/metric`;
-  console.log('[REALTIME_METRIC]', 'script POST /api/charts/metric', {
+  const source = params.source || 'push-market-ticks';
+  
+  console.log('📊 [CH_INGEST] PUSH_START', JSON.stringify({
     endpoint,
     marketId: params.marketId,
     metricName: params.metricName,
-    ts: params.tsMs,
     value: params.value,
-  });
+    source,
+    flow: 'Script → /api/charts/metric → ClickHouse metric_series_raw → MV → metric_series_1m',
+  }, null, 2));
+  
   const body = {
     marketId: params.marketId,
     metricName: String(params.metricName).toUpperCase(),
-    source: 'push-market-ticks',
+    source,
     version: params.tsMs % 2_147_483_647,
     points: { ts: params.tsMs, value: params.value },
   };
@@ -604,6 +609,13 @@ async function postMetricPoint(params: {
   if (!res.ok) {
     throw new Error(`Metric insert failed (${res.status}): ${JSON.stringify(json)}`);
   }
+  
+  console.log('📊 [CH_INGEST] PUSH_COMPLETE', JSON.stringify({
+    marketId: params.marketId,
+    inserted: json?.inserted ?? 0,
+    table: json?.meta?.table ?? 'metric_series_raw',
+  }, null, 2));
+  
   return json;
 }
 

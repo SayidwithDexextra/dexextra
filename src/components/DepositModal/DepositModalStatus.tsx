@@ -74,7 +74,9 @@ export default function DepositModalStatus({
   actualTime,
   isDirectDeposit = false,
   walletAddress = '9cdb',
-  isAnimating = false
+  isAnimating = false,
+  gasFeeUsd = 0,
+  gasFeeEth = 0
 }: DepositModalStatusProps) {
   const [mounted, setMounted] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
@@ -391,7 +393,7 @@ export default function DepositModalStatus({
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
                       <span className="text-[11px] font-medium text-[#808080]">Network</span>
                     </div>
-                    <span className="text-[10px] text-white">HyperLiquid Mainnet</span>
+                    <span className="text-[10px] text-white">{(sourceToken as any)?.chain || 'Arbitrum'} {(sourceToken as any)?.chain === 'Arbitrum' ? 'One' : ''}</span>
                   </div>
                 </div>
 
@@ -402,7 +404,12 @@ export default function DepositModalStatus({
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
                       <span className="text-[11px] font-medium text-[#808080]">Gas fee</span>
                     </div>
-                    <span className="text-[10px] text-white">~$2.50</span>
+                    <span className="text-[10px] text-white">
+                      {gasFeeUsd > 0 
+                        ? `~$${gasFeeUsd < 0.01 ? '<0.01' : gasFeeUsd.toFixed(2)}`
+                        : '~$0.05'
+                      }
+                    </span>
                   </div>
                 </div>
 

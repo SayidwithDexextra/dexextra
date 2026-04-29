@@ -14,6 +14,15 @@ import { fetchWithJina, screenshotWithJina } from '../../../lib/jinaReader';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PIPELINE LOGGING - Structured trace logs for debugging extraction flow
+// ═══════════════════════════════════════════════════════════════════════════
+const PIPELINE_PREFIX = '🔬 [PIPELINE]';
+const pipelineLog = (phase: string, data: Record<string, unknown>) => {
+  const ts = new Date().toISOString();
+  console.log(`${PIPELINE_PREFIX} [${ts}] ${phase}`, JSON.stringify(data, null, 2));
+};
+
 const InputSchema = z.object({
   metric: z.string().min(1).max(500),
   description: z.string().optional(),
@@ -450,6 +459,18 @@ export async function POST(req: NextRequest) {
       const started = Date.now();
       console.log('[Metric-AI] ▶ Background worker started', { jobId, timestamp: new Date().toISOString() });
       
+      // ═══════════════════════════════════════════════════════════════════════════
+      // PIPELINE START - Track the extraction path taken
+      // ═══════════════════════════════════════════════════════════════════════════
+      pipelineLog('START', {
+        jobId,
+        metric: input.metric,
+        urls: input.urls,
+        context: input.context || 'unknown',
+        marketId: input.related_market_id || 'none',
+        isNewMetric: input.context === 'create',
+      });
+      
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const texts: string[] = [];
@@ -459,6 +480,12 @@ export async function POST(req: NextRequest) {
         let storedLocatorData: AiSourceLocatorData | null = null;
         let historicalStats: HistoricalStats = { lastValue: null, lastUpdatedAt: null, min: 0, max: 0, mean: 0, stdDev: 0, count: 0, suspiciousBelow: 0, suspiciousAbove: Infinity, source: 'none' };
         const marketId = input.related_market_id || '';
+
+        pipelineLog('PHASE_0_START', {
+          phase: 'Load stored locators + historical context',
+          marketId: marketId || 'none',
+          hasMarketId: !!marketId,
+        });
 
         const phase0Promises: Promise<void>[] = [];
         if (marketId) {
@@ -474,67 +501,155 @@ export async function POST(req: NextRequest) {
               const locatorCol = (data as any)?.ai_source_locator;
               if (locatorCol && Array.isArray(locatorCol.selectors) && locatorCol.selectors.length > 0) {
                 storedLocatorData = locatorCol as AiSourceLocatorData;
-                console.log('[Metric-AI] ✓ Loaded ai_source_locator', {
+                pipelineLog('LOCATOR_FOUND', {
+                  hasStoredLocator: true,
                   selectorCount: locatorCol.selectors.length,
+                  bestSelector: locatorCol.selectors[0]?.selector?.slice(0, 80),
                   bestType: locatorCol.selectors[0]?.type,
+                  bestConfidence: locatorCol.selectors[0]?.confidence,
                   successCount: locatorCol.success_count,
+                  failureCount: locatorCol.failure_count,
+                  lastSuccessfulAt: locatorCol.last_successful_at,
+                  storedUrl: locatorCol.url,
+                });
+              } else {
+                pipelineLog('LOCATOR_NOT_FOUND', {
+                  hasStoredLocator: false,
+                  reason: 'No ai_source_locator in database or empty selectors',
+                  willRunFullPipeline: true,
                 });
               }
-            } catch {}
+            } catch (e: any) {
+              pipelineLog('LOCATOR_LOAD_ERROR', { error: e?.message });
+            }
           })());
           phase0Promises.push((async () => {
             try {
               const metricName = input.metric || input.related_market_identifier || '';
               historicalStats = await getHistoricalContext(marketId, metricName);
-              console.log('[Metric-AI] ✓ Historical context loaded', {
-                source: historicalStats.source, count: historicalStats.count, lastValue: historicalStats.lastValue,
+              pipelineLog('HISTORICAL_CONTEXT_LOADED', {
+                source: historicalStats.source,
+                count: historicalStats.count,
+                lastValue: historicalStats.lastValue,
+                lastUpdatedAt: historicalStats.lastUpdatedAt,
+                expectedRange: `${historicalStats.suspiciousBelow?.toFixed(2)} - ${historicalStats.suspiciousAbove?.toFixed(2)}`,
               });
-            } catch {}
+            } catch (e: any) {
+              pipelineLog('HISTORICAL_CONTEXT_ERROR', { error: e?.message });
+            }
           })());
         }
         if (phase0Promises.length) await Promise.all(phase0Promises);
         storedLocatorData = storedLocatorData as AiSourceLocatorData | null;
+        
+        pipelineLog('PHASE_0_COMPLETE', {
+          durationMs: Date.now() - started,
+          hasStoredLocator: !!storedLocatorData,
+          hasHistoricalContext: historicalStats.source !== 'none',
+        });
 
         // --- Phase 0.5: Fast path — use stored CSS selectors via Jina HTML + cheerio ---
-        if (
+        // If ai_source_locator exists with valid selectors → use fast-path
+        // Context doesn't matter - if we have working selectors, use them
+        const fastPathEligible = 
           storedLocatorData &&
           storedLocatorData.selectors.length > 0 &&
           storedLocatorData.url &&
-          input.context !== 'create' &&
-          storedLocatorData.failure_count < 3
-        ) {
-          console.log('[Metric-AI] ⚡ Attempting fast-path extraction', {
-            url: storedLocatorData.url,
-            selectorCount: storedLocatorData.selectors.length,
-            successCount: storedLocatorData.success_count,
+          storedLocatorData.failure_count < 3;
+        
+        pipelineLog('FAST_PATH_CHECK', {
+          eligible: fastPathEligible,
+          reasons: {
+            hasStoredLocator: !!storedLocatorData,
+            hasSelectors: (storedLocatorData?.selectors?.length || 0) > 0,
+            hasUrl: !!storedLocatorData?.url,
+            failureCountOk: (storedLocatorData?.failure_count || 0) < 3,
+          },
+          context: input.context || 'none',
+          decision: fastPathEligible ? '⚡ ATTEMPTING FAST PATH (locators exist)' : '🐢 WILL RUN FULL PIPELINE (no locators)',
+        });
+        
+        if (fastPathEligible) {
+          const fastPathStart = Date.now();
+          pipelineLog('FAST_PATH_START', {
+            url: storedLocatorData!.url,
+            selectorCount: storedLocatorData!.selectors.length,
+            topSelector: storedLocatorData!.selectors[0]?.selector?.slice(0, 100),
+            successCount: storedLocatorData!.success_count,
+            failureCount: storedLocatorData!.failure_count,
           });
 
           const fastResult = await fastExtract(
-            storedLocatorData.url,
-            storedLocatorData.selectors as DiscoveredSelector[],
+            storedLocatorData!.url,
+            storedLocatorData!.selectors as DiscoveredSelector[],
           );
 
           if (fastResult) {
             const fastValidation = validateExtractedValue(fastResult.value, historicalStats);
+            
+            pipelineLog('FAST_PATH_EXTRACTED', {
+              value: fastResult.value,
+              method: fastResult.method,
+              selector: fastResult.selector?.slice(0, 100),
+              extractTimeMs: fastResult.extractTimeMs,
+              validationResult: {
+                valid: fastValidation.valid,
+                maxConfidence: fastValidation.maxConfidence,
+                warnings: fastValidation.warnings,
+              },
+            });
 
             if (fastValidation.valid || fastValidation.maxConfidence >= 0.6) {
               const fastConfidence = Math.min(0.95, fastValidation.maxConfidence);
-              console.log('[Metric-AI] ⚡ Fast path SUCCESS', {
-                jobId, value: fastResult.value,
-                method: fastResult.method,
-                extractTimeMs: fastResult.extractTimeMs,
+              const totalFastPathMs = Date.now() - started;
+              
+              pipelineLog('FAST_PATH_SUCCESS', {
+                jobId,
+                value: fastResult.value,
                 confidence: fastConfidence,
+                totalTimeMs: totalFastPathMs,
+                extractTimeMs: fastResult.extractTimeMs,
+                timeSavedEstimate: '~30-60 seconds (skipped full AI pipeline)',
+                method: fastResult.method,
+                selector: fastResult.selector?.slice(0, 100),
               });
 
               const fastResolution = {
+                // Core result
                 metric: input.metric,
                 value: fastResult.value,
-                unit: 'unknown',
-                as_of: new Date().toISOString(),
-                confidence: fastConfidence,
                 asset_price_suggestion: fastResult.value,
-                reasoning: `Fast-path extraction via stored ${fastResult.method} selector. Validated against historical context.`,
-                sources: [{ url: storedLocatorData.url, quote: `Selector: ${fastResult.selector}`, match_score: fastConfidence }],
+                confidence: fastConfidence,
+                as_of: new Date().toISOString(),
+                
+                // Pipeline metadata (concise)
+                pipeline: {
+                  path: 'FAST_PATH',
+                  extractTimeMs: fastResult.extractTimeMs,
+                  method: fastResult.method,
+                  selector: fastResult.selector?.slice(0, 100),
+                  timeSaved: '~30-60s (skipped full AI)',
+                },
+                
+                // Validation context
+                validation: {
+                  historicalSource: historicalStats.source,
+                  lastKnownValue: historicalStats.lastValue,
+                  expectedRange: historicalStats.source !== 'none' 
+                    ? `${historicalStats.suspiciousBelow?.toFixed(2)} - ${historicalStats.suspiciousAbove?.toFixed(2)}`
+                    : null,
+                },
+                
+                // Source reference
+                sources: [{ 
+                  url: storedLocatorData!.url, 
+                  selector: fastResult.selector?.slice(0, 80),
+                  match_score: fastConfidence 
+                }],
+                
+                // Legacy fields for compatibility
+                unit: 'unknown',
+                reasoning: `Fast-path extraction via stored ${fastResult.method} selector.`,
                 fast_path: true,
                 fast_path_method: fastResult.method,
                 fast_path_extract_time_ms: fastResult.extractTimeMs,
@@ -600,25 +715,388 @@ export async function POST(req: NextRequest) {
                 jobId, status: 'completed', result: fastResolution,
               });
             } else {
-              console.log('[Metric-AI] ⚡ Fast path value failed validation, falling through to full pipeline', {
-                value: fastResult.value, warnings: fastValidation.warnings,
+              pipelineLog('FAST_PATH_VALIDATION_FAILED', {
+                value: fastResult.value,
+                warnings: fastValidation.warnings,
+                maxConfidence: fastValidation.maxConfidence,
+                decision: 'Falling through to FULL PIPELINE',
+                reason: 'Extracted value failed historical validation',
               });
             }
           } else {
-            console.log('[Metric-AI] ⚡ Fast path extraction returned null, falling through');
+            pipelineLog('FAST_PATH_EXTRACTION_FAILED', {
+              reason: 'fastExtract returned null - selector may be stale',
+              url: storedLocatorData!.url,
+              selectorCount: storedLocatorData!.selectors.length,
+              decision: 'Falling through to FULL PIPELINE + incrementing failure_count',
+            });
             // Increment failure_count
             if (marketId) {
               try {
                 const updatedLocator = {
                   ...storedLocatorData,
-                  failure_count: (storedLocatorData.failure_count || 0) + 1,
+                  failure_count: (storedLocatorData!.failure_count || 0) + 1,
                 };
                 await supabase.from('markets').update({
                   ai_source_locator: updatedLocator,
                   updated_at: new Date().toISOString(),
                 }).eq('id', marketId);
+                pipelineLog('LOCATOR_FAILURE_COUNT_INCREMENTED', {
+                  newFailureCount: updatedLocator.failure_count,
+                  willDisableFastPathAt: 3,
+                });
               } catch {}
             }
+          }
+        }
+        
+        // If we reach here, fast path was not used or failed
+        pipelineLog('FULL_PIPELINE_START', {
+          reason: !fastPathEligible ? 'Fast path not eligible' : 'Fast path failed',
+          context: input.context || 'unknown',
+          urlCount: input.urls.length,
+        });
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PHASE 0.7: RAW HTML FAST MODE
+        // Try raw HTML extraction first - if we get confident candidates, skip Jina/Vision
+        // This is much faster (~2-3s) than the full pipeline (~30-60s)
+        // ═══════════════════════════════════════════════════════════════════════════
+        let rawHtmlFastModeUsed = false;
+        let rawHtmlFastModeResult: { value: string; confidence: number; candidates: any[] } | null = null;
+        
+        pipelineLog('RAW_HTML_FAST_MODE_START', {
+          purpose: 'Try raw HTML extraction before Jina/Vision - faster for server-rendered pages',
+          urls: input.urls,
+        });
+        
+        const rawHtmlFastModeStartTime = Date.now();
+        
+        try {
+          // Fetch raw HTML for all URLs in parallel
+          const rawHtmlResults = await Promise.all(
+            input.urls.slice(0, 3).map(async (url) => {
+              try {
+                const response = await fetch(url, {
+                  headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` },
+                  signal: AbortSignal.timeout(10_000),
+                });
+                if (!response.ok) return { url, html: null, error: `HTTP ${response.status}` };
+                const html = await response.text();
+                return { url, html: html.slice(0, MAX_RAW_HTML_CHARS), error: null };
+              } catch (e: any) {
+                return { url, html: null, error: e?.message || 'fetch failed' };
+              }
+            })
+          );
+          
+          const successfulHtmls = rawHtmlResults.filter(r => r.html);
+          
+          if (successfulHtmls.length > 0) {
+            // Extract candidates from all HTMLs
+            const allCandidates: Array<{ label: string; value: string; context: string; url: string }> = [];
+            
+            for (const { url, html } of successfulHtmls) {
+              if (!html) continue;
+              const candidates = extractNumericCandidates(html);
+              const jsonLd = extractJsonLdPrices(html);
+              const chart = extractChartSignals(html);
+              
+              // Add candidates with URL tracking
+              for (const c of candidates) {
+                allCandidates.push({ ...c, url });
+              }
+              
+              // Add JSON-LD prices as high-confidence candidates
+              for (const jld of jsonLd) {
+                if (jld.price) {
+                  allCandidates.push({
+                    label: 'json_ld_price',
+                    value: String(jld.price).replace(/[^0-9.-]/g, ''),
+                    context: `JSON-LD ${jld.context || 'structured data'}`,
+                    url,
+                  });
+                }
+              }
+              
+              // Add chart-derived close as candidate
+              if (chart.derivedClose) {
+                allCandidates.push({
+                  label: 'chart_close',
+                  value: chart.derivedClose,
+                  context: 'Chart OHLC derived close',
+                  url,
+                });
+              }
+            }
+            
+            pipelineLog('RAW_HTML_FAST_MODE_CANDIDATES', {
+              urlsProcessed: successfulHtmls.length,
+              totalCandidates: allCandidates.length,
+              topCandidates: allCandidates.slice(0, 5).map(c => ({
+                label: c.label,
+                value: c.value,
+                context: c.context?.slice(0, 50),
+              })),
+            });
+            
+            // Check if we have high-confidence candidates
+            // Criteria: multiple candidates agreeing on similar values, or strong label matches
+            const priceLabels = ['price', 'last', 'close', 'value', 'json_ld_price', 'chart_close'];
+            const strongCandidates = allCandidates.filter(c => 
+              priceLabels.some(l => c.label.toLowerCase().includes(l))
+            );
+            
+            // Group by similar values (within 1% tolerance)
+            const valueGroups: Map<string, typeof allCandidates> = new Map();
+            for (const c of strongCandidates) {
+              const numVal = parseFloat(c.value);
+              if (!Number.isFinite(numVal) || numVal <= 0) continue;
+              
+              let foundGroup = false;
+              for (const [key, group] of valueGroups) {
+                const groupVal = parseFloat(key);
+                const diff = Math.abs(numVal - groupVal) / groupVal;
+                if (diff < 0.01) { // Within 1%
+                  group.push(c);
+                  foundGroup = true;
+                  break;
+                }
+              }
+              if (!foundGroup) {
+                valueGroups.set(c.value, [c]);
+              }
+            }
+            
+            // Find the group with most agreement
+            let bestGroup: typeof allCandidates = [];
+            let bestValue = '';
+            for (const [value, group] of valueGroups) {
+              if (group.length > bestGroup.length) {
+                bestGroup = group;
+                bestValue = value;
+              }
+            }
+            
+            // Decide if we have enough confidence to use raw HTML fast mode
+            // Criteria: 2+ agreeing candidates OR 1 candidate with strong label (json_ld, chart)
+            const hasStrongSingleCandidate = strongCandidates.some(c => 
+              c.label === 'json_ld_price' || c.label === 'chart_close'
+            );
+            const hasAgreement = bestGroup.length >= 2;
+            
+            const rawHtmlConfident = hasStrongSingleCandidate || hasAgreement;
+            
+            pipelineLog('RAW_HTML_FAST_MODE_ANALYSIS', {
+              strongCandidatesCount: strongCandidates.length,
+              valueGroupsCount: valueGroups.size,
+              bestGroupSize: bestGroup.length,
+              bestValue,
+              hasStrongSingleCandidate,
+              hasAgreement,
+              decision: rawHtmlConfident ? '⚡ USING RAW HTML FAST MODE' : '🐢 Escalating to Jina/Vision',
+            });
+            
+            if (rawHtmlConfident && bestValue) {
+              rawHtmlFastModeUsed = true;
+              const confidence = hasAgreement ? Math.min(0.85, 0.6 + bestGroup.length * 0.1) : 0.7;
+              rawHtmlFastModeResult = {
+                value: bestValue,
+                confidence,
+                candidates: bestGroup,
+              };
+              
+              const fastModeDurationMs = Date.now() - rawHtmlFastModeStartTime;
+              pipelineLog('RAW_HTML_FAST_MODE_SUCCESS', {
+                value: bestValue,
+                confidence,
+                agreementCount: bestGroup.length,
+                durationMs: fastModeDurationMs,
+                timeSavedEstimate: '~25-55 seconds (skipped Jina + Vision)',
+                sources: bestGroup.map(c => ({ label: c.label, context: c.context?.slice(0, 50) })),
+              });
+            }
+          }
+        } catch (e: any) {
+          pipelineLog('RAW_HTML_FAST_MODE_ERROR', { error: e?.message || String(e) });
+        }
+        
+        // If raw HTML fast mode succeeded, skip to lightweight OpenAI fusion
+        if (rawHtmlFastModeUsed && rawHtmlFastModeResult) {
+          pipelineLog('RAW_HTML_FAST_MODE_FUSION', {
+            skipping: 'Jina, Vision, Full OpenAI fusion',
+            using: 'Lightweight OpenAI confirmation',
+          });
+          
+          // Build a minimal prompt for OpenAI to confirm/format the value
+          const fastModePrompt = `
+METRIC: ${input.metric}
+${input.description ? `DESCRIPTION: ${input.description}` : ''}
+
+RAW HTML EXTRACTION FOUND THESE CANDIDATES:
+${rawHtmlFastModeResult.candidates.slice(0, 5).map(c => `- ${c.label}: ${c.value} (${c.context})`).join('\n')}
+
+BEST CANDIDATE: ${rawHtmlFastModeResult.value} (${rawHtmlFastModeResult.candidates.length} sources agree)
+
+TASK: Confirm this is the correct value for the metric. Return JSON:
+{ "value": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "numeric_only", "reasoning": "brief" }
+
+If the extracted value looks wrong for this metric, set confidence < 0.5 and explain why.
+`;
+
+          try {
+            const fastFusionStart = Date.now();
+            const fastResp = await openai.chat.completions.create({
+              model: OPENAI_MODEL_FAST,
+              response_format: { type: 'json_object' },
+              messages: [
+                { role: 'system', content: 'You are confirming an extracted metric value. Return strict JSON only.' },
+                { role: 'user', content: fastModePrompt },
+              ],
+              max_tokens: 500,
+            });
+            
+            let fastRaw = fastResp.choices[0]?.message?.content?.trim() || '{}';
+            try { fastRaw = fastRaw.replace(/```json|```/g, '').trim(); } catch {}
+            const fastJson = JSON.parse(fastRaw);
+            
+            const fastFusionDurationMs = Date.now() - fastFusionStart;
+            const totalFastModeMs = Date.now() - rawHtmlFastModeStartTime;
+            
+            // If OpenAI confirms (confidence >= 0.5), use raw HTML fast mode result
+            if (typeof fastJson.confidence === 'number' && fastJson.confidence >= 0.5) {
+              const finalValue = fastJson.asset_price_suggestion || fastJson.value || rawHtmlFastModeResult.value;
+              const finalConfidence = Math.min(rawHtmlFastModeResult.confidence, fastJson.confidence);
+              
+              pipelineLog('RAW_HTML_FAST_MODE_CONFIRMED', {
+                value: finalValue,
+                confidence: finalConfidence,
+                openaiConfidence: fastJson.confidence,
+                totalDurationMs: totalFastModeMs,
+                fusionDurationMs: fastFusionDurationMs,
+              });
+              
+              const fastResolution = {
+                metric: input.metric,
+                value: finalValue,
+                asset_price_suggestion: finalValue,
+                confidence: finalConfidence,
+                as_of: new Date().toISOString(),
+                
+                pipeline: {
+                  path: 'RAW_HTML_FAST_MODE',
+                  totalTimeMs: totalFastModeMs,
+                  method: 'raw_html_extraction + lightweight_openai',
+                  candidatesFound: rawHtmlFastModeResult.candidates.length,
+                  timeSaved: '~25-55s (skipped Jina + Vision)',
+                },
+                
+                validation: {
+                  historicalSource: historicalStats.source,
+                  lastKnownValue: historicalStats.lastValue,
+                },
+                
+                reasoning: fastJson.reasoning || 'Raw HTML extraction with OpenAI confirmation',
+                sources: rawHtmlFastModeResult.candidates.slice(0, 3).map(c => ({
+                  url: c.url,
+                  quote: `${c.label}: ${c.value}`,
+                  match_score: finalConfidence,
+                })),
+                
+                // Legacy compatibility
+                unit: 'unknown',
+                fast_path: false,
+                raw_html_fast_mode: true,
+                fusion_tier: 'raw_html_fast',
+                fusion_model: OPENAI_MODEL_FAST,
+              };
+              
+              // Persist resolution
+              let resolutionId: string | null = null;
+              try {
+                const { data: resData, error: resErr } = await supabase
+                  .from('metric_oracle_resolutions')
+                  .insert([{
+                    metric_name: input.metric,
+                    metric_description: input.description || null,
+                    source_urls: input.urls,
+                    resolution_data: fastResolution,
+                    confidence_score: finalConfidence,
+                    processing_time_ms: totalFastModeMs,
+                    user_address: input.user_address || null,
+                    related_market_id: marketId || null,
+                    created_at: new Date(),
+                  }])
+                  .select('id')
+                  .single();
+                if (!resErr) resolutionId = resData?.id || null;
+              } catch {}
+              
+              // Link to market
+              if (marketId && resolutionId) {
+                try {
+                  await supabase.from('markets').update({
+                    metric_resolution_id: resolutionId,
+                    updated_at: new Date().toISOString(),
+                  }).eq('id', marketId);
+                } catch {}
+              }
+              
+              // Discover locators if confident enough
+              if (finalConfidence >= 0.7 && marketId && input.urls.length > 0) {
+                try {
+                  const discovered = await discoverLocators(
+                    input.urls[0],
+                    finalValue,
+                    'raw_html_fast_mode',
+                  );
+                  if (discovered) {
+                    await supabase.from('markets').update({
+                      ai_source_locator: discovered,
+                      updated_at: new Date().toISOString(),
+                    }).eq('id', marketId);
+                    
+                    pipelineLog('RAW_HTML_FAST_MODE_LOCATORS_DISCOVERED', {
+                      selectorCount: discovered.selectors.length,
+                      futureImpact: 'Next fetch will use CSS SELECTOR FAST PATH (~1-2s)',
+                    });
+                  }
+                } catch {}
+              }
+              
+              await supabase.from('metric_oracle_jobs').update({
+                status: 'completed',
+                progress: 100,
+                result: fastResolution,
+                processing_time_ms: totalFastModeMs,
+                completed_at: new Date(),
+              }).eq('job_id', jobId);
+              
+              pipelineLog('PIPELINE_COMPLETE', {
+                jobId,
+                totalTimeMs: totalFastModeMs,
+                pathTaken: 'RAW_HTML_FAST_MODE',
+                result: { value: finalValue, confidence: finalConfidence },
+                nextFetchExpectation: finalConfidence >= 0.7 
+                  ? 'Next fetch may use CSS SELECTOR FAST PATH (locators discovered)'
+                  : 'Next fetch will try RAW_HTML_FAST_MODE again',
+              });
+              
+              await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', fastResolution);
+              return;
+            } else {
+              pipelineLog('RAW_HTML_FAST_MODE_REJECTED', {
+                reason: 'OpenAI confidence too low',
+                openaiConfidence: fastJson.confidence,
+                openaiReasoning: fastJson.reasoning,
+                decision: 'Escalating to full pipeline (Jina + Vision)',
+              });
+            }
+          } catch (e: any) {
+            pipelineLog('RAW_HTML_FAST_MODE_FUSION_ERROR', {
+              error: e?.message || String(e),
+              decision: 'Escalating to full pipeline',
+            });
           }
         }
 
@@ -790,6 +1268,10 @@ export async function POST(req: NextRequest) {
           urlCount: urlsToAnalyze.length,
           archiveFirstFlow,
           archiveFallbackUsed,
+          rawHtmlFastModeTried: !rawHtmlFastModeUsed,
+          escalationReason: rawHtmlFastModeResult 
+            ? 'Raw HTML candidates found but OpenAI rejected'
+            : 'No confident candidates from raw HTML',
         });
 
         // --- Phase 1: Fetch content + screenshots in parallel per URL ---
@@ -1689,21 +2171,52 @@ EXTRACTED NUMERIC VALUE:`;
           };
         }) : [];
 
+        const totalProcessingTimeForResolution = Date.now() - started;
+        
+        // Check if we already have working locators (used for resolution metadata)
+        // If we're here in the full pipeline, locators either didn't exist or failed
+        const hadWorkingLocatorsBefore = storedLocatorData && 
+          storedLocatorData.selectors.length > 0 && 
+          storedLocatorData.failure_count < 3;
+        
         const resolution = {
+          // Core result
           metric: input.metric,
           value: json.value || 'N/A',
-          unit: json.unit || 'unknown',
-          as_of: json.as_of || new Date().toISOString(),
-          confidence: typeof json.confidence === 'number' ? Math.min(Math.max(json.confidence, 0), 1) : 0.5,
           asset_price_suggestion: json.asset_price_suggestion || json.value || '50.00',
+          confidence: typeof json.confidence === 'number' ? Math.min(Math.max(json.confidence, 0), 1) : 0.5,
+          as_of: json.as_of || new Date().toISOString(),
+          
+          // Pipeline metadata (concise)
+          pipeline: {
+            path: 'FULL_PIPELINE',
+            totalTimeMs: totalProcessingTimeForResolution,
+            fusionTier,
+            fusionModel,
+            dataSources: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`,
+          },
+          
+          // Validation context
+          validation: {
+            warning: validationWarning || undefined,
+            historicalSource: historicalStats.source,
+            lastKnownValue: historicalStats.lastValue,
+          },
+          
+          // Locator status for future fast-path
+          locator: {
+            existedBefore: !!storedLocatorData,
+            wasWorking: hadWorkingLocatorsBefore,
+          },
+          
           reasoning: json.reasoning || '',
           sources: sourcesWithScreenshots,
-          // Validation
+          
+          // Legacy fields for compatibility
+          unit: json.unit || 'unknown',
           validation_warning: validationWarning || undefined,
-          // Fusion tier metadata
           fusion_tier: fusionTier,
           fusion_model: fusionModel,
-          // Vision metadata
           vision_analysis_enabled: ENABLE_VISION_ANALYSIS,
           vision_sources_analyzed: Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length,
           vision_consensus_agreement: Array.from(screenshotDataMap.values()).find(d => d.visionConsensus)?.visionConsensus?.agreement || null,
@@ -1719,11 +2232,9 @@ EXTRACTED NUMERIC VALUE:`;
           settlement_wayback_url: settlementWaybackUrl,
           settlement_wayback_timestamp: settlementWaybackTimestamp,
           settlement_wayback_page_url: settlementWaybackPageUrl,
-          // Archive-first settlement flow fields
           archive_first_flow: archiveFirstFlow,
           archive_fallback_used: archiveFallbackUsed,
           analyzed_urls: Array.from(analyzedUrlsMap.values()),
-          // Dual analysis fields
           text_extracted_value: textExtractedValue,
           vision_extracted_value: visionExtractedValue,
           extraction_confidence_match: extractionConfidenceMatch,
@@ -1763,14 +2274,36 @@ EXTRACTED NUMERIC VALUE:`;
           } catch {}
         }
 
-        // --- Phase 5: Auto-discover locators on creation context for fast-path reuse ---
-        // Gate on the raw AI confidence (pre-validation) or strong vision consensus,
-        // NOT the post-validation confidence which can be crushed by stale historical data.
+        // --- Phase 5: Auto-discover locators for fast-path reuse ---
+        // Discover locators anytime we ran full pipeline and got a confident result
+        // This enables fast-path for ALL future fetches (live tracking, settlement, etc.)
+        // Only skip if we already have working locators (we used fast-path above)
         const rawAiConfidence = typeof json.confidence === 'number' ? json.confidence : 0;
         const hasVisionAgreement = resolution.vision_consensus_agreement === 'full' || resolution.vision_consensus_agreement === 'partial';
         const discoveryEligible = rawAiConfidence >= 0.7 || hasVisionAgreement;
+        
+        pipelineLog('LOCATOR_DISCOVERY_CHECK', {
+          hadWorkingLocatorsBefore,
+          hasMarketId: !!marketId,
+          rawAiConfidence,
+          hasVisionAgreement,
+          discoveryEligible,
+          hasValidValue: resolution.asset_price_suggestion && resolution.asset_price_suggestion !== '0',
+          hasUrls: input.urls.length > 0,
+          context: input.context || 'none',
+          decision: (!hadWorkingLocatorsBefore && marketId && discoveryEligible) 
+            ? '🔍 WILL DISCOVER LOCATORS FOR FUTURE FAST-PATH' 
+            : hadWorkingLocatorsBefore
+              ? '⏭️ SKIPPING - already have working locators'
+              : '⏭️ SKIPPING - confidence too low or missing data',
+        });
+        
+        // Discover locators if:
+        // 1. We don't already have working locators (or they failed)
+        // 2. We have a market ID to store them against
+        // 3. We got a confident extraction result
         if (
-          input.context === 'create' &&
+          !hadWorkingLocatorsBefore &&
           marketId &&
           discoveryEligible &&
           resolution.asset_price_suggestion &&
@@ -1783,8 +2316,11 @@ EXTRACTED NUMERIC VALUE:`;
               : resolution.locator_used ? 'locator'
               : 'fusion';
 
-            console.log('[Metric-AI] 🔍 Phase 5: Auto-discovering locators via Jina + cheerio', {
-              jobId, url: discoveryUrl, confirmedValue: resolution.asset_price_suggestion,
+            pipelineLog('LOCATOR_DISCOVERY_START', {
+              url: discoveryUrl,
+              confirmedValue: resolution.asset_price_suggestion,
+              primaryEvidence,
+              purpose: 'Finding CSS selectors to enable fast-path on future fetches',
             });
 
             const discovered = await discoverLocators(
@@ -1799,17 +2335,32 @@ EXTRACTED NUMERIC VALUE:`;
                 updated_at: new Date().toISOString(),
               }).eq('id', marketId);
 
-              console.log('[Metric-AI] ✓ Auto-discovered locators persisted', {
-                jobId,
+              pipelineLog('LOCATOR_DISCOVERY_SUCCESS', {
+                marketId,
                 selectorCount: discovered.selectors.length,
-                bestSelector: discovered.selectors[0]?.type,
-                bestConfidence: discovered.selectors[0]?.confidence,
+                selectors: discovered.selectors.slice(0, 3).map(s => ({
+                  type: s.type,
+                  selector: s.selector?.slice(0, 80),
+                  confidence: s.confidence,
+                  sampleValue: s.sample_value,
+                })),
+                storedUrl: discovered.url,
+                textPattern: discovered.text_pattern,
+                futureImpact: 'Next fetch for this market will use FAST PATH (~1-2s instead of ~30-60s)',
               });
             } else {
-              console.log('[Metric-AI] ⚠ No locators discovered for', discoveryUrl);
+              pipelineLog('LOCATOR_DISCOVERY_NO_MATCH', {
+                url: discoveryUrl,
+                confirmedValue: resolution.asset_price_suggestion,
+                reason: 'No CSS selectors found that match the confirmed value',
+                futureImpact: 'Next fetch will still use full pipeline',
+              });
             }
           } catch (discoveryErr) {
-            console.warn('[Metric-AI] ⚠ Locator discovery failed (non-fatal):', discoveryErr instanceof Error ? discoveryErr.message : discoveryErr);
+            pipelineLog('LOCATOR_DISCOVERY_ERROR', {
+              error: discoveryErr instanceof Error ? discoveryErr.message : String(discoveryErr),
+              nonFatal: true,
+            });
           }
         }
 
@@ -1837,6 +2388,27 @@ EXTRACTED NUMERIC VALUE:`;
           resolutionId,
         });
         console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        
+        // Final pipeline summary
+        pipelineLog('PIPELINE_COMPLETE', {
+          jobId,
+          totalTimeMs: totalProcessingTimeMs,
+          pathTaken: resolution.fast_path ? 'FAST_PATH' : 'FULL_PIPELINE',
+          fusionTier: resolution.fusion_tier || 'N/A',
+          result: {
+            value: resolution.asset_price_suggestion,
+            confidence: resolution.confidence,
+          },
+          locatorStatus: {
+            hadWorkingLocators: hadWorkingLocatorsBefore,
+            wasDiscoveredThisRun: !hadWorkingLocatorsBefore && discoveryEligible,
+          },
+          nextFetchExpectation: resolution.fast_path 
+            ? 'Will continue using FAST PATH'
+            : (!hadWorkingLocatorsBefore && discoveryEligible)
+              ? 'Next fetch will use FAST PATH (locators discovered this run)'
+              : 'Next fetch will use FULL PIPELINE (no locators discovered)',
+        });
 
         await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', resolution);
         

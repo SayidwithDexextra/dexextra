@@ -1,0 +1,27 @@
+# Build outputs
+.next/
+out/
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Hardhat/Foundry artifacts (large JSON build-info files)
+Dexetrav5/artifacts/
+Dexetrav5/cache/
+Dexetrav5/typechain-types/
+
+# Separate project with own dependencies
+metric-ai-worker/node_modules/
+metric-ai-worker/.next/
+
+# Cache and logs
+*.log
+.turbo/
+.cache/
+
+# Large binary files
+*.pack
+*.pack.gz
+*.sst

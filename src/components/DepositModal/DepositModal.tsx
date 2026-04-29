@@ -10,8 +10,8 @@ import DepositTokenSelect from './DepositTokenSelect'
 import DepositExternalInput from './DepositExternalInput'
 import SpokeDepositModal from '@/components/DepositModal/SpokeDepositModal'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { useDepositGasEstimate } from '@/hooks/useDepositGasEstimate'
 import { env } from '@/lib/env'
 import SpokeVaultAbi from '@/lib/abis/SpokeVault.json'
 import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
@@ -34,44 +34,14 @@ export default function DepositModal({
   const [error, setError] = useState<string | null>(null)
   const { walletAddress } = useWalletAddress()
   const coreVault = useCoreVault()
+  const { gasFeeUsd, gasFeeEth, isLoading: isGasLoading } = useDepositGasEstimate(42161) // Arbitrum
   const [isFunctionDepositLoading, setIsFunctionDepositLoading] = useState(false)
   const [showSpokeDepositModal, setShowSpokeDepositModal] = useState(false)
   const [spokeDepositAmount, setSpokeDepositAmount] = useState('')
   const [spokeDepositError, setSpokeDepositError] = useState<string | null>(null)
   const [networkWarning, setNetworkWarning] = useState<string | null>(null)
   
-  // Stablecoins by chain
-  const polygonUSDC: Token = {
-    symbol: 'USDC',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
-    name: 'USD Coin',
-    decimals: 6,
-    chain: 'Polygon',
-    contractAddress: CONTRACT_ADDRESSES.MOCK_USDC
-  }
-  const polygonUSDT: Token = {
-    symbol: 'USDT',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
-    name: 'Tether USD',
-    decimals: 6,
-    chain: 'Polygon'
-  }
-  const polygonDAI: Token = {
-    symbol: 'DAI',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
-    name: 'Dai Stablecoin',
-    decimals: 18,
-    chain: 'Polygon'
-  }
-  // Arbitrum has two USDC tokens: Bridged USDC.e and Native USDC
-  const arbitrumUSDCe: Token = {
-    symbol: 'USDC.e',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
-    name: 'Bridged USDC (USDC.e)',
-    decimals: 6,
-    chain: 'Arbitrum',
-    contractAddress: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8'
-  }
+  // Arbitrum tokens - Native USDC is the only enabled token for deposits
   const arbitrumUSDC: Token = {
     symbol: 'USDC',
     icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
@@ -79,6 +49,14 @@ export default function DepositModal({
     decimals: 6,
     chain: 'Arbitrum',
     contractAddress: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'
+  }
+  const arbitrumUSDCe: Token = {
+    symbol: 'USDC.e',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
+    name: 'Bridged USDC (USDC.e)',
+    decimals: 6,
+    chain: 'Arbitrum',
+    contractAddress: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8'
   }
   const arbitrumUSDT: Token = {
     symbol: 'USDT',
@@ -95,62 +73,14 @@ export default function DepositModal({
     chain: 'Arbitrum'
   }
 
-  // Ethereum Mainnet
-  const ethereumUSDC: Token = {
-    symbol: 'USDC',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
-    name: 'USD Coin',
-    decimals: 6,
-    chain: 'Ethereum'
-  }
-  const ethereumUSDT: Token = {
-    symbol: 'USDT',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
-    name: 'Tether USD',
-    decimals: 6,
-    chain: 'Ethereum'
-  }
-  const ethereumDAI: Token = {
-    symbol: 'DAI',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
-    name: 'Dai Stablecoin',
-    decimals: 18,
-    chain: 'Ethereum'
-  }
-
-  // Hyperliquid
-  const hyperliquidUSDC: Token = {
-    symbol: 'USDC',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
-    name: 'USD Coin',
-    decimals: 6,
-    chain: 'Hyperliquid'
-  }
-  const hyperliquidUSDT: Token = {
-    symbol: 'USDT',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
-    name: 'Tether USD',
-    decimals: 6,
-    chain: 'Hyperliquid'
-  }
-  const hyperliquidDAI: Token = {
-    symbol: 'DAI',
-    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
-    name: 'Dai Stablecoin',
-    decimals: 18,
-    chain: 'Hyperliquid'
-  }
-
   // Only Native USDC on Arbitrum is supported for deposits (withdrawal API uses Native USDC)
   // Bridged USDC.e and other tokens show as disabled in UI
   const availableTokens: Token[] = [
-    polygonUSDC, polygonUSDT, polygonDAI,
-    arbitrumUSDC, arbitrumUSDCe, arbitrumUSDT, arbitrumDAI, // Native USDC first (enabled), others disabled
-    ethereumUSDC, ethereumUSDT, ethereumDAI,
-    hyperliquidUSDC, hyperliquidUSDT, hyperliquidDAI
+    arbitrumUSDC, arbitrumUSDCe, arbitrumUSDT, arbitrumDAI
   ]
 
-  const [sourceToken, setSourceToken] = useState<Token>(polygonUSDC)
+  // Default to Arbitrum USDC (the only enabled token)
+  const [sourceToken, setSourceToken] = useState<Token>(arbitrumUSDC)
   const isArbitrumFlow = (sourceToken?.chain || '').toLowerCase() === 'arbitrum'
   
   const vaultToken: Token = {
@@ -233,12 +163,7 @@ export default function DepositModal({
     if (typeof window === 'undefined') return
 
     const chain = (sourceToken?.chain || '').toLowerCase()
-    const addr =
-      chain === 'polygon' ? env.SPOKE_POLYGON_VAULT_ADDRESS :
-      chain === 'arbitrum' ? env.SPOKE_ARBITRUM_VAULT_ADDRESS :
-      chain === 'ethereum' ? env.SPOKE_ETHEREUM_VAULT_ADDRESS :
-      chain === 'hyperliquid' ? env.SPOKE_HYPERLIQUID_VAULT_ADDRESS :
-      ''
+    const addr = chain === 'arbitrum' ? env.SPOKE_ARBITRUM_VAULT_ADDRESS : ''
 
     if (!addr) return
 
@@ -573,12 +498,8 @@ export default function DepositModal({
         selectedToken={sourceToken}
         onSelectToken={(t) => setSourceToken(t)}
         onContinue={() => {
-          const chain = (sourceToken?.chain || '').toLowerCase()
-          if (chain === 'hyperliquid') {
-            setStep('input')
-          } else {
-            setStep('external')
-          }
+          // Arbitrum uses the external deposit flow (spoke vault)
+          setStep('external')
         }}
       />
     )
@@ -674,6 +595,9 @@ export default function DepositModal({
         sourceToken={sourceToken}
         targetToken={vaultToken}
         isDirectDeposit={true}
+        gasFeeUsd={gasFeeUsd}
+        gasFeeEth={gasFeeEth}
+        isGasLoading={isGasLoading}
       />
     )
   }
@@ -683,9 +607,8 @@ export default function DepositModal({
       isOpen={isOpen}
       onClose={handleClose}
       onNewDeposit={() => {
-        const chain = (sourceToken?.chain || '').toLowerCase()
-        const isExternalFlow = chain !== 'hyperliquid'
-        setStep(isExternalFlow ? 'external' : 'input')
+        // Arbitrum uses the external deposit flow (spoke vault)
+        setStep('external')
         setDepositAmount('')
         setPaymentStatus('pending')
         setError(null)
@@ -698,6 +621,8 @@ export default function DepositModal({
       sourceToken={sourceToken}
       targetToken={isArbitrumFlow ? spokeVaultToken : vaultToken}
       isDirectDeposit={true}
+      gasFeeUsd={gasFeeUsd}
+      gasFeeEth={gasFeeEth}
     />
   )
 } 

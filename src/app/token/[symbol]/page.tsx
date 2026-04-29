@@ -1880,7 +1880,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     );
                   })()}
                 </div>
-                <div className="flex-shrink-0 max-h-80 overflow-hidden" data-walkthrough="token-info">
+                <div className="flex-shrink-0 max-h-80 2xl:max-h-[420px] overflow-hidden" data-walkthrough="token-info">
                   <TokenHeader symbol={symbol} />
                 </div>
                 <div className="flex-1 min-h-0 overflow-hidden" data-walkthrough="token-trade">

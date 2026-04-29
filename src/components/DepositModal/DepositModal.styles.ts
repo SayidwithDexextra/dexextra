@@ -23,8 +23,7 @@ export const designSystem = {
       lowBalance: "#6b7280"
     },
     brand: {
-      ethereum: "#627eea",
-      polygon: "#8247e5",
+      arbitrum: "#28a0f0",
       bitcoin: "#f7931a",
       visa: "#1a1f71",
       coinbase: "#0052ff"

@@ -77,7 +77,7 @@ export default function DepositModalReview({
   onBack,
   onConfirm,
   amount = "4.79",
-  sourceToken = { symbol: 'ETH', icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/ethereum-eth-logo.png' },
+  sourceToken = { symbol: 'USDC', icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png' },
   targetToken = { symbol: 'USDC', icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png' },
   estimatedGas = "< 1 min",
   exchangeRate = "1 ETH = 4,785.00 USDC",
@@ -85,8 +85,11 @@ export default function DepositModalReview({
   animationDirection = 'forward',
   isDirectDeposit = false,
   onDirectDeposit,
-  isVaultConnected = false
-}: DepositModalReviewProps) {
+  isVaultConnected = false,
+  gasFeeUsd = 0,
+  gasFeeEth = 0,
+  isGasLoading = false
+}: DepositModalReviewProps & { onDirectDeposit?: () => void }) {
   const [mounted, setMounted] = useState(false)
   const [quoteDetails, setQuoteDetails] = useState<QuoteDetails | null>(null)
   const [refreshState, setRefreshState] = useState<QuoteRefreshState>({
@@ -404,7 +407,7 @@ export default function DepositModalReview({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-white">
-                    {isDirectDeposit ? (targetToken.name || 'HyperLiquid CoreVault') : 'Dexetera Wallet'}
+                    {isDirectDeposit ? (targetToken.name || 'Arbitrum SpokeVault') : 'Dexetera Wallet'}
                   </span>
                 </div>
               </div>
@@ -489,7 +492,15 @@ export default function DepositModalReview({
                     <InfoIcon />
                     <span className="text-[11px] font-medium text-[#808080]">Estimated gas</span>
                   </div>
-                  <span className="text-[10px] text-white">~$2.50 (0.001 ETH)</span>
+                  <span className="text-[10px] text-white">
+                    {isGasLoading ? (
+                      'Loading...'
+                    ) : gasFeeUsd > 0 ? (
+                      `~$${gasFeeUsd < 0.01 ? '<0.01' : gasFeeUsd.toFixed(2)}`
+                    ) : (
+                      '~$0.05'
+                    )}
+                  </span>
                 </div>
               </div>
             )}
