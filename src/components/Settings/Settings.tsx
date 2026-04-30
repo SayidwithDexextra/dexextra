@@ -10,7 +10,6 @@ import { ProfileApi } from '@/lib/profileApi'
 import { formDataToUserProfile, userProfileToFormData, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import FuturesMarketFactoryAbi from '@/lib/abis/FuturesMarketFactory.json'
 import ActionStatusModal from '@/components/watchlist/ActionStatusModal'
-import VaultActionModal from '@/components/PortfolioV2/VaultActionModal'
 import { useMarketDraft } from '@/hooks/useMarketDraft'
 import { stepLabel, stepIndex, STEP_ORDER } from '@/types/marketDraft'
 import { useUserFees } from '@/hooks/useUserFees'
@@ -28,7 +27,6 @@ export default function Settings({ className }: SettingsProps) {
   const searchParams = useSearchParams()
   const { walletData, refreshProfile } = useWallet()
   const [walletCopied, setWalletCopied] = useState(false)
-  const [showVaultWithdraw, setShowVaultWithdraw] = useState(false)
   const [uiStatusModal, setUiStatusModal] = useState<{
     isOpen: boolean
     tone: 'warning' | 'success' | 'error' | 'info'
@@ -240,7 +238,7 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
-  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'withdrawals' | 'earnings' | 'preferences'
+  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'earnings' | 'preferences'
   const tabs = useMemo(
     () =>
       [
@@ -248,7 +246,6 @@ export default function Settings({ className }: SettingsProps) {
         { id: 'links' as const, label: 'Links' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'markets' as const, label: 'My Markets' },
-        { id: 'withdrawals' as const, label: 'Withdrawals' },
         { id: 'earnings' as const, label: 'Fees Paid' },
         { id: 'preferences' as const, label: 'Preferences' },
       ] satisfies Array<{ id: SettingsTabId; label: string }>,
@@ -2161,60 +2158,6 @@ export default function Settings({ className }: SettingsProps) {
           </>
         ) : null}
 
-        {activeTab === 'withdrawals' ? (
-          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Vault & Withdrawals</h4>
-                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">USDC</div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                <div className="rounded-md border border-t-stroke bg-t-card p-3">
-                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Available (Trading)</p>
-                  <p className="text-[11px] text-t-fg font-mono">
-                    {(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-t-fg-muted">USDC</span>
-                  </p>
-                </div>
-                <div className="rounded-md border border-t-stroke bg-t-card p-3">
-                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Cross-chain Credit</p>
-                  <p className="text-[11px] text-t-fg font-mono">
-                    {(parseFloat(coreVault?.crossChainCredit || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-t-fg-muted">USDC</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 mt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    try {
-                      if (typeof window === 'undefined') return
-                      if (!isWalletConnected) {
-                        window.dispatchEvent(new CustomEvent('walkthrough:wallet:open'))
-                        return
-                      }
-                      window.dispatchEvent(new CustomEvent('walkthrough:deposit:open'))
-                    } catch {}
-                  }}
-                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-t-card border border-t-stroke text-t-fg disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  Deposit
-                </button>
-                <button
-                  type="button"
-                  disabled={!isWalletConnected}
-                  onClick={() => setShowVaultWithdraw(true)}
-                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-t-card border border-t-stroke text-t-fg disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  Withdraw (Hub)
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {activeTab === 'earnings' ? (
           <div className="space-y-4 mb-6">
             {/* Summary cards */}
@@ -2470,8 +2413,6 @@ export default function Settings({ className }: SettingsProps) {
         </div>
       </div>
     </div>
-
-    <VaultActionModal isOpen={showVaultWithdraw} action="withdraw" onClose={() => setShowVaultWithdraw(false)} />
     </>
   )
 } 

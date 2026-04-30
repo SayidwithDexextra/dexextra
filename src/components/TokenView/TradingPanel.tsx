@@ -19,6 +19,7 @@ import { submitSessionTrade, isSessionErrorMessage, ensureGaslessChain } from '@
 import { useSession } from '@/contexts/SessionContext';
 import WalletModal from '@/components/WalletModal';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
+import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 
 interface TradingPanelProps {
@@ -190,6 +191,23 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     showProgressLabel: undefined,
   });
 
+  // Position created modal state (shows after successful order fill)
+  const [positionCreatedModal, setPositionCreatedModal] = useState<{
+    isOpen: boolean;
+    side: 'LONG' | 'SHORT';
+    size: string;
+    entryPrice: string;
+    notionalValue: string;
+    orderType: 'MARKET' | 'LIMIT';
+  }>({
+    isOpen: false,
+    side: 'LONG',
+    size: '0',
+    entryPrice: '0',
+    notionalValue: '0',
+    orderType: 'MARKET',
+  });
+
   const startOrderFillModal = useCallback((kind: 'market' | 'limit' | 'cancel') => {
     setOrderFillModal({
       isOpen: true,
@@ -218,7 +236,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
   }, []);
 
-  const finishOrderFillModal = useCallback(() => {
+  const finishOrderFillModal = useCallback((orderDetails?: {
+    side: 'LONG' | 'SHORT';
+    size: string;
+    entryPrice: string;
+    notionalValue: string;
+    orderType: 'MARKET' | 'LIMIT';
+  }) => {
     setOrderFillModal((cur) => ({
       ...cur,
       status: 'success',
@@ -240,6 +264,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         detailText: undefined,
         showProgressLabel: undefined,
       }));
+      // Show position created modal after order fill modal closes (for market/limit orders, not cancels)
+      if (orderDetails) {
+        setPositionCreatedModal({
+          isOpen: true,
+          ...orderDetails,
+        });
+      }
     }, 750);
   }, []);
 
@@ -1824,13 +1855,25 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             }
           } catch {}
           await refreshOrders();
+          // Capture order details for position created modal
+          const gaslessOrderSide: 'LONG' | 'SHORT' = isBuy ? 'LONG' : 'SHORT';
+          const gaslessOrderSize = quantity.toFixed(4);
+          const gaslessEntryPrice = (quoteState.price || md.markPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const gaslessNotional = (quantity * (quoteState.price || md.markPrice || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const gaslessOrderDetails = {
+            side: gaslessOrderSide,
+            size: gaslessOrderSize,
+            entryPrice: gaslessEntryPrice,
+            notionalValue: gaslessNotional,
+            orderType: 'MARKET' as const,
+          };
           setAmount(0);
           setAmountInput('');
           setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
           if (mined) {
-            finishOrderFillModal();
+            finishOrderFillModal(gaslessOrderDetails);
           } else {
-            window.setTimeout(() => finishOrderFillModal(), slow ? 5000 : 1400);
+            window.setTimeout(() => finishOrderFillModal(gaslessOrderDetails), slow ? 5000 : 1400);
           }
           return;
         } catch (gerr: any) {
@@ -1868,11 +1911,23 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Refresh orders after successful placement
       await refreshOrders();
       
+      // Capture order details for position created modal
+      const orderSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
+      const orderSize = quantity.toFixed(4);
+      const orderEntryPrice = (quoteState.price || md.markPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const orderNotional = (quantity * (quoteState.price || md.markPrice || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      
       // Clear input fields after successful order
       setAmount(0);
       setAmountInput('');
 
-      finishOrderFillModal();
+      finishOrderFillModal({
+        side: orderSide,
+        size: orderSize,
+        entryPrice: orderEntryPrice,
+        notionalValue: orderNotional,
+        orderType: 'MARKET',
+      });
       
       } catch (error: any) {
       console.error('💥 Market order execution failed:', error);
@@ -2622,6 +2677,21 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         }
         detailText={orderFillModal.detailText}
         showProgressLabel={orderFillModal.showProgressLabel}
+      />
+
+      {/* Position Created Success Modal */}
+      <PositionCreatedModal
+        isOpen={positionCreatedModal.isOpen}
+        onClose={() => setPositionCreatedModal((cur) => ({ ...cur, isOpen: false }))}
+        marketName={tokenData.name || tokenData.symbol || 'Unknown'}
+        marketSymbol={tokenData.symbol || 'UNKNOWN'}
+        marketIconUrl={tokenData.icon_image_url || ''}
+        side={positionCreatedModal.side}
+        size={positionCreatedModal.size}
+        entryPrice={positionCreatedModal.entryPrice}
+        leverage={1}
+        orderType={positionCreatedModal.orderType}
+        notionalValue={positionCreatedModal.notionalValue}
       />
       
       {/* Wallet Connection Modal */}

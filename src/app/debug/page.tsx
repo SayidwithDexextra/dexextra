@@ -3,6 +3,7 @@ import React from 'react';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
 import { CommentSection, type Comment } from '@/components/CommentSection';
 import WithdrawalSuccessModal from '@/components/StatusModals/WithdrawalSuccessModal';
+import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
 
 type IconSearchResponse = {
   results: Array<{
@@ -244,6 +245,18 @@ export default function DebugSearchPage() {
   const [withdrawalAmount, setWithdrawalAmount] = React.useState('1,234.56');
   const [withdrawalCurrency, setWithdrawalCurrency] = React.useState('USDC');
   const [withdrawalTxHash, setWithdrawalTxHash] = React.useState('0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2');
+
+  // Position created modal state
+  const [showPositionModal, setShowPositionModal] = React.useState(false);
+  const [positionMarketName, setPositionMarketName] = React.useState('Ethereum');
+  const [positionMarketSymbol, setPositionMarketSymbol] = React.useState('ETH');
+  const [positionMarketIcon, setPositionMarketIcon] = React.useState('https://assets.coingecko.com/coins/images/279/large/ethereum.png');
+  const [positionSide, setPositionSide] = React.useState<'LONG' | 'SHORT'>('LONG');
+  const [positionSize, setPositionSize] = React.useState('2.5');
+  const [positionEntryPrice, setPositionEntryPrice] = React.useState('1,849.00');
+  const [positionLeverage, setPositionLeverage] = React.useState(10);
+  const [positionOrderType, setPositionOrderType] = React.useState<'MARKET' | 'LIMIT'>('MARKET');
+  const [positionNotional, setPositionNotional] = React.useState('4,622.50');
 
   // Icon search tester
   const [iconQuery, setIconQuery] = React.useState('bitcoin');
@@ -501,6 +514,131 @@ export default function DebugSearchPage() {
         amount={withdrawalAmount}
         currency={withdrawalCurrency}
         txHash={withdrawalTxHash}
+      />
+
+      {/* Position Created Modal Trigger */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">Position Created Modal</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Celebratory modal for when a user&apos;s order is filled and a position is created. Features radial light rays and sparkle animations.
+        </div>
+        
+        <div className="grid gap-3 md:grid-cols-4 mb-4">
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Market Name</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={positionMarketName}
+              onChange={(e) => setPositionMarketName(e.target.value)}
+              placeholder="Ethereum"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Symbol</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={positionMarketSymbol}
+              onChange={(e) => setPositionMarketSymbol(e.target.value)}
+              placeholder="ETH"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Side</div>
+            <select
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={positionSide}
+              onChange={(e) => setPositionSide(e.target.value as 'LONG' | 'SHORT')}
+            >
+              <option value="LONG">LONG</option>
+              <option value="SHORT">SHORT</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Order Type</div>
+            <select
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={positionOrderType}
+              onChange={(e) => setPositionOrderType(e.target.value as 'MARKET' | 'LIMIT')}
+            >
+              <option value="MARKET">MARKET</option>
+              <option value="LIMIT">LIMIT</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Size</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white font-mono"
+              value={positionSize}
+              onChange={(e) => setPositionSize(e.target.value)}
+              placeholder="2.5"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Entry Price</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white font-mono"
+              value={positionEntryPrice}
+              onChange={(e) => setPositionEntryPrice(e.target.value)}
+              placeholder="1,849.00"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Leverage</div>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white font-mono"
+              value={positionLeverage}
+              onChange={(e) => setPositionLeverage(Number(e.target.value) || 1)}
+              placeholder="10"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Notional Value</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white font-mono"
+              value={positionNotional}
+              onChange={(e) => setPositionNotional(e.target.value)}
+              placeholder="4,622.50"
+            />
+          </label>
+        </div>
+
+        <label className="block mb-4">
+          <div className="text-[10px] text-[#808080] mb-1">Market Icon URL (optional)</div>
+          <input
+            className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+            value={positionMarketIcon}
+            onChange={(e) => setPositionMarketIcon(e.target.value)}
+            placeholder="https://..."
+          />
+        </label>
+        
+        <button
+          onClick={() => setShowPositionModal(true)}
+          className={`rounded px-4 py-2.5 text-[12px] font-medium text-white hover:opacity-90 transition-opacity ${
+            positionSide === 'LONG' 
+              ? 'bg-gradient-to-r from-green-500 to-emerald-600' 
+              : 'bg-gradient-to-r from-red-500 to-rose-600'
+          }`}
+        >
+          Trigger Position Created ({positionSide})
+        </button>
+      </div>
+
+      <PositionCreatedModal
+        isOpen={showPositionModal}
+        onClose={() => setShowPositionModal(false)}
+        marketName={positionMarketName}
+        marketSymbol={positionMarketSymbol}
+        marketIconUrl={positionMarketIcon}
+        side={positionSide}
+        size={positionSize}
+        entryPrice={positionEntryPrice}
+        leverage={positionLeverage}
+        orderType={positionOrderType}
+        notionalValue={positionNotional}
       />
 
       {/* MarketInfoHeader Component Preview */}
