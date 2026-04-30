@@ -1367,10 +1367,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       });
 
       // Fetch reference price from orderbook (bestAsk for buy, bestBid for sell)
+      // Use read provider to avoid wallet RPC issues with view functions
       console.log(`📡 [RPC] Fetching reference prices from OrderBook`);
       let startTimePrices = Date.now();
-      const bestBid: bigint = await contracts.obView.bestBid();
-      const bestAsk: bigint = await contracts.obView.bestAsk();
+      const obReadProvider = getReadProvider();
+      const obViewReadOnly = new ethers.Contract(await contracts.obView.getAddress(), contracts.obView.interface, obReadProvider);
+      const bestBid: bigint = await obViewReadOnly.bestBid();
+      const bestAsk: bigint = await obViewReadOnly.bestAsk();
       const durationPrices = Date.now() - startTimePrices;
       console.log(`✅ [RPC] Reference prices fetched in ${durationPrices}ms`, {
         bestBid: bestBid.toString(),
@@ -1386,19 +1389,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Spot/margin liquidity cross-check: margin market orders cannot fill against spot limit orders
       try {
         if (!isBuy && bestBid > 0n) {
-          const lvl: any = await contracts.obView.buyLevels(bestBid);
+          const lvl: any = await obViewReadOnly.buyLevels(bestBid);
           const firstId = BigInt(lvl?.firstOrderId ?? 0);
           if (firstId > 0n) {
-            const top: any = await contracts.obView.getOrder(firstId);
+            const top: any = await obViewReadOnly.getOrder(firstId);
             if (!top?.isMarginOrder) {
               throw new Error('Cannot mix margin and spot trades. The top buy order is a spot order — cancel any spot orders on this market or use a limit order that does not immediately cross.');
             }
           }
         } else if (isBuy && bestAsk > 0n) {
-          const lvl: any = await contracts.obView.sellLevels(bestAsk);
+          const lvl: any = await obViewReadOnly.sellLevels(bestAsk);
           const firstId = BigInt(lvl?.firstOrderId ?? 0);
           if (firstId > 0n) {
-            const top: any = await contracts.obView.getOrder(firstId);
+            const top: any = await obViewReadOnly.getOrder(firstId);
             if (!top?.isMarginOrder) {
               throw new Error('Cannot mix margin and spot trades. The top sell order is a spot order — cancel any spot orders on this market or use a limit order that does not immediately cross.');
             }
