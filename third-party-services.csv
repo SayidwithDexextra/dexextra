@@ -1,0 +1,21 @@
+Service Name,Category,Purpose,Monthly Price ($),Pricing Model,Notes
+Supabase,Database & Auth,"PostgreSQL database, authentication, storage, edge functions",,Per-project,Free tier available; Pro starts at $25/month
+ClickHouse Cloud,Database,"Time-series analytics, OHLCV candles, market ticks, P&L snapshots",,Usage-based,Pay per compute + storage
+Upstash Redis,Cache & Rate Limiting,"Rate limiting, caching, circuit breaker state",,Usage-based,Free tier: 10K commands/day; Pay-as-you-go after
+Upstash QStash,Job Scheduling,"Cron jobs, market lifecycle triggers, scheduled tasks",,Usage-based,Free tier: 500 messages/day; $1/100K messages after
+Alchemy,Blockchain Infrastructure,"RPC nodes (Hyperliquid, Polygon, Arbitrum), webhooks, event monitoring",,Usage-based,Free tier: 300M compute units/month
+Pusher,Real-time Messaging,"WebSocket channels, chart streaming, price updates, trading events",,Per-channel/connection,Free tier: 200K messages/day; Startup $49/month
+OpenAI,AI/ML,"Market categorization, AI assistant, settlement evidence analysis",,Usage-based,Pay per token; GPT-4o-mini ~$0.15/1M input tokens
+Jina AI,Search,"Web search for metric discovery, data source identification",,Usage-based,Free tier available; Pay per search after
+Magic Link,Wallet & Auth,"Social login (Google OAuth), embedded crypto wallets",,Per-MAU,Free tier: 1K MAU; Growth starts at $0.05/MAU
+WalletConnect,Wallet Connection,"Multi-wallet connection protocol (MetaMask, Rainbow, etc.)",,Free,Free for most use cases
+CoinMarketCap,Market Data,"Live crypto quotes, price data API",,Tiered,Free tier: 333 calls/day; Basic $29/month
+Vercel,Hosting,"Next.js hosting, serverless functions, edge deployment",,Usage-based,Free tier available; Pro $20/user/month
+Internet Archive (Wayback),Archival,"Page archiving for settlement evidence via SavePageNow API",,Free,Free API with rate limits
+CoinGecko,Market Data,"ETH/crypto price feeds",,Free,Free public API with rate limits
+Binance,Market Data,"Real-time price feeds",,Free,Free public API
+Kraken,Market Data,"Fallback price feeds",,Free,Free public API
+CryptoCompare,Market Data,"Additional price data",,Free,Free tier available
+Archive.today,Archival,"Backup page archival service",,Free,Free service
+MetaMask SDK,Wallet,Browser extension wallet integration,,Free,Free SDK
+Coinbase Wallet SDK,Wallet,Coinbase wallet integration,,Free,Free SDK

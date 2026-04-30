@@ -14,7 +14,6 @@ contract OBTradeExecutionFacet {
     event TradeExecutionCompleted(address indexed buyer, address indexed seller, uint256 price, uint256 amount);
     event FeesDeducted(address indexed buyer, uint256 buyerFee, address indexed seller, uint256 sellerFee);
     event PriceUpdated(uint256 lastTradePrice, uint256 currentMarkPrice);
-    event GasFeeCharged(address indexed taker, uint256 gasFee6);
     event TradeRecorded(
         bytes32 indexed marketId,
         address indexed buyer,
@@ -633,10 +632,13 @@ contract OBTradeExecutionFacet {
 
         uint256 maxGasFee6 = registry.maxGasFee6();
         uint256 estimatedGasUsed = registry.gasEstimate();
-        if (estimatedGasUsed == 0) estimatedGasUsed = 2_000_000; // Fallback default
+        if (estimatedGasUsed == 0) estimatedGasUsed = 800_000; // Fallback default
+        
+        uint256 gasPrice = registry.gasPriceWei();
+        if (gasPrice == 0) gasPrice = tx.gasprice; // Fallback to tx.gasprice if not set
 
         // Calculate gas cost in wei
-        uint256 gasCostWei = estimatedGasUsed * tx.gasprice;
+        uint256 gasCostWei = estimatedGasUsed * gasPrice;
         
         // Convert to USDC: gasCostWei (in wei) * hypeUsdcRate6 (USDC per 1e18 wei) / 1e18
         uint256 gasFee6 = Math.mulDiv(gasCostWei, hypeUsdcRate6, 1e18);
@@ -659,7 +661,7 @@ contract OBTradeExecutionFacet {
         if (recipient == address(0)) return;
 
         try s.vault.deductFees(taker, gasFee6, recipient) {
-            emit GasFeeCharged(taker, gasFee6);
+            registry.emitGasFee(address(this), taker, gasFee6, false);
         } catch {
             // Silently fail if user doesn't have enough balance
         }

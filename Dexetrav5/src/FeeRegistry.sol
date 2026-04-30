@@ -27,6 +27,7 @@ contract FeeRegistry {
     uint256 public hypeUsdcRate6;   // HYPE price in USDC (6 decimals), e.g., 25_000000 = $25 per HYPE
     uint256 public maxGasFee6;      // Cap on gas fee in USDC (6 decimals), e.g., 1_000000 = $1 max
     uint256 public gasEstimate;     // Estimated gas units per trade, e.g., 2_000_000 for ~2x actual
+    uint256 public gasPriceWei;     // Fixed gas price in wei (0 = use tx.gasprice), e.g., 100_000_000 = 0.1 gwei
     
     // ============ Events ============
     
@@ -39,9 +40,12 @@ contract FeeRegistry {
     
     event LegacyFeeUpdated(uint256 legacyTradingFeeBps);
     
-    event GasFeeConfigUpdated(uint256 hypeUsdcRate6, uint256 maxGasFee6, uint256 gasEstimate);
+    event GasFeeConfigUpdated(uint256 hypeUsdcRate6, uint256 maxGasFee6, uint256 gasEstimate, uint256 gasPriceWei);
     
     event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
+    
+    // Centralized gas fee event - emitted from FeeRegistry so webhooks only need to watch one address
+    event GasFeeCharged(address indexed market, address indexed trader, uint256 gasFee6, bool isMaker);
     
     // ============ Custom Errors ============
     
@@ -146,19 +150,34 @@ contract FeeRegistry {
      * @dev Update gas fee configuration (charged to takers for relayer reimbursement)
      * @param _hypeUsdcRate6 HYPE price in USDC (6 decimals). Set to 0 to disable gas fees.
      * @param _maxGasFee6 Maximum gas fee in USDC (6 decimals)
-     * @param _gasEstimate Estimated gas units per trade (e.g., 2_000_000 for ~2x buffer)
+     * @param _gasEstimate Estimated gas units per trade (e.g., 800_000 for typical trade)
+     * @param _gasPriceWei Fixed gas price in wei (0 = use tx.gasprice), e.g., 100_000_000 = 0.1 gwei
      */
-    function updateGasFeeConfig(uint256 _hypeUsdcRate6, uint256 _maxGasFee6, uint256 _gasEstimate) external onlyAdmin {
+    function updateGasFeeConfig(uint256 _hypeUsdcRate6, uint256 _maxGasFee6, uint256 _gasEstimate, uint256 _gasPriceWei) external onlyAdmin {
         if (_hypeUsdcRate6 > 1000_000000) revert FeeTooHigh(); // Max $1000/HYPE
         if (_maxGasFee6 > 10_000000) revert FeeTooHigh();      // Max $10 gas fee
         if (_gasEstimate > 50_000_000) revert FeeTooHigh();    // Max 50M gas units
+        if (_gasPriceWei > 100_000_000_000) revert FeeTooHigh(); // Max 100 gwei
         hypeUsdcRate6 = _hypeUsdcRate6;
         maxGasFee6 = _maxGasFee6;
         gasEstimate = _gasEstimate;
-        emit GasFeeConfigUpdated(_hypeUsdcRate6, _maxGasFee6, _gasEstimate);
+        gasPriceWei = _gasPriceWei;
+        emit GasFeeConfigUpdated(_hypeUsdcRate6, _maxGasFee6, _gasEstimate, _gasPriceWei);
     }
     
     // ============ View Functions ============
+    
+    /**
+     * @dev Emit a centralized GasFeeCharged event. Called by order book facets after charging gas fees.
+     *      This allows webhooks to watch a single address (FeeRegistry) instead of every market.
+     * @param market The market/order book address where the fee was charged
+     * @param trader The trader who paid the gas fee
+     * @param gasFee6 The gas fee amount in USDC (6 decimals)
+     * @param isMaker True if this is a maker (order placement), false if taker (trade execution)
+     */
+    function emitGasFee(address market, address trader, uint256 gasFee6, bool isMaker) external {
+        emit GasFeeCharged(market, trader, gasFee6, isMaker);
+    }
     
     /**
      * @dev Get the complete fee structure in a single call
@@ -199,12 +218,14 @@ contract FeeRegistry {
      * @return _hypeUsdcRate6 HYPE price in USDC (6 decimals)
      * @return _maxGasFee6 Maximum gas fee in USDC (6 decimals)
      * @return _gasEstimate Estimated gas units per trade
+     * @return _gasPriceWei Fixed gas price in wei (0 = use tx.gasprice)
      */
     function getGasFeeConfig() external view returns (
         uint256 _hypeUsdcRate6,
         uint256 _maxGasFee6,
-        uint256 _gasEstimate
+        uint256 _gasEstimate,
+        uint256 _gasPriceWei
     ) {
-        return (hypeUsdcRate6, maxGasFee6, gasEstimate);
+        return (hypeUsdcRate6, maxGasFee6, gasEstimate, gasPriceWei);
     }
 }

@@ -1,3 +1,6 @@
+# Git
+.git/
+
 # Build outputs
 .next/
 out/
@@ -6,22 +9,31 @@ dist/
 
 # Dependencies
 node_modules/
+**/node_modules/
 
-# Hardhat/Foundry artifacts (large JSON build-info files)
-Dexetrav5/artifacts/
-Dexetrav5/cache/
-Dexetrav5/typechain-types/
+# Entire Hardhat project (ignore all - compile when needed)
+Dexetrav5/
 
-# Separate project with own dependencies
-metric-ai-worker/node_modules/
-metric-ai-worker/.next/
+# Entire separate worker project (open separately if needed)
+metric-ai-worker/
+
+# Vendor libraries (large bundled JS)
+public/charting_library/
 
 # Cache and logs
 *.log
 .turbo/
 .cache/
+.vercel/
 
-# Large binary files
+# Large binary/generated files
 *.pack
 *.pack.gz
 *.sst
+*.bin
+*.map
+
+# Lock files (large, not needed for indexing)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

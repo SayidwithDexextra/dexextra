@@ -13,10 +13,15 @@ export interface FeeSummaryRow {
   total_fees_usdc: number
   taker_fees_usdc: number
   maker_fees_usdc: number
+  // Gas fee fields
+  gas_fee_events: number
+  gas_fees_usdc: number
   total_volume_usdc: number
   first_trade_at: string | null
   last_trade_at: string | null
 }
+
+export type FeeRole = 'taker' | 'maker' | 'gas_fee' | 'gas_fee_maker' | 'gas_fee_taker'
 
 export interface FeeDetailRow {
   id: number
@@ -24,7 +29,7 @@ export interface FeeDetailRow {
   market_address: string
   trade_id: number
   user_address: string
-  fee_role: 'taker' | 'maker'
+  fee_role: FeeRole
   fee_amount_usdc: number
   protocol_share: number
   owner_share: number
@@ -38,6 +43,7 @@ export interface FeeDetailRow {
 }
 
 export interface UserFeeTotals {
+  // Trading fees
   totalFeesUsdc: number
   takerFeesUsdc: number
   makerFeesUsdc: number
@@ -45,6 +51,13 @@ export interface UserFeeTotals {
   takerTrades: number
   makerTrades: number
   totalVolumeUsdc: number
+  // Gas fees
+  gasFeesUsdc: number
+  gasFeeEvents: number
+  gasFeesMakerUsdc: number
+  gasFeesTakerUsdc: number
+  // Combined total
+  grandTotalFeesUsdc: number
 }
 
 export interface UseUserFeesResult {
@@ -56,6 +69,10 @@ export interface UseUserFeesResult {
   isLoading: boolean
   error: string | null
   refetch: () => void
+}
+
+function isGasFeeRole(role: string): boolean {
+  return role === 'gas_fee' || role === 'gas_fee_maker' || role === 'gas_fee_taker'
 }
 
 function parseFeeDetail(r: any): FeeDetailRow {
@@ -132,6 +149,8 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
             total_fees_usdc: Number(r.total_fees_usdc) || 0,
             taker_fees_usdc: Number(r.taker_fees_usdc) || 0,
             maker_fees_usdc: Number(r.maker_fees_usdc) || 0,
+            gas_fee_events: Number(r.gas_fee_events) || 0,
+            gas_fees_usdc: Number(r.gas_fees_usdc) || 0,
             total_volume_usdc: Number(r.total_volume_usdc) || 0,
           }))
         )
@@ -173,7 +192,9 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
 
           // Incrementally update totals via summary-level accumulators
           setSummary((prev) => {
+            const isGasFee = isGasFeeRole(row.fee_role)
             const isTaker = row.fee_role === 'taker'
+            const isMaker = row.fee_role === 'maker'
             const key = `${row.market_id}::${row.market_address}`
             const existing = prev.find(
               (s) => `${s.market_id}::${s.market_address}` === key
@@ -183,12 +204,14 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
                 `${s.market_id}::${s.market_address}` === key
                   ? {
                       ...s,
-                      total_trades: s.total_trades + 1,
+                      total_trades: s.total_trades + (isGasFee ? 0 : 1),
                       taker_trades: s.taker_trades + (isTaker ? 1 : 0),
-                      maker_trades: s.maker_trades + (isTaker ? 0 : 1),
-                      total_fees_usdc: s.total_fees_usdc + row.fee_amount_usdc,
+                      maker_trades: s.maker_trades + (isMaker ? 1 : 0),
+                      total_fees_usdc: s.total_fees_usdc + (isGasFee ? 0 : row.fee_amount_usdc),
                       taker_fees_usdc: s.taker_fees_usdc + (isTaker ? row.fee_amount_usdc : 0),
-                      maker_fees_usdc: s.maker_fees_usdc + (isTaker ? 0 : row.fee_amount_usdc),
+                      maker_fees_usdc: s.maker_fees_usdc + (isMaker ? row.fee_amount_usdc : 0),
+                      gas_fee_events: s.gas_fee_events + (isGasFee ? 1 : 0),
+                      gas_fees_usdc: s.gas_fees_usdc + (isGasFee ? row.fee_amount_usdc : 0),
                       total_volume_usdc: s.total_volume_usdc + row.trade_notional,
                       last_trade_at: row.created_at,
                     }
@@ -201,12 +224,14 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
                 user_address: row.user_address,
                 market_id: row.market_id,
                 market_address: row.market_address,
-                total_trades: 1,
+                total_trades: isGasFee ? 0 : 1,
                 taker_trades: isTaker ? 1 : 0,
-                maker_trades: isTaker ? 0 : 1,
-                total_fees_usdc: row.fee_amount_usdc,
+                maker_trades: isMaker ? 1 : 0,
+                total_fees_usdc: isGasFee ? 0 : row.fee_amount_usdc,
                 taker_fees_usdc: isTaker ? row.fee_amount_usdc : 0,
-                maker_fees_usdc: isTaker ? 0 : row.fee_amount_usdc,
+                maker_fees_usdc: isMaker ? 0 : row.fee_amount_usdc,
+                gas_fee_events: isGasFee ? 1 : 0,
+                gas_fees_usdc: isGasFee ? row.fee_amount_usdc : 0,
                 total_volume_usdc: row.trade_notional,
                 first_trade_at: row.created_at,
                 last_trade_at: row.created_at,
@@ -224,9 +249,15 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
 
   const totals = useMemo<UserFeeTotals>(() => {
     if (summary.length === 0)
-      return { totalFeesUsdc: 0, takerFeesUsdc: 0, makerFeesUsdc: 0, totalTrades: 0, takerTrades: 0, makerTrades: 0, totalVolumeUsdc: 0 }
+      return { 
+        totalFeesUsdc: 0, takerFeesUsdc: 0, makerFeesUsdc: 0, 
+        totalTrades: 0, takerTrades: 0, makerTrades: 0, 
+        totalVolumeUsdc: 0,
+        gasFeesUsdc: 0, gasFeeEvents: 0, gasFeesMakerUsdc: 0, gasFeesTakerUsdc: 0,
+        grandTotalFeesUsdc: 0
+      }
 
-    return summary.reduce<UserFeeTotals>(
+    const base = summary.reduce<UserFeeTotals>(
       (acc, r) => ({
         totalFeesUsdc: acc.totalFeesUsdc + r.total_fees_usdc,
         takerFeesUsdc: acc.takerFeesUsdc + r.taker_fees_usdc,
@@ -235,10 +266,34 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
         takerTrades: acc.takerTrades + r.taker_trades,
         makerTrades: acc.makerTrades + r.maker_trades,
         totalVolumeUsdc: acc.totalVolumeUsdc + r.total_volume_usdc,
+        gasFeesUsdc: acc.gasFeesUsdc + r.gas_fees_usdc,
+        gasFeeEvents: acc.gasFeeEvents + r.gas_fee_events,
+        gasFeesMakerUsdc: 0, // Will compute from recentFees if needed
+        gasFeesTakerUsdc: 0, // Will compute from recentFees if needed
+        grandTotalFeesUsdc: 0,
       }),
-      { totalFeesUsdc: 0, takerFeesUsdc: 0, makerFeesUsdc: 0, totalTrades: 0, takerTrades: 0, makerTrades: 0, totalVolumeUsdc: 0 }
+      { 
+        totalFeesUsdc: 0, takerFeesUsdc: 0, makerFeesUsdc: 0, 
+        totalTrades: 0, takerTrades: 0, makerTrades: 0, 
+        totalVolumeUsdc: 0,
+        gasFeesUsdc: 0, gasFeeEvents: 0, gasFeesMakerUsdc: 0, gasFeesTakerUsdc: 0,
+        grandTotalFeesUsdc: 0
+      }
     )
-  }, [summary])
+    
+    // Compute gas fee breakdown from recent fees (approximate)
+    for (const fee of recentFees) {
+      if (fee.fee_role === 'gas_fee_maker') {
+        base.gasFeesMakerUsdc += fee.fee_amount_usdc
+      } else if (fee.fee_role === 'gas_fee_taker') {
+        base.gasFeesTakerUsdc += fee.fee_amount_usdc
+      }
+    }
+    
+    base.grandTotalFeesUsdc = base.totalFeesUsdc + base.gasFeesUsdc
+    
+    return base
+  }, [summary, recentFees])
 
   return { summary, recentFees, totals, liveIds, isLoading, error, refetch }
 }

@@ -17,6 +17,7 @@ import { useUserFees } from '@/hooks/useUserFees'
 import { useOwnerEarnings } from '@/hooks/useOwnerEarnings'
 import { LiveValue, LiveRow } from '@/components/ui/LiveValue'
 import EarningsPieChart, { type EarningsPieSlice } from '@/components/ui/EarningsPieChart'
+import WithdrawalSuccessModal from '@/components/StatusModals/WithdrawalSuccessModal'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -357,6 +358,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const [withdrawSubmitting, setWithdrawSubmitting] = useState(false)
 	const [withdrawNotice, setWithdrawNotice] = useState<{ kind: 'none' | 'cancelled' | 'error' | 'success'; message: string }>({ kind: 'none', message: '' })
 	const [withdrawTxHash, setWithdrawTxHash] = useState('')
+	const [showWithdrawalSuccessModal, setShowWithdrawalSuccessModal] = useState(false)
+	const [withdrawnAmountForModal, setWithdrawnAmountForModal] = useState('')
 
 	// ─── Transaction history state ───
 	type VaultTx = {
@@ -419,11 +422,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		setWithdrawSubmitting(true)
 		setWithdrawNotice({ kind: 'none', message: '' })
 		setWithdrawTxHash('')
+		const amountToWithdraw = withdrawAmount.trim()
 		try {
-			const tx = await coreVault.withdrawCollateral(withdrawAmount.trim())
+			const tx = await coreVault.withdrawCollateral(amountToWithdraw)
 			setWithdrawTxHash(tx)
 			setWithdrawNotice({ kind: 'success', message: 'Withdrawal submitted successfully.' })
+			setWithdrawnAmountForModal(parseFloat(amountToWithdraw).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 			setWithdrawAmount('')
+			onClose()
+			setTimeout(() => setShowWithdrawalSuccessModal(true), 350)
 			setTimeout(() => fetchTxHistory(), 1500)
 		} catch (e: any) {
 			const code = e?.code ?? e?.error?.code
@@ -1484,6 +1491,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 					</div>
 				</div>
 			</div>
+
+			{/* Withdrawal Success Modal */}
+			<WithdrawalSuccessModal
+				isOpen={showWithdrawalSuccessModal}
+				onClose={() => setShowWithdrawalSuccessModal(false)}
+				amount={withdrawnAmountForModal}
+				currency="USDC"
+				txHash={withdrawTxHash}
+			/>
 		</div>
 	)
 }

@@ -36,16 +36,17 @@ contract OBViewFacet {
     function getGasFeeConfig() external view returns (
         uint256 hypeUsdcRate6,
         uint256 maxGasFee6,
-        uint256 gasEstimate
+        uint256 gasEstimate,
+        uint256 gasPriceWei
     ) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         address feeRegistryAddr;
         try ICoreVaultFeeRegistry(address(s.vault)).feeRegistry() returns (address fr) {
             feeRegistryAddr = fr;
         } catch {
-            return (0, 0, 0);
+            return (0, 0, 0, 0);
         }
-        if (feeRegistryAddr == address(0)) return (0, 0, 0);
+        if (feeRegistryAddr == address(0)) return (0, 0, 0, 0);
         return IFeeRegistry(feeRegistryAddr).getGasFeeConfig();
     }
 

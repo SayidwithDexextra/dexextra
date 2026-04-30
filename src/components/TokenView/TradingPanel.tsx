@@ -1427,11 +1427,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
       // Pre-trade validation: available collateral vs required (accurate margin bps)
       // Runs before preflight so users see a clear message instead of a cryptic "!balance" revert
+      // Use read provider to avoid wallet RPC issues with delegatecall-based view functions
       try {
         const userAddr = address as string;
         console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
         let startTimeCollateral = Date.now();
-        const available: bigint = await contracts.vault.getAvailableCollateral.staticCall(userAddr);
+        const readProvider = getReadProvider();
+        const vaultReadOnly = new ethers.Contract(await contracts.vault.getAddress(), contracts.vault.interface, readProvider);
+        const available: bigint = await vaultReadOnly.getAvailableCollateral.staticCall(userAddr);
         console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
         const notional6: bigint = (sizeWei * referencePrice) / 10n ** 18n;
@@ -1569,14 +1572,18 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             ? await (contracts.obOrderPlacement as any).getAddress()
             : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
 
+          // Use read provider for diagnostics to avoid wallet RPC issues with delegatecall views
+          const diagReadProvider = getReadProvider();
+          const diagVault = new ethers.Contract(await contracts.vault.getAddress(), contracts.vault.interface, diagReadProvider);
+
           // Parallel vault reads for speed
           const [avail, posCount, marginUsed, collateral, unified, posSummary] = await Promise.allSettled([
-            contracts.vault.getAvailableCollateral.staticCall(signerAddr),
-            (contracts.vault as any).getUserPositionCount?.(signerAddr),
-            (contracts.vault as any).getTotalMarginUsed?.staticCall?.(signerAddr),
-            (contracts.vault as any).userCollateral?.(signerAddr),
-            (contracts.vault as any).getUnifiedMarginSummary?.staticCall?.(signerAddr),
-            mktIdHex ? (contracts.vault as any).getPositionSummary?.staticCall?.(signerAddr, mktIdHex) : Promise.resolve(null),
+            diagVault.getAvailableCollateral.staticCall(signerAddr),
+            (diagVault as any).getUserPositionCount?.(signerAddr),
+            (diagVault as any).getTotalMarginUsed?.staticCall?.(signerAddr),
+            (diagVault as any).userCollateral?.(signerAddr),
+            (diagVault as any).getUnifiedMarginSummary?.staticCall?.(signerAddr),
+            mktIdHex ? (diagVault as any).getPositionSummary?.staticCall?.(signerAddr, mktIdHex) : Promise.resolve(null),
           ]);
 
           diagAvailable = avail.status === 'fulfilled' ? BigInt(avail.value ?? 0) : null;
@@ -2111,12 +2118,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
 
       // Collateral check only for margin limit orders; compute accurate required margin using on-chain bps
+      // Use read provider to avoid wallet RPC issues with delegatecall-based view functions
       if (placeFn === 'placeMarginLimitOrder') {
         try {
           const userAddr = address as string;
           console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
           let startTimeCollateral = Date.now();
-          const available: bigint = await contracts.vault.getAvailableCollateral.staticCall(userAddr);
+          const limitReadProvider = getReadProvider();
+          const limitVaultReadOnly = new ethers.Contract(await contracts.vault.getAddress(), contracts.vault.interface, limitReadProvider);
+          const available: bigint = await limitVaultReadOnly.getAvailableCollateral.staticCall(userAddr);
           const durationCollateral = Date.now() - startTimeCollateral;
           // notional in 6 decimals
           const notional6: bigint = (sizeWei * priceWei) / 10n ** 18n;

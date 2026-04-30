@@ -2,6 +2,7 @@
 import React from 'react';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
 import { CommentSection, type Comment } from '@/components/CommentSection';
+import WithdrawalSuccessModal from '@/components/StatusModals/WithdrawalSuccessModal';
 
 type IconSearchResponse = {
   results: Array<{
@@ -238,6 +239,12 @@ export default function DebugSearchPage() {
     process.env.NODE_ENV !== 'production' ||
     String(process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES || '').toLowerCase() === 'true';
 
+  // Withdrawal success modal state
+  const [showWithdrawalModal, setShowWithdrawalModal] = React.useState(false);
+  const [withdrawalAmount, setWithdrawalAmount] = React.useState('1,234.56');
+  const [withdrawalCurrency, setWithdrawalCurrency] = React.useState('USDC');
+  const [withdrawalTxHash, setWithdrawalTxHash] = React.useState('0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2');
+
   // Icon search tester
   const [iconQuery, setIconQuery] = React.useState('bitcoin');
   const [iconDescription, setIconDescription] = React.useState('Current price of Bitcoin in USD');
@@ -438,6 +445,63 @@ export default function DebugSearchPage() {
           </div>
         </div>
       </div>
+
+      {/* Withdrawal Success Modal Trigger */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">Withdrawal Success Modal</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Aesthetic center-screen success modal with confetti animation and Dexetera branding.
+        </div>
+        
+        <div className="grid gap-3 md:grid-cols-3 mb-4">
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Amount</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={withdrawalAmount}
+              onChange={(e) => setWithdrawalAmount(e.target.value)}
+              placeholder="1,234.56"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Currency</div>
+            <select
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={withdrawalCurrency}
+              onChange={(e) => setWithdrawalCurrency(e.target.value)}
+            >
+              <option value="USDC">USDC</option>
+              <option value="ETH">ETH</option>
+              <option value="HYPE">HYPE</option>
+              <option value="BTC">BTC</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Transaction Hash</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white font-mono"
+              value={withdrawalTxHash}
+              onChange={(e) => setWithdrawalTxHash(e.target.value)}
+              placeholder="0x..."
+            />
+          </label>
+        </div>
+        
+        <button
+          onClick={() => setShowWithdrawalModal(true)}
+          className="rounded bg-gradient-to-r from-[#2AC4FC] via-[#5B25D9] to-[#B504FD] px-4 py-2.5 text-[12px] font-medium text-white hover:opacity-90 transition-opacity"
+        >
+          Trigger Withdrawal Success
+        </button>
+      </div>
+
+      <WithdrawalSuccessModal
+        isOpen={showWithdrawalModal}
+        onClose={() => setShowWithdrawalModal(false)}
+        amount={withdrawalAmount}
+        currency={withdrawalCurrency}
+        txHash={withdrawalTxHash}
+      />
 
       {/* MarketInfoHeader Component Preview */}
       <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">

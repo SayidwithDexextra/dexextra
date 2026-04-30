@@ -11,8 +11,8 @@ export const preferredRegion = 'iad1'
 //   uint256 price, uint256 amount, uint256 buyerFee, uint256 sellerFee, uint256 timestamp, uint256 liquidationPrice)
 const TRADE_RECORDED_TOPIC = '0x728bed593a905dc538dfce2542eb359251213509bd5f44012a2fc977c3e48fac'
 const FEE_STRUCTURE_UPDATED_TOPIC = '0xb678e9191cf9254064a297a28478e1d3fcbc1dd3ec4b77edca977ce85865aab3'
-// GasFeeCharged(address indexed taker, uint256 gasFee6)
-const GAS_FEE_CHARGED_TOPIC = '0x95dd1fba19e5d11cbff10700ef6ff002447732569cbebb02c3c2b0ee4b568409'
+// GasFeeCharged(address indexed market, address indexed trader, uint256 gasFee6, bool isMaker)
+const GAS_FEE_CHARGED_TOPIC = '0x756f0b4af8a59aa97a4ea2a7ef9118edde6a2959a74161d1f2b6c0614c4b7253'
 
 const TRADE_RECORDED_ABI = [
   'event TradeRecorded(bytes32 indexed marketId, address indexed buyer, address indexed seller, uint256 price, uint256 amount, uint256 buyerFee, uint256 sellerFee, uint256 timestamp, uint256 liquidationPrice)'
@@ -21,7 +21,7 @@ const FEE_STRUCTURE_UPDATED_ABI = [
   'event FeeStructureUpdated(uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps)'
 ]
 const GAS_FEE_CHARGED_ABI = [
-  'event GasFeeCharged(address indexed taker, uint256 gasFee6)'
+  'event GasFeeCharged(address indexed market, address indexed trader, uint256 gasFee6, bool isMaker)'
 ]
 
 const tradeIface = new ethers.Interface(TRADE_RECORDED_ABI)
@@ -291,26 +291,28 @@ async function processGasFeeChargedLog(
   const parsed = gasFeeIface.parseLog({ topics: log.topics, data: log.data })
   if (!parsed) return 0
 
-  const taker = (parsed.args[0] as string).toLowerCase()  // indexed
-  const gasFee6 = parsed.args[1] as bigint
+  // New event signature: GasFeeCharged(address indexed market, address indexed trader, uint256 gasFee6, bool isMaker)
+  const marketAddress = (parsed.args[0] as string).toLowerCase()  // indexed - the order book contract
+  const trader = (parsed.args[1] as string).toLowerCase()          // indexed
+  const gasFee6 = parsed.args[2] as bigint
+  const isMaker = parsed.args[3] as boolean
 
-  console.log(`[fees] GasFeeCharged parsed: taker=${taker} gasFee6=${gasFee6}`)
+  console.log(`[fees] GasFeeCharged parsed: market=${marketAddress} trader=${trader} gasFee6=${gasFee6} isMaker=${isMaker}`)
 
   if (gasFee6 === 0n) {
     console.log('[fees]   Gas fee is 0 — skipping')
     return 0
   }
 
-  const contractAddress = log.address.toLowerCase()
   const blockNumber = normalizeBlockNumber(log.blockNumber)
   const txHash = log.transactionHash
 
-  // Resolve market
-  const market = await resolveMarket(sb, contractAddress)
-  const marketId = market?.symbol || contractAddress.slice(0, 18)
+  // Resolve market using the market address from the event (not log.address which is FeeRegistry)
+  const market = await resolveMarket(sb, marketAddress)
+  const marketId = market?.symbol || marketAddress.slice(0, 18)
 
   // Fee config for protocol share
-  const config = feeConfigCache.get(contractAddress)
+  const config = feeConfigCache.get(marketAddress)
   const protocolShareBps = config?.protocolFeeShareBps ?? 8000
   const protocolRecipient = config?.protocolFeeRecipient
     ?? ((process.env.PROTOCOL_FEE_RECIPIENT || process.env.NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '').toLowerCase() || null)
@@ -326,9 +328,12 @@ async function processGasFeeChargedLog(
   const gasFeeUsdc = Number(gasFee6) / 1e6
   const { protocol, owner } = splitFee(gasFeeUsdc, protocolShareBps)
 
+  // Use gas_fee as role, but we can track maker/taker via the isMaker flag in logs
+  const feeRole = isMaker ? 'gas_fee_maker' : 'gas_fee_taker'
+
   const row = {
     market_id: marketId,
-    market_address: contractAddress,
+    market_address: marketAddress,  // Use the market address from the event
     trade_id: syntheticTradeId,
     trade_price: '0',  // No price for gas fees
     trade_amount: '0', // No amount for gas fees
@@ -338,8 +343,8 @@ async function processGasFeeChargedLog(
     chain_id: 999,
     protocol_fee_recipient: protocolRecipient,
     market_owner_address: marketOwner,
-    user_address: taker,
-    fee_role: 'gas_fee',  // Special role for gas fees
+    user_address: trader,
+    fee_role: feeRole,  // Distinguish maker vs taker gas fees
     fee_amount: ethers.formatUnits(gasFee6, 6),
     fee_amount_usdc: gasFeeUsdc,
     protocol_share: protocol,

@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "../interfaces/IOBTradeExecutionFacet.sol";
 import "../interfaces/IOBLiquidationFacet.sol";
 import "../libraries/LibDiamond.sol";
+import "../interfaces/IFeeRegistry.sol";
 
 contract OBOrderPlacementFacet {
     using Math for uint256;
@@ -682,6 +683,8 @@ contract OBOrderPlacementFacet {
             if (isBuy) { _addToBuyBook(s, orderId, price, remaining); } else { _addToSellBook(s, orderId, price, remaining); }
             emit OrderPlaced(orderId, trader, price, remaining, isBuy, isMarginOrder);
             emit OrderRested(orderId, trader, price, remaining, isBuy, isMarginOrder);
+            // Charge gas fee for order placement when order rests on book
+            _chargeGasFee(s, trader);
         } else {
             if (isMarginOrder) {
                 bytes32 rid4 = _reservationId(s, trader, orderId);
@@ -731,6 +734,55 @@ contract OBOrderPlacementFacet {
             s.lastLiquidationTriggerBlock = block.number;
             s.lastCachedMarkPrice = currentMark;
             try IOBLiquidationFacet(address(this)).onMarkPriceUpdate(currentMark) { } catch { }
+        }
+    }
+
+    /// @dev Charges gas reimbursement fee to the trader when order is placed
+    function _chargeGasFee(OrderBookStorage.State storage s, address trader) private {
+        if (trader == address(0) || trader == address(this)) return;
+
+        // Get FeeRegistry from centralized CoreVault
+        address feeRegistryAddr;
+        try ICoreVaultFeeRegistry(address(s.vault)).feeRegistry() returns (address fr) {
+            feeRegistryAddr = fr;
+        } catch {
+            return;
+        }
+        if (feeRegistryAddr == address(0)) return;
+
+        // Read gas fee config from global FeeRegistry
+        IFeeRegistry registry = IFeeRegistry(feeRegistryAddr);
+        uint256 hypeUsdcRate6 = registry.hypeUsdcRate6();
+        if (hypeUsdcRate6 == 0) return;
+
+        uint256 maxGasFee6 = registry.maxGasFee6();
+        uint256 estimatedGasUsed = registry.gasEstimate();
+        if (estimatedGasUsed == 0) estimatedGasUsed = 800_000;
+        
+        uint256 gasPrice = registry.gasPriceWei();
+        if (gasPrice == 0) gasPrice = tx.gasprice; // Fallback to tx.gasprice if not set
+
+        // Calculate gas cost in wei
+        uint256 gasCostWei = estimatedGasUsed * gasPrice;
+        
+        // Convert to USDC: gasCostWei (in wei) * hypeUsdcRate6 (USDC per 1e18 wei) / 1e18
+        uint256 gasFee6 = Math.mulDiv(gasCostWei, hypeUsdcRate6, 1e18);
+        
+        // Apply cap
+        if (maxGasFee6 > 0 && gasFee6 > maxGasFee6) {
+            gasFee6 = maxGasFee6;
+        }
+        
+        if (gasFee6 == 0) return;
+
+        // Charge to protocol fee recipient from FeeRegistry
+        address recipient = registry.protocolFeeRecipient();
+        if (recipient == address(0)) return;
+
+        try s.vault.deductFees(trader, gasFee6, recipient) {
+            registry.emitGasFee(address(this), trader, gasFee6, true);
+        } catch {
+            // Silently fail if user doesn't have enough balance
         }
     }
 }
