@@ -18,6 +18,8 @@ export interface TooltipProps {
   disabled?: boolean;
   /** Additional className for the tooltip container */
   className?: string;
+  /** If true, renders content without default text styling (for rich/custom content) */
+  unstyled?: boolean;
 }
 
 export function Tooltip({
@@ -28,6 +30,7 @@ export function Tooltip({
   maxWidth = 240,
   disabled = false,
   className = '',
+  unstyled = false,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -115,12 +118,17 @@ export function Tooltip({
               maxWidth,
             }}
           >
-            <div className="bg-[#0F0F0F] border border-[#222222] rounded-md px-2.5 py-1.5 shadow-xl">
-              {/* Content */}
-              {title && (
-                <div className="text-[10px] font-medium text-white mb-0.5">{title}</div>
+            <div className={`bg-[#0F0F0F] border border-[#222222] rounded-md shadow-xl ${unstyled ? 'p-3' : 'px-2.5 py-1.5'}`}>
+              {unstyled ? (
+                content
+              ) : (
+                <>
+                  {title && (
+                    <div className="text-[10px] font-medium text-white mb-0.5">{title}</div>
+                  )}
+                  <div className="text-[9px] text-[#808080] leading-snug">{content}</div>
+                </>
               )}
-              <div className="text-[9px] text-[#808080] leading-snug">{content}</div>
             </div>
           </div>,
           document.body

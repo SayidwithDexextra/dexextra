@@ -4,6 +4,7 @@ import { MarketInfoHeader } from '@/components/MarketInfoHeader';
 import { CommentSection, type Comment } from '@/components/CommentSection';
 import WithdrawalSuccessModal from '@/components/StatusModals/WithdrawalSuccessModal';
 import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
+import PositionClosedModal from '@/components/StatusModals/PositionClosedModal';
 
 type IconSearchResponse = {
   results: Array<{
@@ -257,6 +258,18 @@ export default function DebugSearchPage() {
   const [positionLeverage, setPositionLeverage] = React.useState(10);
   const [positionOrderType, setPositionOrderType] = React.useState<'MARKET' | 'LIMIT'>('MARKET');
   const [positionNotional, setPositionNotional] = React.useState('4,622.50');
+
+  // Position closed modal state
+  const [showClosedModal, setShowClosedModal] = React.useState(false);
+  const [closedMarketName, setClosedMarketName] = React.useState('Ethereum');
+  const [closedMarketSymbol, setClosedMarketSymbol] = React.useState('ETH');
+  const [closedMarketIcon, setClosedMarketIcon] = React.useState('https://assets.coingecko.com/coins/images/279/large/ethereum.png');
+  const [closedSide, setClosedSide] = React.useState<'LONG' | 'SHORT'>('LONG');
+  const [closedSize, setClosedSize] = React.useState('2.5');
+  const [closedEntryPrice, setClosedEntryPrice] = React.useState('1,849.00');
+  const [closedExitPrice, setClosedExitPrice] = React.useState('1,923.50');
+  const [closedPnl, setClosedPnl] = React.useState(186.25);
+  const [closedPnlPercent, setClosedPnlPercent] = React.useState(4.03);
 
   // Icon search tester
   const [iconQuery, setIconQuery] = React.useState('bitcoin');
@@ -639,6 +652,136 @@ export default function DebugSearchPage() {
         leverage={positionLeverage}
         orderType={positionOrderType}
         notionalValue={positionNotional}
+      />
+
+      {/* Position Closed Modal Trigger */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">Position Closed Modal</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Celebratory modal for when a user closes a position. Features floating particles and realized P&L display.
+        </div>
+        
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Market Name</span>
+            <input
+              type="text"
+              value={closedMarketName}
+              onChange={(e) => setClosedMarketName(e.target.value)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Market Symbol</span>
+            <input
+              type="text"
+              value={closedMarketSymbol}
+              onChange={(e) => setClosedMarketSymbol(e.target.value)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+        </div>
+
+        <label className="flex flex-col gap-1 mb-3">
+          <span className="text-[10px] text-[#606060]">Market Icon URL</span>
+          <input
+            type="text"
+            value={closedMarketIcon}
+            onChange={(e) => setClosedMarketIcon(e.target.value)}
+            className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Side</span>
+            <select
+              value={closedSide}
+              onChange={(e) => setClosedSide(e.target.value as 'LONG' | 'SHORT')}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            >
+              <option value="LONG">LONG</option>
+              <option value="SHORT">SHORT</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Size</span>
+            <input
+              type="text"
+              value={closedSize}
+              onChange={(e) => setClosedSize(e.target.value)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Entry Price</span>
+            <input
+              type="text"
+              value={closedEntryPrice}
+              onChange={(e) => setClosedEntryPrice(e.target.value)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Exit Price</span>
+            <input
+              type="text"
+              value={closedExitPrice}
+              onChange={(e) => setClosedExitPrice(e.target.value)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">Realized P&L ($)</span>
+            <input
+              type="number"
+              value={closedPnl}
+              onChange={(e) => setClosedPnl(parseFloat(e.target.value) || 0)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-[#606060]">P&L Percent (%)</span>
+            <input
+              type="number"
+              step="0.01"
+              value={closedPnlPercent}
+              onChange={(e) => setClosedPnlPercent(parseFloat(e.target.value) || 0)}
+              className="rounded bg-[#1A1A1A] border border-[#222222] px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-[#333333]"
+            />
+          </label>
+        </div>
+        
+        <button
+          onClick={() => setShowClosedModal(true)}
+          className={`rounded px-4 py-2.5 text-[12px] font-medium text-white hover:opacity-90 transition-opacity ${
+            closedPnl >= 0 
+              ? 'bg-gradient-to-r from-green-500 to-emerald-600' 
+              : 'bg-gradient-to-r from-red-500 to-rose-600'
+          }`}
+        >
+          Trigger Position Closed ({closedSide}, {closedPnl >= 0 ? 'Profit' : 'Loss'})
+        </button>
+      </div>
+
+      <PositionClosedModal
+        isOpen={showClosedModal}
+        onClose={() => setShowClosedModal(false)}
+        marketName={closedMarketName}
+        marketSymbol={closedMarketSymbol}
+        marketIconUrl={closedMarketIcon}
+        side={closedSide}
+        closeSize={closedSize}
+        entryPrice={closedEntryPrice}
+        exitPrice={closedExitPrice}
+        realizedPnl={closedPnl}
+        realizedPnlPercent={closedPnlPercent}
       />
 
       {/* MarketInfoHeader Component Preview */}

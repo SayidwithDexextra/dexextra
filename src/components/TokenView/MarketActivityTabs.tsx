@@ -22,7 +22,10 @@ import { normalizeBytes32Hex } from '@/lib/hex';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useOnchainOrders } from '@/contexts/OnchainOrdersContextV2';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
+import PositionClosedModal from '@/components/StatusModals/PositionClosedModal';
 import { MarketIconBadge } from '@/components/widgets/MarketIconBadge';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { PositionHoverContent } from '@/components/TokenView/PositionHoverContent';
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
 
@@ -236,6 +239,31 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     showProgressLabel: undefined,
   });
 
+  // Position closed modal state (shows after successful position close)
+  const [positionClosedModal, setPositionClosedModal] = useState<{
+    isOpen: boolean;
+    marketName: string;
+    marketSymbol: string;
+    marketIconUrl: string;
+    side: 'LONG' | 'SHORT';
+    closeSize: string;
+    entryPrice: string;
+    exitPrice: string;
+    realizedPnl: number;
+    realizedPnlPercent: number;
+  }>({
+    isOpen: false,
+    marketName: '',
+    marketSymbol: '',
+    marketIconUrl: '',
+    side: 'LONG',
+    closeSize: '0',
+    entryPrice: '0',
+    exitPrice: '0',
+    realizedPnl: 0,
+    realizedPnlPercent: 0,
+  });
+
   const startCancelModal = useCallback(() => {
     setOrderFillModal({
       isOpen: true,
@@ -279,7 +307,17 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     });
   }, []);
 
-  const finishCloseModal = useCallback(() => {
+  const finishCloseModal = useCallback((closeDetails?: {
+    marketName: string;
+    marketSymbol: string;
+    marketIconUrl: string;
+    side: 'LONG' | 'SHORT';
+    closeSize: string;
+    entryPrice: string;
+    exitPrice: string;
+    realizedPnl: number;
+    realizedPnlPercent: number;
+  }) => {
     setOrderFillModal((cur) => ({
       ...cur,
       status: 'success',
@@ -294,7 +332,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         if (cur.status !== 'success') return cur;
         return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
       });
-    }, 2500);
+      // Show position closed modal after order fill modal closes
+      if (closeDetails) {
+        setPositionClosedModal({
+          isOpen: true,
+          ...closeDetails,
+        });
+      }
+    }, 750);
   }, []);
 
   const errorCloseModal = useCallback((errorMessage: string) => {
@@ -1569,6 +1614,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     const rawCloseSizeValue = rawCloseSize;
     const maxSizeValue = maxSize;
     
+    // Capture position details for the success modal BEFORE clearing state
+    const positionToClose = positions.find(p => p.id === closePositionId);
+    const capturedExitPrice = closeExitPrice;
+    
     setShowCloseModal(false);
     setCloseSize('');
     setRawCloseSize('');
@@ -1653,7 +1702,32 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         } catch {}
       }
 
-      finishCloseModal();
+      // Calculate realized P&L for the close
+      const exitPriceNum = positionToClose?.side === 'LONG'
+        ? (capturedExitPrice?.bestBid || positionToClose?.markPrice || 0)
+        : (capturedExitPrice?.bestAsk || positionToClose?.markPrice || 0);
+      const realizedPnl = positionToClose
+        ? (positionToClose.side === 'LONG'
+            ? (exitPriceNum - positionToClose.entryPrice) * closeAmount
+            : (positionToClose.entryPrice - exitPriceNum) * closeAmount)
+        : 0;
+      const entryValue = (positionToClose?.entryPrice || 0) * closeAmount;
+      const realizedPnlPercent = entryValue > 0 ? (realizedPnl / entryValue) * 100 : 0;
+
+      // Get market icon from marketSymbolMap
+      const marketInfo = marketSymbolMap.get(symbolToClose.toUpperCase());
+
+      finishCloseModal(positionToClose ? {
+        marketName: marketInfo?.name || symbolToClose,
+        marketSymbol: symbolToClose,
+        marketIconUrl: marketInfo?.icon || FALLBACK_TOKEN_ICON,
+        side: positionToClose.side,
+        closeSize: closeAmount.toFixed(4),
+        entryPrice: positionToClose.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        exitPrice: exitPriceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        realizedPnl,
+        realizedPnlPercent,
+      } : undefined);
     } catch (error: any) {
       console.error('Error closing position:', error);
       const rawMsg = error?.message || '';
@@ -2609,36 +2683,43 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                           <React.Fragment key={position.id}>
                             <tr className={rowClass} style={{ animationDelay: `${index * 50}ms` }}>
                               <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
-                                <div className="flex items-center gap-1 min-w-0">
-                                  <Link
-                                    href={getTokenHref(position.symbol)}
-                                    className="group/link flex min-w-0 max-w-full items-center gap-1 hover:opacity-90 transition-opacity"
-                                    title={`Open ${position.symbol} market`}
-                                  >
-                                    <img
-                                      src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
-                                      alt={`${position.symbol} logo`}
-                                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover"
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg">
-                                        {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
-                                      </span>
-                                      <span className="hidden md:block truncate text-[10px] text-t-fg-label">
-                                        {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
-                                      </span>
-                                    </div>
-                                    {position.isUnderLiquidation ? (
-                                      <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
-                                        <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
+                                <Tooltip
+                                  content={<PositionHoverContent position={position} allPositions={displayedPositions} />}
+                                  maxWidth={400}
+                                  delay={250}
+                                  unstyled
+                                >
+                                  <div className="flex items-center gap-1 min-w-0">
+                                    <Link
+                                      href={getTokenHref(position.symbol)}
+                                      className="group/link flex min-w-0 max-w-full items-center gap-1 hover:opacity-90 transition-opacity"
+                                      title={`Open ${position.symbol} market`}
+                                    >
+                                      <img
+                                        src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                        alt={`${position.symbol} logo`}
+                                        className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg">
+                                          {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
+                                        </span>
+                                        <span className="hidden md:block truncate text-[10px] text-t-fg-label">
+                                          {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
+                                        </span>
                                       </div>
-                                    ) : isAtRiskOfLiquidation && (
-                                      <div className="shrink-0 px-1 py-0.5 bg-red-400/10 rounded animate-pulse">
-                                        <span className="text-[8px] font-medium text-red-400">⚠ AT RISK</span>
-                                      </div>
-                                    )}
-                                  </Link>
-                                </div>
+                                      {position.isUnderLiquidation ? (
+                                        <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
+                                          <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
+                                        </div>
+                                      ) : isAtRiskOfLiquidation && (
+                                        <div className="shrink-0 px-1 py-0.5 bg-red-400/10 rounded animate-pulse">
+                                          <span className="text-[8px] font-medium text-red-400">⚠ AT RISK</span>
+                                        </div>
+                                      )}
+                                    </Link>
+                                  </div>
+                                </Tooltip>
                               </td>
                               <td className="px-1 sm:px-2 py-1.5 whitespace-nowrap">
                                 <span
@@ -4318,6 +4399,21 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         headlineText={orderFillModal.headlineText ?? (orderFillModal.kind === 'cancel' ? 'Cancelling order,' : 'Processing,')}
         detailText={orderFillModal.detailText}
         showProgressLabel={orderFillModal.showProgressLabel}
+      />
+
+      {/* Position Closed Success Modal */}
+      <PositionClosedModal
+        isOpen={positionClosedModal.isOpen}
+        onClose={() => setPositionClosedModal((cur) => ({ ...cur, isOpen: false }))}
+        marketName={positionClosedModal.marketName}
+        marketSymbol={positionClosedModal.marketSymbol}
+        marketIconUrl={positionClosedModal.marketIconUrl}
+        side={positionClosedModal.side}
+        closeSize={positionClosedModal.closeSize}
+        entryPrice={positionClosedModal.entryPrice}
+        exitPrice={positionClosedModal.exitPrice}
+        realizedPnl={positionClosedModal.realizedPnl}
+        realizedPnlPercent={positionClosedModal.realizedPnlPercent}
       />
       
       <div className="flex items-center justify-between border-b border-t-stroke px-1.5 sm:px-2.5 py-1.5 sm:py-2.5 flex-shrink-0">

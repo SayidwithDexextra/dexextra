@@ -2686,9 +2686,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       <PositionCreatedModal
         isOpen={positionCreatedModal.isOpen}
         onClose={() => setPositionCreatedModal((cur) => ({ ...cur, isOpen: false }))}
-        marketName={tokenData.name || tokenData.symbol || 'Unknown'}
-        marketSymbol={tokenData.symbol || 'UNKNOWN'}
-        marketIconUrl={tokenData.icon_image_url || ''}
+        marketName={tokenData.name || marketRow?.name || tokenData.symbol || 'Unknown'}
+        marketSymbol={tokenData.symbol || marketRow?.symbol || 'UNKNOWN'}
+        marketIconUrl={tokenData.logo || marketRow?.icon_image_url || marketRow?.logo || ''}
         side={positionCreatedModal.side}
         size={positionCreatedModal.size}
         entryPrice={positionCreatedModal.entryPrice}
