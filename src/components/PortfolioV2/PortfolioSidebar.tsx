@@ -445,7 +445,17 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		}
 	}
 
-	if (!rendered) return null
+	if (!rendered) {
+		return (
+			<WithdrawalSuccessModal
+				isOpen={showWithdrawalSuccessModal}
+				onClose={() => setShowWithdrawalSuccessModal(false)}
+				amount={withdrawnAmountForModal}
+				currency="USDC"
+				txHash={withdrawTxHash}
+			/>
+		)
+	}
 
 	return (
 		<div className="fixed inset-0 z-[10000]">
