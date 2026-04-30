@@ -3,6 +3,23 @@ import { createHmac } from 'crypto'
 import { ethers } from 'ethers'
 import { createClient as createSbClient } from '@supabase/supabase-js'
 
+/**
+ * Alchemy Webhook Handler for Fee Events
+ * 
+ * Webhook Type: ADDRESS_ACTIVITY
+ * Network: HYPERLIQUID_MAINNET
+ * Webhook ID: wh_jwfvqsnik8f3wskn
+ * 
+ * WATCHED ADDRESSES:
+ * - FeeRegistry: 0xFD6c0698Fc91317c815EB6694b592a18f076DFD0
+ *   Events: GasFeeCharged, FeeStructureUpdated
+ * - OrderBook contracts (added per market deployment)
+ *   Events: TradeRecorded
+ * 
+ * NOTE: When new markets are deployed, add their contract address
+ * to the Alchemy webhook via update-webhook-addresses API.
+ */
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const preferredRegion = 'iad1'

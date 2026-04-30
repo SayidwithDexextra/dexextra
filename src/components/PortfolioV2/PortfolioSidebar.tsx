@@ -429,8 +429,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			setWithdrawNotice({ kind: 'success', message: 'Withdrawal submitted successfully.' })
 			setWithdrawnAmountForModal(parseFloat(amountToWithdraw).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 			setWithdrawAmount('')
-			onClose()
-			setTimeout(() => setShowWithdrawalSuccessModal(true), 350)
+			setShowWithdrawalSuccessModal(true)
 			setTimeout(() => fetchTxHistory(), 1500)
 		} catch (e: any) {
 			const code = e?.code ?? e?.error?.code
@@ -449,7 +448,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return (
 			<WithdrawalSuccessModal
 				isOpen={showWithdrawalSuccessModal}
-				onClose={() => setShowWithdrawalSuccessModal(false)}
+				onClose={() => {
+					setShowWithdrawalSuccessModal(false)
+					onClose()
+				}}
 				amount={withdrawnAmountForModal}
 				currency="USDC"
 				txHash={withdrawTxHash}
@@ -1505,7 +1507,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			{/* Withdrawal Success Modal */}
 			<WithdrawalSuccessModal
 				isOpen={showWithdrawalSuccessModal}
-				onClose={() => setShowWithdrawalSuccessModal(false)}
+				onClose={() => {
+					setShowWithdrawalSuccessModal(false)
+					onClose()
+				}}
 				amount={withdrawnAmountForModal}
 				currency="USDC"
 				txHash={withdrawTxHash}
