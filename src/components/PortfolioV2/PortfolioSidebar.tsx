@@ -636,18 +636,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											</button>
 										) : null}
 								<div className="relative">
-									{/* Tooltip */}
-									<div
-										className={[
-											'absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded text-[10px] font-medium whitespace-nowrap pointer-events-none transition-all duration-200',
-											'bg-green-500 text-white',
-											walletCopied ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1',
-										].join(' ')}
-									>
-										Copied!
-										{/* Arrow */}
-										<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-green-500" />
-									</div>
 									<button
 										type="button"
 										onClick={copyWalletAddress}
@@ -685,6 +673,18 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											/>
 										</svg>
 									</button>
+									{/* Tooltip - positioned below */}
+									<div
+										className={[
+											'absolute top-full mt-1.5 left-1/2 -translate-x-1/2 px-2 py-1 rounded text-[10px] font-medium whitespace-nowrap pointer-events-none transition-all duration-200 z-50',
+											'bg-green-500 text-white shadow-lg',
+											walletCopied ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1',
+										].join(' ')}
+									>
+										{/* Arrow pointing up */}
+										<div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-green-500" />
+										Copied!
+									</div>
 								</div>
 									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
 										{isWalletConnected ? (walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : '—') : '—'}
