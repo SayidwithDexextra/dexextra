@@ -8,24 +8,24 @@ const ALCHEMY_API_BASE = 'https://eth-mainnet.g.alchemy.com/v2'
 // Minimum USD value threshold for displaying tokens
 const MIN_TOKEN_VALUE_USD = 0.01
 
-// Enhanced token icons mapping
+// Enhanced token icons mapping (URLs for real icons, emojis as fallback)
 const TOKEN_ICONS: Record<string, string> = {
-  ETH: '💎',
+  ETH: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
+  WETH: 'https://assets.coingecko.com/coins/images/2518/small/weth.png',
+  USDC: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+  USDT: 'https://assets.coingecko.com/coins/images/325/small/Tether.png',
+  DAI: 'https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png',
+  MATIC: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png',
+  LINK: 'https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png',
+  UNI: 'https://assets.coingecko.com/coins/images/12504/small/uniswap-logo.png',
+  AAVE: 'https://assets.coingecko.com/coins/images/12645/small/AAVE.png',
+  ARB: 'https://assets.coingecko.com/coins/images/16547/small/arb.jpg',
   HYPE: '⚡',
-  USDC: '💵',
-  USDT: '💴',
-  DAI: '💰',
-  WETH: '🔷',
-  MATIC: '🟣',
-  LINK: '🔗',
-  UNI: '🦄',
-  AAVE: '👻',
   COMP: '🏛️',
   MKR: '🎯',
   SNX: '⚡',
   CRV: '🌊',
   SUSHI: '🍣',
-  // Add more as needed
 }
 
 // Alchemy API types

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { TokenBalance } from '@/types/wallet'
 
 interface TokenListProps {
@@ -126,6 +127,12 @@ export default function TokenList({
   )
 }
 
+// Check if icon is a URL
+function isIconUrl(icon: string | undefined): boolean {
+  if (!icon) return false
+  return icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('/')
+}
+
 // Individual Token Item Component
 function TokenItem({ token }: { token: TokenBalance }) {
   const getPercentageChangeColor = (change: number) => {
@@ -143,8 +150,19 @@ function TokenItem({ token }: { token: TokenBalance }) {
     <div className="flex items-center justify-between px-4 py-3 hover:bg-gray-800/50 transition-colors">
       {/* Token Icon and Info */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-xl">
-          {token.icon || '🪙'}
+        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-xl overflow-hidden">
+          {isIconUrl(token.icon) ? (
+            <Image
+              src={token.icon!}
+              alt={token.symbol}
+              width={40}
+              height={40}
+              className="w-full h-full object-cover"
+              unoptimized
+            />
+          ) : (
+            token.icon || '🪙'
+          )}
         </div>
         <div className="flex flex-col">
           <div className="flex items-center gap-2">

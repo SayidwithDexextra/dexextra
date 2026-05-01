@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   generateEtags: false,
   
+  // Remove console logs in production builds (keeps console.error and console.warn)
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production' 
+      ? { exclude: ['error', 'warn'] }
+      : false,
+  },
+  
   // Image optimization - enable for production
   images: {
     unoptimized: false,
