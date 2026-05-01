@@ -69,6 +69,9 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
     if (msg.includes('insufficient funds')) {
       return 'Not enough ETH to pay gas on Arbitrum.'
     }
+    if (msg.includes('confirmation timed out') || msg.includes('invalid value for value.nonce')) {
+      return 'Transaction submitted but confirmation timed out. Check your wallet activity for the transaction status.'
+    }
     if (!tokenAddress) {
       return 'Spoke token address is not configured. Set SPOKE_ARBITRUM_USDC_ADDRESS.'
     }
@@ -229,8 +232,77 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
       const tokenDecimals = await contract.decimals()
       const parsedAmount = ethers.parseUnits(amount, tokenDecimals)
 
-      const tx = await contract.faucet(parsedAmount)
-      await tx.wait()
+      // Helper to poll for receipt when ethers.js fails to parse RPC response
+      const pollForReceipt = async (txHash: string): Promise<ethers.TransactionReceipt | null> => {
+        console.warn('[ArbitrumFaucet] Polling for receipt:', txHash)
+        const signerProvider = signer.provider
+        if (!signerProvider) return null
+        
+        const maxAttempts = 30
+        const pollInterval = 2000
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval))
+          try {
+            const receipt = await signerProvider.getTransactionReceipt(txHash)
+            if (receipt) return receipt
+          } catch {}
+        }
+        return null
+      }
+      
+      let txHash: string | null = null
+      let receipt: ethers.TransactionReceipt | null = null
+      
+      try {
+        const tx = await contract.faucet(parsedAmount)
+        txHash = tx.hash
+        
+        try {
+          receipt = await tx.wait()
+        } catch (waitError: any) {
+          const isNonceParsingError = 
+            typeof waitError?.message === 'string' && 
+            waitError.message.includes('invalid value for value.nonce')
+          
+          if (isNonceParsingError && txHash) {
+            receipt = await pollForReceipt(txHash)
+          } else {
+            throw waitError
+          }
+        }
+      } catch (txError: any) {
+        // Check if nonce parsing error happened during faucet() call itself
+        const isNonceParsingError = 
+          typeof txError?.message === 'string' && 
+          txError.message.includes('invalid value for value.nonce')
+        
+        if (isNonceParsingError) {
+          // Try to extract hash from error
+          const hashMatch = txError.message.match(/"hash":\s*"(0x[a-fA-F0-9]{64})"/)
+          txHash = hashMatch?.[1] || null
+          
+          if (txHash) {
+            console.log('[ArbitrumFaucet] Transaction submitted but response parsing failed. Hash:', txHash)
+            receipt = await pollForReceipt(txHash)
+          } else {
+            throw new Error(
+              'Network error during claim. Please check your wallet activity ' +
+              'and try again if the claim did not go through.'
+            )
+          }
+        } else {
+          throw txError
+        }
+      }
+      
+      if (!receipt) {
+        throw new Error('Transaction submitted but confirmation timed out. Check your wallet.')
+      }
+      
+      if (receipt.status === 0) {
+        throw new Error('Transaction failed on-chain.')
+      }
 
       setStatus({
         error: null,

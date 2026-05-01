@@ -16,7 +16,7 @@ const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXP
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
 const PORTFOLIO_PREFIX = 'portfolio:orders:';
 
-function truncateChipLabel(raw: unknown, maxChars = 7): string {
+function truncateChipLabel(raw: unknown, maxChars: number): string {
   const s = String(raw ?? '').trim();
   if (s.length <= maxChars) return s;
 
@@ -26,8 +26,18 @@ function truncateChipLabel(raw: unknown, maxChars = 7): string {
   const headLen = maxChars - suffix.length;
   const headRaw = s.slice(0, headLen);
   const head = headRaw.replace(/[\s\-_]+$/g, '').trimEnd();
-  // If trimming removed everything (e.g. "---"), fall back to raw slice.
   return (head.length ? head : headRaw) + suffix;
+}
+
+function getAdaptiveMaxChars(itemCount: number, totalLabelLength: number): number {
+  // With 1-2 short markets, show full names (up to 16 chars each)
+  // With 3 markets or long combined length, progressively reduce
+  if (itemCount <= 1) return 20;
+  if (itemCount === 2 && totalLabelLength <= 24) return 16;
+  if (itemCount === 2) return 12;
+  if (totalLabelLength <= 30) return 12;
+  if (totalLabelLength <= 40) return 10;
+  return 8;
 }
 
 function isEvmAddress(value: string): boolean {
@@ -842,14 +852,16 @@ const Footer: React.FC = () => {
             }}
             aria-label={showActiveMarketShortcuts ? 'Active markets' : 'Quick links'}
           >
-            {footerNavLinks.map((l: any) => {
+            {(() => {
+              const totalLabelLength = footerNavLinks.reduce((sum: number, link: any) => sum + String(link.label ?? '').length, 0);
+              const adaptiveMax = getAdaptiveMaxChars(footerNavLinks.length, totalLabelLength);
+              return footerNavLinks.map((l: any) => {
               const isActiveMarket = showActiveMarketShortcuts;
               const baseBorder = isActiveMarket ? 'var(--t-chrome-border)' : 'var(--t-chrome-border-sub)';
               const hoverBorder = isActiveMarket ? 'var(--t-chrome-border)' : 'var(--t-chrome-border)';
               const keyPrefix = isActiveMarket ? 'active' : 'nav';
               const fullLabel = String(l.label ?? '');
-              // Only truncate active market labels, not static nav links
-              const chipLabel = isActiveMarket ? truncateChipLabel(fullLabel, 7) : fullLabel;
+              const chipLabel = isActiveMarket ? truncateChipLabel(fullLabel, adaptiveMax) : fullLabel;
               const chipStyles: React.CSSProperties = {
                 padding: '2px 6px',
                 border: `1px solid ${baseBorder}`,
@@ -908,7 +920,8 @@ const Footer: React.FC = () => {
                   {chipLabel}
                 </Link>
               );
-            })}
+            });
+            })()}
           </div>
         </div>
 

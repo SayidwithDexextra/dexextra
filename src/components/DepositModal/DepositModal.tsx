@@ -386,18 +386,171 @@ export default function DepositModal({
 
     const currentAllowance: bigint = await token.allowance(userAddress, vaultAddress)
     if (currentAllowance < amountWei) {
-      const approveTx = await token.approve(vaultAddress, amountWei)
-      const approveReceipt = await approveTx.wait()
-      if (!approveReceipt || approveReceipt.status === 0) {
+      // Helper to poll for approval receipt
+      const pollForApprovalReceipt = async (txHash: string): Promise<ethers.TransactionReceipt | null> => {
+        console.warn('[SpokeDeposit] Polling for approval receipt:', txHash)
+        const maxAttempts = 30
+        const pollInterval = 2000
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval))
+          try {
+            const receipt = await provider.getTransactionReceipt(txHash)
+            if (receipt) {
+              console.log('[SpokeDeposit] Approval receipt found via polling')
+              return receipt
+            }
+          } catch (pollError) {
+            console.warn('[SpokeDeposit] Approval receipt poll error:', pollError)
+          }
+        }
+        return null
+      }
+      
+      let approveReceipt: ethers.TransactionReceipt | null = null
+      let approveTxHash: string | null = null
+      
+      try {
+        const approveTx = await token.approve(vaultAddress, amountWei)
+        approveTxHash = approveTx.hash
+        
+        try {
+          approveReceipt = await approveTx.wait()
+        } catch (waitError: any) {
+          const isNonceParsingError = 
+            typeof waitError?.message === 'string' && 
+            waitError.message.includes('invalid value for value.nonce')
+          
+          if (isNonceParsingError && approveTxHash) {
+            approveReceipt = await pollForApprovalReceipt(approveTxHash)
+          } else {
+            throw waitError
+          }
+        }
+      } catch (txError: any) {
+        // Check if nonce parsing error happened during approve() call itself
+        const isNonceParsingError = 
+          typeof txError?.message === 'string' && 
+          txError.message.includes('invalid value for value.nonce')
+        
+        if (isNonceParsingError) {
+          // Try to extract hash from error
+          const hashMatch = txError.message.match(/"hash":\s*"(0x[a-fA-F0-9]{64})"/)
+          approveTxHash = hashMatch?.[1] || null
+          
+          if (approveTxHash) {
+            console.log('[SpokeDeposit] Approval submitted but response parsing failed. Hash:', approveTxHash)
+            approveReceipt = await pollForApprovalReceipt(approveTxHash)
+          } else {
+            throw new Error(
+              'Network error during approval. Please check your wallet activity ' +
+              'and try again if the approval did not go through.'
+            )
+          }
+        } else {
+          throw txError
+        }
+      }
+      
+      if (!approveReceipt) {
+        throw new Error(
+          'Approval transaction submitted but confirmation timed out. ' +
+          'Please check your wallet and try again.'
+        )
+      }
+      
+      if (approveReceipt.status === 0) {
         throw new Error('Token approval failed. Please try again.')
       }
     }
 
-    const depositTx = await vault.deposit(tokenAddress, amountWei)
-    const depositReceipt = await depositTx.wait()
+    // Helper to poll for transaction receipt when ethers.js fails to parse RPC response
+    const pollForReceipt = async (txHash: string, maxAttempts: number = 60): Promise<ethers.TransactionReceipt | null> => {
+      console.warn('[SpokeDeposit] RPC returned malformed transaction data, falling back to receipt polling for:', txHash)
+      const pollInterval = 2000
+      
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval))
+        
+        try {
+          const receipt = await provider.getTransactionReceipt(txHash)
+          if (receipt) {
+            console.log('[SpokeDeposit] Transaction receipt found via polling')
+            return receipt
+          }
+        } catch (pollError) {
+          console.warn('[SpokeDeposit] Receipt poll error:', pollError)
+        }
+      }
+      return null
+    }
+    
+    // Extract transaction hash from error message if present
+    const extractTxHashFromError = (error: any): string | null => {
+      const msg = error?.message || ''
+      // Look for hash in the error value object
+      const hashMatch = msg.match(/"hash":\s*"(0x[a-fA-F0-9]{64})"/)
+      return hashMatch?.[1] || null
+    }
+    
+    let depositReceipt: ethers.TransactionReceipt | null = null
+    let depositTxHash: string | null = null
+    
+    try {
+      // Attempt normal deposit flow
+      const depositTx = await vault.deposit(tokenAddress, amountWei)
+      depositTxHash = depositTx.hash
+      
+      try {
+        depositReceipt = await depositTx.wait()
+      } catch (waitError: any) {
+        const isNonceParsingError = 
+          typeof waitError?.message === 'string' && 
+          waitError.message.includes('invalid value for value.nonce')
+        
+        if (isNonceParsingError && depositTxHash) {
+          depositReceipt = await pollForReceipt(depositTxHash)
+        } else {
+          throw waitError
+        }
+      }
+    } catch (txError: any) {
+      // Check if this is a nonce parsing error during transaction submission
+      // The transaction may have been submitted successfully but ethers.js failed to parse the response
+      const isNonceParsingError = 
+        typeof txError?.message === 'string' && 
+        txError.message.includes('invalid value for value.nonce')
+      
+      if (isNonceParsingError) {
+        // Try to extract the transaction hash from the error
+        depositTxHash = extractTxHashFromError(txError)
+        
+        if (depositTxHash) {
+          console.log('[SpokeDeposit] Transaction submitted but response parsing failed. Hash:', depositTxHash)
+          depositReceipt = await pollForReceipt(depositTxHash)
+        } else {
+          // No hash available - the transaction may or may not have been submitted
+          throw new Error(
+            'Network communication error during deposit. ' +
+            'The transaction may have been submitted. Please check your wallet activity ' +
+            'and refresh your balance before trying again.'
+          )
+        }
+      } else {
+        throw txError
+      }
+    }
+    
+    if (!depositReceipt) {
+      throw new Error(
+        'Transaction submitted but confirmation timed out. ' +
+        'Your deposit may still be processing. Please check your wallet activity ' +
+        (depositTxHash ? `and look for transaction ${depositTxHash.slice(0, 10)}...` : 'and try again if needed.')
+      )
+    }
     
     // Verify the transaction was successful
-    if (!depositReceipt || depositReceipt.status === 0) {
+    if (depositReceipt.status === 0) {
       throw new Error('Deposit transaction failed on-chain. Please try again.')
     }
   }
@@ -445,6 +598,11 @@ export default function DepositModal({
           rawMessage.toLowerCase().includes('insufficient funds for gas') ||
           rawMessage.toLowerCase().includes('gas required exceeds')
         )
+      const isConfirmationTimeout =
+        typeof rawMessage === 'string' && (
+          rawMessage.includes('confirmation timed out') ||
+          rawMessage.includes('may still be processing')
+        )
 
       // Map errors to user-friendly messages
       let userMessage: string
@@ -452,6 +610,9 @@ export default function DepositModal({
         userMessage = 'Transaction was cancelled. Please try again when ready.'
       } else if (isInsufficientGas) {
         userMessage = 'Insufficient ETH for gas fees. Please add ETH to your wallet and try again.'
+      } else if (isConfirmationTimeout) {
+        // Transaction was submitted but we couldn't confirm it in time
+        userMessage = rawMessage
       } else if (isRpcParsingError) {
         userMessage = 'Network communication error. Your deposit may still be processing. Please check your balance in a moment and try again if needed.'
       } else if (isBalanceIssue) {
@@ -468,6 +629,13 @@ export default function DepositModal({
         setSpokeDepositError(isBalanceIssue ? userMessage : null)
       } else if (isUserRejection) {
         // User cancelled - return to spoke modal without showing error step
+        setPaymentStatus('pending')
+        setStep('spoke')
+        setShowSpokeDepositModal(true)
+        setSpokeDepositError(userMessage)
+      } else if (isConfirmationTimeout) {
+        // Transaction was submitted but confirmation timed out - show as warning, not failure
+        // The transaction may still succeed, so we show the spoke modal with a warning
         setPaymentStatus('pending')
         setStep('spoke')
         setShowSpokeDepositModal(true)
