@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import Image from 'next/image'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useAccountActivity, ActivityRecord, TradeRecord } from '@/hooks/useAccountActivity'
 import { useUserFees, FeeDetailRow } from '@/hooks/useUserFees'
 import { useOwnerEarnings, OwnerEarningsRow, ProtocolEarningsRow } from '@/hooks/useOwnerEarnings'
@@ -27,8 +28,36 @@ export interface AnalyticsDashboardProps {
 
 type TabId = 'overview' | 'trades' | 'orders' | 'fees' | 'revenue' | 'markets' | 'pnl' | 'liquidations' | 'settlements' | 'activity'
 
+const VALID_TABS: TabId[] = ['overview', 'trades', 'orders', 'fees', 'revenue', 'markets', 'pnl', 'liquidations', 'settlements', 'activity']
+
 export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardProps = {}) {
-  const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  
+  // URL-based tab synchronization to prevent stale tab state on navigation
+  const tabParamRaw = String(searchParams?.get('tab') || '').toLowerCase().trim()
+  const tabParam = VALID_TABS.includes(tabParamRaw as TabId) ? (tabParamRaw as TabId) : null
+  const [activeTab, setActiveTab] = useState<TabId>(tabParam || 'overview')
+  
+  // Sync tab state with URL parameter changes
+  useEffect(() => {
+    const newTab = tabParam || 'overview'
+    setActiveTab(newTab)
+  }, [tabParam])
+  
+  // Update URL when tab changes (without full page reload)
+  const handleTabChange = (newTab: TabId) => {
+    setActiveTab(newTab)
+    const params = new URLSearchParams(searchParams?.toString() || '')
+    if (newTab === 'overview') {
+      params.delete('tab')
+    } else {
+      params.set('tab', newTab)
+    }
+    const newUrl = params.toString() ? `/analytics?${params.toString()}` : '/analytics'
+    router.replace(newUrl, { scroll: false })
+  }
+  
   const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d')
   
   const { walletData } = useWallet() as any
@@ -301,7 +330,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabChange(tab.id)}
               className={`pb-2.5 text-[12px] font-medium transition-colors relative ${
                 activeTab === tab.id
                   ? 'text-[#f0f0f0]'
@@ -367,7 +396,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
                   <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#141414]">
                     <span className="text-[11px] font-medium text-[#a0a0a0] uppercase tracking-wide">Recent</span>
                     <button
-                      onClick={() => setActiveTab('activity')}
+                      onClick={() => handleTabChange('activity')}
                       className="text-[11px] text-[#3b82f6] hover:text-[#60a5fa] transition-colors"
                     >
                       View all →

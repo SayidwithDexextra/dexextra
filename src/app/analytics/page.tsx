@@ -1,12 +1,12 @@
-'use client'
-
-import { Metadata } from 'next'
+import { Suspense } from 'react'
 import AnalyticsDashboard from '@/components/Analytics/AnalyticsDashboard'
 
 export default function AnalyticsPage() {
   return (
     <main className="min-h-screen">
-      <AnalyticsDashboard />
+      <Suspense fallback={null}>
+        <AnalyticsDashboard />
+      </Suspense>
     </main>
   )
 }

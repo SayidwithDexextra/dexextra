@@ -635,12 +635,25 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												<span className="text-[10px] font-semibold uppercase tracking-wide">Magic</span>
 											</button>
 										) : null}
+								<div className="relative">
+									{/* Tooltip */}
+									<div
+										className={[
+											'absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded text-[10px] font-medium whitespace-nowrap pointer-events-none transition-all duration-200',
+											'bg-green-500 text-white',
+											walletCopied ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1',
+										].join(' ')}
+									>
+										Copied!
+										{/* Arrow */}
+										<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-green-500" />
+									</div>
 									<button
 										type="button"
 										onClick={copyWalletAddress}
 										disabled={!isWalletConnected || !walletAddress}
 										aria-label={walletCopied ? 'Wallet address copied' : 'Copy wallet address'}
-										title="Copy wallet address"
+										title={walletCopied ? undefined : 'Copy wallet address'}
 										className={[
 											'w-7 h-7 rounded-md border flex items-center justify-center transition-all duration-200',
 											!isWalletConnected || !walletAddress
@@ -672,6 +685,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											/>
 										</svg>
 									</button>
+								</div>
 									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
 										{isWalletConnected ? (walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : '—') : '—'}
 									</div>

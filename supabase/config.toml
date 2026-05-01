@@ -236,6 +236,10 @@ enabled = true
 policy = "oneshot"
 inspector_port = 8083
 
+# Disable JWT verification for webhook endpoints that receive external calls
+[functions.liquidation-direct-webhook]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

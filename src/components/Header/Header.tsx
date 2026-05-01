@@ -99,6 +99,8 @@ export default function Header() {
   const [vaultUpdateSeq, setVaultUpdateSeq] = useState(0)
   const lastSummaryCentsKeyRef = useRef<string | null>(null)
   const lastAnimateCentsKeyRef = useRef<string | null>(null)
+  // Track if initial animation has completed to prevent re-animating on transient state changes
+  const hasCompletedInitialAnimationRef = useRef(false)
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
@@ -311,18 +313,27 @@ export default function Header() {
   }, [walletData.isConnected, hidePortfolioUntilSummaryReady, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
 
   useEffect(() => {
-    if (!walletData.isConnected || !animateCentsKey) {
+    // Reset tracking when wallet disconnects
+    if (!walletData.isConnected) {
       lastAnimateCentsKeyRef.current = null
+      hasCompletedInitialAnimationRef.current = false
       return
     }
 
-    // First non-null key: animate once (we keep animateOnMount disabled to avoid double-animating).
-    if (lastAnimateCentsKeyRef.current === null) {
+    // Skip if data isn't ready yet (don't reset refs - just wait)
+    if (!animateCentsKey) {
+      return
+    }
+
+    // Initial animation: only animate once when data first becomes available
+    if (!hasCompletedInitialAnimationRef.current) {
       lastAnimateCentsKeyRef.current = animateCentsKey
+      hasCompletedInitialAnimationRef.current = true
       setVaultUpdateSeq((s) => s + 1)
       return
     }
 
+    // Subsequent animations: only animate when cents values actually change
     if (lastAnimateCentsKeyRef.current !== animateCentsKey) {
       lastAnimateCentsKeyRef.current = animateCentsKey
       setVaultUpdateSeq((s) => s + 1)

@@ -11,8 +11,148 @@ const SUPABASE_KEY =
 const SIGNING_KEY = Deno.env.get("LIQUIDATION_DIRECT_SIGN_IN_KEY") || "";
 
 // On-chain
-const RPC_URL = Deno.env.get("HUB_RPC_URL") || "";
+const RPC_URL = Deno.env.get("HUB_RPC_URL") || Deno.env.get("RPC_URL") || "";
 const CORE_VAULT = Deno.env.get("CORE_VAULT_ADDRESS") || "";
+
+// ============ Environment Variable Diagnostics ============
+function logEnvironmentVariables() {
+  const maskSecret = (val: string | undefined, showChars = 6): string => {
+    if (!val) return "❌ NOT SET";
+    if (val.length <= showChars * 2) return "✅ SET (masked)";
+    return `✅ SET: ${val.slice(0, showChars)}...${val.slice(-showChars)}`;
+  };
+
+  const envStatus = {
+    // Supabase
+    SUPABASE_URL: Deno.env.get("SUPABASE_URL") ? `✅ ${Deno.env.get("SUPABASE_URL")}` : "❌ NOT SET",
+    NEXT_PUBLIC_SUPABASE_URL: Deno.env.get("NEXT_PUBLIC_SUPABASE_URL") ? `✅ ${Deno.env.get("NEXT_PUBLIC_SUPABASE_URL")}` : "❌ NOT SET",
+    SUPABASE_SERVICE_ROLE_KEY: maskSecret(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")),
+    SUPABASE_SERVICE_KEY: maskSecret(Deno.env.get("SUPABASE_SERVICE_KEY")),
+    SUPABASE_ANON_KEY: maskSecret(Deno.env.get("SUPABASE_ANON_KEY")),
+    
+    // Webhook signing
+    LIQUIDATION_DIRECT_SIGN_IN_KEY: maskSecret(Deno.env.get("LIQUIDATION_DIRECT_SIGN_IN_KEY")),
+    
+    // On-chain RPC
+    HUB_RPC_URL: Deno.env.get("HUB_RPC_URL") ? `✅ ${Deno.env.get("HUB_RPC_URL")}` : "❌ NOT SET",
+    RPC_URL: Deno.env.get("RPC_URL") ? `✅ ${Deno.env.get("RPC_URL")}` : "❌ NOT SET",
+    
+    // Contract addresses
+    CORE_VAULT_ADDRESS: Deno.env.get("CORE_VAULT_ADDRESS") ? `✅ ${Deno.env.get("CORE_VAULT_ADDRESS")}` : "❌ NOT SET",
+    
+    // Relayer keys (pools)
+    LIQUIDATOR_PRIVATE_KEYS_JSON: (() => {
+      const raw = Deno.env.get("LIQUIDATOR_PRIVATE_KEYS_JSON") || "";
+      if (!raw.trim()) return "❌ NOT SET";
+      try {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? `✅ SET (${arr.length} keys)` : "⚠️ INVALID (not array)";
+      } catch { return "⚠️ INVALID JSON"; }
+    })(),
+    LIQUIDATOR_PRIVATE_KEYS_BIG_JSON: (() => {
+      const raw = Deno.env.get("LIQUIDATOR_PRIVATE_KEYS_BIG_JSON") || "";
+      if (!raw.trim()) return "❌ NOT SET";
+      try {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? `✅ SET (${arr.length} keys)` : "⚠️ INVALID (not array)";
+      } catch { return "⚠️ INVALID JSON"; }
+    })(),
+    LIQUIDATOR_PRIVATE_KEY: maskSecret(Deno.env.get("LIQUIDATOR_PRIVATE_KEY")),
+    PRIVATE_KEY: maskSecret(Deno.env.get("PRIVATE_KEY")),
+    
+    // Gas configuration
+    HYPEREVM_SMALL_BLOCK_GAS_LIMIT: Deno.env.get("HYPEREVM_SMALL_BLOCK_GAS_LIMIT") || "❌ NOT SET (default: 2000000)",
+    HYPEREVM_BIG_BLOCK_GAS_LIMIT: Deno.env.get("HYPEREVM_BIG_BLOCK_GAS_LIMIT") || "❌ NOT SET (default: 30000000)",
+    LIQUIDATION_GAS_ESTIMATE_BUFFER_BPS: Deno.env.get("LIQUIDATION_GAS_ESTIMATE_BUFFER_BPS") || "❌ NOT SET (default: 13000)",
+    
+    // Nonce allocator
+    LIQUIDATION_NONCE_ALLOCATOR: Deno.env.get("LIQUIDATION_NONCE_ALLOCATOR") || "❌ NOT SET (enabled by default)",
+    
+    // Retry config
+    LIQUIDATION_MAX_RETRY_ATTEMPTS: Deno.env.get("LIQUIDATION_MAX_RETRY_ATTEMPTS") || "❌ NOT SET (default: 5)",
+    
+    // Logging
+    LIQUIDATION_LOG_LEVEL: Deno.env.get("LIQUIDATION_LOG_LEVEL") || "❌ NOT SET (default: normal)",
+  };
+
+  console.log("\n" + "=".repeat(80));
+  console.log("🔧 LIQUIDATION WEBHOOK ENVIRONMENT VARIABLES DIAGNOSTIC");
+  console.log("=".repeat(80));
+  
+  console.log("\n📦 SUPABASE CONFIGURATION:");
+  console.log(`  SUPABASE_URL:              ${envStatus.SUPABASE_URL}`);
+  console.log(`  NEXT_PUBLIC_SUPABASE_URL:  ${envStatus.NEXT_PUBLIC_SUPABASE_URL}`);
+  console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${envStatus.SUPABASE_SERVICE_ROLE_KEY}`);
+  console.log(`  SUPABASE_SERVICE_KEY:      ${envStatus.SUPABASE_SERVICE_KEY}`);
+  console.log(`  SUPABASE_ANON_KEY:         ${envStatus.SUPABASE_ANON_KEY}`);
+  
+  console.log("\n🔐 WEBHOOK SIGNING:");
+  console.log(`  LIQUIDATION_DIRECT_SIGN_IN_KEY: ${envStatus.LIQUIDATION_DIRECT_SIGN_IN_KEY}`);
+  
+  console.log("\n🔗 ON-CHAIN RPC:");
+  console.log(`  HUB_RPC_URL:       ${envStatus.HUB_RPC_URL}`);
+  console.log(`  RPC_URL (fallback): ${envStatus.RPC_URL}`);
+  
+  console.log("\n📄 CONTRACT ADDRESSES:");
+  console.log(`  CORE_VAULT_ADDRESS: ${envStatus.CORE_VAULT_ADDRESS}`);
+  
+  console.log("\n🔑 RELAYER KEYS:");
+  console.log(`  LIQUIDATOR_PRIVATE_KEYS_JSON:     ${envStatus.LIQUIDATOR_PRIVATE_KEYS_JSON}`);
+  console.log(`  LIQUIDATOR_PRIVATE_KEYS_BIG_JSON: ${envStatus.LIQUIDATOR_PRIVATE_KEYS_BIG_JSON}`);
+  console.log(`  LIQUIDATOR_PRIVATE_KEY:           ${envStatus.LIQUIDATOR_PRIVATE_KEY}`);
+  console.log(`  PRIVATE_KEY:                      ${envStatus.PRIVATE_KEY}`);
+  
+  console.log("\n⛽ GAS CONFIGURATION:");
+  console.log(`  HYPEREVM_SMALL_BLOCK_GAS_LIMIT:     ${envStatus.HYPEREVM_SMALL_BLOCK_GAS_LIMIT}`);
+  console.log(`  HYPEREVM_BIG_BLOCK_GAS_LIMIT:       ${envStatus.HYPEREVM_BIG_BLOCK_GAS_LIMIT}`);
+  console.log(`  LIQUIDATION_GAS_ESTIMATE_BUFFER_BPS: ${envStatus.LIQUIDATION_GAS_ESTIMATE_BUFFER_BPS}`);
+  
+  console.log("\n⚙️ OTHER CONFIG:");
+  console.log(`  LIQUIDATION_NONCE_ALLOCATOR:     ${envStatus.LIQUIDATION_NONCE_ALLOCATOR}`);
+  console.log(`  LIQUIDATION_MAX_RETRY_ATTEMPTS:  ${envStatus.LIQUIDATION_MAX_RETRY_ATTEMPTS}`);
+  console.log(`  LIQUIDATION_LOG_LEVEL:           ${envStatus.LIQUIDATION_LOG_LEVEL}`);
+  
+  // Summary
+  const resolved = {
+    supabaseUrl: SUPABASE_URL,
+    supabaseKey: SUPABASE_KEY ? "SET" : "NOT SET",
+    signingKey: SIGNING_KEY ? "SET" : "NOT SET",
+    rpcUrl: RPC_URL,
+    coreVault: CORE_VAULT,
+    smallPoolCount: getSmallPool().length,
+    bigPoolCount: getBigPool().length,
+  };
+  
+  console.log("\n📊 RESOLVED VALUES (what the webhook will actually use):");
+  console.log(`  Supabase URL:    ${resolved.supabaseUrl || "❌ NONE"}`);
+  console.log(`  Supabase Key:    ${resolved.supabaseKey}`);
+  console.log(`  Signing Key:     ${resolved.signingKey}`);
+  console.log(`  RPC URL:         ${resolved.rpcUrl || "❌ NONE"}`);
+  console.log(`  CoreVault:       ${resolved.coreVault || "❌ NONE"}`);
+  console.log(`  Small Pool:      ${resolved.smallPoolCount} relayer(s)`);
+  console.log(`  Big Pool:        ${resolved.bigPoolCount} relayer(s)`);
+  
+  // Warnings
+  const warnings: string[] = [];
+  if (!SUPABASE_URL) warnings.push("SUPABASE_URL is not set - database operations will fail");
+  if (!SUPABASE_KEY) warnings.push("No Supabase key set - database operations will fail");
+  if (!RPC_URL) warnings.push("No RPC URL set (HUB_RPC_URL or RPC_URL) - on-chain operations will fail");
+  if (!CORE_VAULT) warnings.push("CORE_VAULT_ADDRESS is not set - liquidations will fail");
+  if (resolved.smallPoolCount === 0 && resolved.bigPoolCount === 0) {
+    warnings.push("No relayer keys configured - liquidation transactions cannot be sent");
+  }
+  
+  if (warnings.length > 0) {
+    console.log("\n⚠️ WARNINGS:");
+    warnings.forEach((w, i) => console.log(`  ${i + 1}. ${w}`));
+  } else {
+    console.log("\n✅ All critical environment variables appear to be configured");
+  }
+  
+  console.log("\n" + "=".repeat(80) + "\n");
+  
+  return envStatus;
+}
 
 // ============ Relayer Pool Configuration ============
 // Mirrors the gasless trading infrastructure: small pool for normal txs, big pool for high-gas txs.
@@ -224,8 +364,10 @@ async function allocateNonce(
 const USER_TRADES_TABLE = "user_trades";
 const PRICE_DECIMALS = 6n; // 1,000,000 = $1
 const AMOUNT_DECIMALS = 18n; // 5,000,000,000,000,000 = 0.05
-const AMOUNT_DISPLAY_DECIMALS = 4;
-const LIQUIDATION_DISPLAY_DECIMALS = 7;
+// Display decimals for database storage - increased for full blockchain precision
+const AMOUNT_DISPLAY_DECIMALS = 18; // Full EVM token precision (was 4)
+const PRICE_DISPLAY_DECIMALS = 8; // Price precision for display/storage
+const LIQUIDATION_DISPLAY_DECIMALS = 8; // Liquidation price precision (was 7)
 
 const ABI = [
   parseAbiItem(
@@ -782,7 +924,7 @@ async function fetchOnchainPositionAndLiq(
   trader: string,
   marketIdHex: string,
   traceId: string
-): Promise<{ size: bigint; liqPrice: bigint; hasPos: boolean } | null> {
+): Promise<{ size: bigint; entryPrice: bigint; liqPrice: bigint; hasPos: boolean } | null> {
   if (!CORE_VAULT) return null;
   try {
     const [posResult, liqResult] = await Promise.all([
@@ -801,17 +943,19 @@ async function fetchOnchainPositionAndLiq(
     ]);
     
     const size = posResult[0] as bigint;
+    const entryPrice = posResult[1] as bigint; // Entry price from getPositionSummary
     const liqPrice = liqResult[0] as bigint;
     const hasPos = size !== 0n;
     
     logDebug(traceId, "onchain_full", { 
       trader: trader.slice(0, 10), 
-      size: size.toString(), 
+      size: size.toString(),
+      entry: entryPrice.toString(),
       liq: liqPrice.toString(),
       hasPos 
     });
     
-    return { size, liqPrice, hasPos };
+    return { size, entryPrice, liqPrice, hasPos };
   } catch (e) {
     logDebug(traceId, "onchain_full_err", { trader: trader.slice(0, 10), reason: String(e).slice(0, 100) });
     return null;
@@ -1059,8 +1203,8 @@ async function batchFetchPositions(
   users: string[],
   marketHex: `0x${string}`,
   traceId: string
-): Promise<Map<string, { size: bigint; liqPrice: bigint }>> {
-  const results = new Map<string, { size: bigint; liqPrice: bigint }>();
+): Promise<Map<string, { size: bigint; entryPrice: bigint; liqPrice: bigint }>> {
+  const results = new Map<string, { size: bigint; entryPrice: bigint; liqPrice: bigint }>();
   
   // Process in batches for parallel RPC calls
   for (let i = 0; i < users.length; i += BATCH_SIZE) {
@@ -1068,7 +1212,7 @@ async function batchFetchPositions(
     const promises = batch.map(async (wallet) => {
       const data = await fetchOnchainPositionAndLiq(publicClient, wallet, marketHex, traceId);
       if (data && data.hasPos && data.size !== 0n) {
-        results.set(wallet.toLowerCase(), { size: data.size, liqPrice: data.liqPrice });
+        results.set(wallet.toLowerCase(), { size: data.size, entryPrice: data.entryPrice, liqPrice: data.liqPrice });
       }
     });
     await Promise.all(promises);
@@ -1351,12 +1495,247 @@ function reconcileDbInBackground(
   })().catch(() => {});
 }
 
+// ============ Backfill: Analyze All Markets & Sync Positions ============
+async function backfillAllMarkets(traceId: string, targetMarketId?: string): Promise<{
+  markets: any[];
+  totalUsers: number;
+  totalSynced: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let totalUsers = 0;
+  let totalSynced = 0;
+  const marketResults: any[] = [];
+
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    errors.push("Missing Supabase configuration");
+    return { markets: [], totalUsers: 0, totalSynced: 0, errors };
+  }
+  if (!RPC_URL || !CORE_VAULT) {
+    errors.push("Missing RPC_URL or CORE_VAULT_ADDRESS");
+    return { markets: [], totalUsers: 0, totalSynced: 0, errors };
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const publicClient = createPublicClient({ transport: http(RPC_URL) });
+
+  log(traceId, "🔍", targetMarketId ? `Starting backfill for market: ${targetMarketId}` : "Starting full market backfill...");
+
+  // Fetch markets from Supabase (all active or specific one)
+  let query = supabase
+    .from("markets")
+    .select("id, market_identifier, symbol, market_id_bytes32, market_address, market_status")
+    .eq("is_active", true)
+    .in("market_status", ["ACTIVE", "TRADING_ENDED"])
+    .not("market_id_bytes32", "is", null);
+
+  // Filter by specific market if provided
+  if (targetMarketId) {
+    // Support UUID, market_identifier, or symbol
+    query = query.or(`id.eq.${targetMarketId},market_identifier.ilike.${targetMarketId},symbol.ilike.${targetMarketId}`);
+  }
+
+  const { data: markets, error: marketErr } = await query;
+
+  if (marketErr) {
+    errors.push(`Failed to fetch markets: ${marketErr.message}`);
+    return { markets: [], totalUsers: 0, totalSynced: 0, errors };
+  }
+
+  if (!markets || markets.length === 0) {
+    log(traceId, "⚠️", "No active markets found");
+    return { markets: [], totalUsers: 0, totalSynced: 0, errors };
+  }
+
+  log(traceId, "📋", `Found ${markets.length} active markets to analyze`);
+
+  for (const market of markets) {
+    const marketHex = normalizeHex32(market.market_id_bytes32);
+    if (!marketHex) {
+      errors.push(`Invalid market_id_bytes32 for ${market.market_identifier}`);
+      continue;
+    }
+
+    const marketResult: any = {
+      id: market.id,
+      identifier: market.market_identifier,
+      symbol: market.symbol,
+      marketHex: marketHex.slice(0, 14) + "...",
+      status: market.market_status,
+      usersFound: 0,
+      positionsSynced: 0,
+      errors: [] as string[],
+    };
+
+    try {
+      // Fetch users with positions from on-chain
+      const users = await fetchOnchainUsersWithPositions(publicClient, marketHex, traceId);
+      marketResult.usersFound = users.length;
+      totalUsers += users.length;
+
+      log(traceId, "👥", `${market.symbol}: ${users.length} users with positions`);
+
+      if (users.length === 0) {
+        marketResults.push(marketResult);
+        continue;
+      }
+
+      // Batch fetch all positions
+      const positionMap = await batchFetchPositions(publicClient, users, marketHex as `0x${string}`, traceId);
+
+      // Sync each position to Supabase
+      for (const [wallet, { size, entryPrice, liqPrice }] of positionMap.entries()) {
+        try {
+          // Fetch current DB state
+          const dbNet = await fetchDbNetPositionRaw({
+            supabase,
+            marketUuid: market.id,
+            wallet,
+            traceId,
+          });
+
+          const deltaRaw = size - dbNet;
+          
+          // Format entry price from on-chain (uses same decimals as price)
+          const entryPriceStr = entryPrice !== 0n
+            ? truncateDecimals(formatUnits(entryPrice, PRICE_DECIMALS), PRICE_DISPLAY_DECIMALS)
+            : "0";
+
+          const liqPriceStr = truncateDecimals(
+            formatUnits(liqPrice, PRICE_DECIMALS),
+            LIQUIDATION_DISPLAY_DECIMALS
+          );
+          
+          if (deltaRaw !== 0n) {
+            await upsertNetTrade({
+              supabase,
+              marketUuid: market.id,
+              wallet,
+              deltaRaw,
+              payload: {
+                price: entryPriceStr,
+                liquidation_price: liqPriceStr,
+                trade_timestamp: new Date().toISOString(),
+                order_book_address: normalizeAddress(market.market_address) || "",
+              },
+              traceId,
+            });
+            marketResult.positionsSynced++;
+            totalSynced++;
+            logDebug(traceId, "synced", {
+              wallet: wallet.slice(0, 10),
+              delta: formatUnits(deltaRaw, AMOUNT_DECIMALS),
+              entryPrice: entryPriceStr,
+            });
+          } else if (entryPrice !== 0n || liqPrice !== 0n) {
+            // Position size matches but we should still update entry price and liq price
+            const { error: updateErr } = await supabase
+              .from("user_trades")
+              .update({
+                price: entryPriceStr,
+                liquidation_price: liqPriceStr,
+              })
+              .eq("market_id", market.id)
+              .eq("user_wallet_address", wallet);
+            
+            if (!updateErr) {
+              marketResult.positionsSynced++;
+              totalSynced++;
+              logDebug(traceId, "updated_prices", {
+                wallet: wallet.slice(0, 10),
+                entryPrice: entryPriceStr,
+                liqPrice: liqPriceStr,
+              });
+            }
+          }
+        } catch (e: any) {
+          marketResult.errors.push(`${wallet.slice(0, 10)}: ${e?.message || String(e)}`);
+        }
+      }
+    } catch (e: any) {
+      marketResult.errors.push(e?.message || String(e));
+      errors.push(`${market.symbol}: ${e?.message || String(e)}`);
+    }
+
+    marketResults.push(marketResult);
+  }
+
+  log(traceId, "✅", `Backfill complete: ${totalUsers} users, ${totalSynced} positions synced`);
+
+  return {
+    markets: marketResults,
+    totalUsers,
+    totalSynced,
+    errors,
+  };
+}
+
 Deno.serve(async (req) => {
   const traceId = `liq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const url = new URL(req.url);
 
   if (req.method === "GET") {
+    // Log environment variables for diagnostics
+    const envStatus = logEnvironmentVariables();
+    
+    // Check for backfill query param
+    const action = url.searchParams.get("action");
+    
+    if (action === "backfill") {
+      const marketId = url.searchParams.get("market");
+      log(traceId, "🚀", `Manual backfill triggered${marketId ? ` for market: ${marketId}` : " (all markets)"}`);
+      const result = await backfillAllMarkets(traceId, marketId || undefined);
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          action: "backfill",
+          traceId,
+          ts: new Date().toISOString(),
+          targetMarket: marketId || "all",
+          ...result,
+        }),
+        { headers: { "content-type": "application/json" } }
+      );
+    }
+
+    if (action === "env" || action === "check") {
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "liquidation-direct-webhook",
+          ts: new Date().toISOString(),
+          traceId,
+          environment: envStatus,
+          resolved: {
+            supabaseUrl: SUPABASE_URL || null,
+            supabaseKeySet: !!SUPABASE_KEY,
+            signingKeySet: !!SIGNING_KEY,
+            rpcUrl: RPC_URL || null,
+            coreVault: CORE_VAULT || null,
+            smallPoolRelayers: getSmallPool().length,
+            bigPoolRelayers: getBigPool().length,
+          },
+        }),
+        { headers: { "content-type": "application/json" } }
+      );
+    }
+
     return new Response(
-      JSON.stringify({ status: "ok", service: "liquidation-direct-webhook", ts: new Date().toISOString(), traceId }),
+      JSON.stringify({
+        status: "ok",
+        service: "liquidation-direct-webhook",
+        ts: new Date().toISOString(),
+        traceId,
+        endpoints: {
+          "GET ?action=env": "Show environment variable status (also logged to console)",
+          "GET ?action=backfill": "Analyze ALL markets and backfill positions to Supabase",
+          "GET ?action=backfill&market=<id>": "Backfill specific market (by UUID, identifier, or symbol)",
+          "POST": "Process webhook events (TradeRecorded, PriceUpdated, etc.)",
+        },
+        hint: "Call ?action=env first to verify environment variables are correctly set",
+      }),
       { headers: { "content-type": "application/json" } }
     );
   }
@@ -1453,8 +1832,9 @@ Deno.serve(async (req) => {
         const walletNorm = normalizeAddress(w);
         if (!walletNorm) continue;
 
-        // Fetch on-chain position and liquidation price
+        // Fetch on-chain position, entry price, and liquidation price
         let onchainSize: bigint | null = null;
+        let onchainEntryPrice: bigint | null = null;
         let onchainLiqPrice: bigint | null = null;
         
         if (tradePublicClient) {
@@ -1462,6 +1842,7 @@ Deno.serve(async (req) => {
             const onchainData = await fetchOnchainPositionAndLiq(tradePublicClient, walletNorm, marketHex, traceId);
             if (onchainData) {
               onchainSize = onchainData.size;
+              onchainEntryPrice = onchainData.entryPrice;
               onchainLiqPrice = onchainData.liqPrice;
             }
           } catch (e: any) {
@@ -1473,6 +1854,11 @@ Deno.serve(async (req) => {
         const liqPriceStr = onchainLiqPrice !== null && onchainLiqPrice !== 0n
           ? truncateDecimals(formatUnits(onchainLiqPrice, PRICE_DECIMALS), LIQUIDATION_DISPLAY_DECIMALS)
           : liqEvent;
+        
+        // Use on-chain entry price as source of truth, fallback to event price
+        const entryPriceStr = onchainEntryPrice !== null && onchainEntryPrice !== 0n
+          ? truncateDecimals(formatUnits(onchainEntryPrice, PRICE_DECIMALS), PRICE_DISPLAY_DECIMALS)
+          : payloadBase.price;
 
         // If we have on-chain size, sync DB to match exactly
         if (onchainSize !== null) {
@@ -1486,7 +1872,7 @@ Deno.serve(async (req) => {
               marketUuid,
               wallet: walletNorm,
               deltaRaw,
-              payload: { ...payloadBase, liquidation_price: liqPriceStr },
+              payload: { ...payloadBase, price: entryPriceStr, liquidation_price: liqPriceStr },
               traceId,
             });
           } else {
@@ -1501,7 +1887,7 @@ Deno.serve(async (req) => {
             marketUuid,
             wallet: walletNorm,
             deltaRaw,
-            payload: { ...payloadBase, liquidation_price: liqPriceStr },
+            payload: { ...payloadBase, price: entryPriceStr, liquidation_price: liqPriceStr },
             traceId,
           });
         }
