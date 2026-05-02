@@ -25,6 +25,23 @@ const DEFAULT_CONTRACT_ADDRESSES = {
   umaOracleManager: process.env.NEXT_PUBLIC_UMA_ORACLE_MANAGER || '',
 }
 
+// Calculate default settlement dates (1 year from now)
+const getDefaultSettlementDates = () => {
+  const now = new Date();
+  const oneYear = 365 * 24 * 60 * 60 * 1000;
+  const oneWeek = 7 * 24 * 60 * 60 * 1000;
+  
+  const settlementDate = new Date(now.getTime() + oneYear);
+  const tradingEndDate = new Date(settlementDate.getTime() - oneWeek); // Trading ends 1 week before settlement
+  
+  return {
+    settlementDate: Math.floor(settlementDate.getTime() / 1000).toString(),
+    tradingEndDate: Math.floor(tradingEndDate.getTime() / 1000).toString(),
+  };
+};
+
+const defaultDates = getDefaultSettlementDates();
+
 const INITIAL_FORM_DATA: MarketFormData = {
   // Step 1: Market Information
   metricId: '',
@@ -37,10 +54,10 @@ const INITIAL_FORM_DATA: MarketFormData = {
   tickSize: '0.01', // Fixed tick size
   requiresKYC: false,
   
-  // Step 3: Settlement Configuration
-  settlementDate: '',
-  tradingEndDate: '',
-  dataRequestWindow: '',
+  // Step 3: Settlement Configuration (fixed to 1 year)
+  settlementDate: defaultDates.settlementDate,
+  tradingEndDate: defaultDates.tradingEndDate,
+  dataRequestWindow: (72 * 3600).toString(), // Default 72 hours
   autoSettle: true,
   oracleProvider: DEFAULT_CONTRACT_ADDRESSES.umaOracleManager,
   
@@ -197,10 +214,8 @@ const MarketWizard: React.FC<MarketWizardProps> = ({ onSuccess, onError }) => {
     const randomId = Math.floor(Math.random() * 10000);
     const uniqueMetricId = `WORLD_POPULATION_${timestamp}_${randomId}`;
     
-    // Calculate settlement dates (1 week from now)
-    const now = new Date();
-    const tradingEndDate = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000); // 6 days
-    const settlementDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    // Settlement is always 1 year from now
+    const freshDates = getDefaultSettlementDates();
     
     return {
       // Step 1: Market Information
@@ -223,10 +238,10 @@ const MarketWizard: React.FC<MarketWizardProps> = ({ onSuccess, onError }) => {
       tickSize: '0.01',
       requiresKYC: false,
       
-      // Step 3: Settlement Configuration
-      settlementDate: Math.floor(settlementDate.getTime() / 1000).toString(),
-      tradingEndDate: Math.floor(tradingEndDate.getTime() / 1000).toString(),
-      dataRequestWindow: (24 * 3600).toString(), // 24 hours
+      // Step 3: Settlement Configuration (fixed to 1 year)
+      settlementDate: freshDates.settlementDate,
+      tradingEndDate: freshDates.tradingEndDate,
+      dataRequestWindow: (72 * 3600).toString(), // 72 hours
       autoSettle: true,
       oracleProvider: DEFAULT_CONTRACT_ADDRESSES.umaOracleManager,
       

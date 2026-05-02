@@ -1,9 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getClickHouseDataPipeline } from '@/lib/clickhouse-client';
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { publicClient } from '@/lib/viemClient';
+import { Address } from 'viem';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const TRADE_STATS_ABI = [
+  {
+    type: 'function' as const,
+    name: 'getTradeStatistics' as const,
+    stateMutability: 'view' as const,
+    inputs: [],
+    outputs: [
+      { type: 'uint256' as const, name: 'totalTrades' },
+      { type: 'uint256' as const, name: 'totalVolume' },
+      { type: 'uint256' as const, name: 'totalFees' },
+    ],
+  },
+] as const;
+
+async function fetchOnChainStats(marketAddress: string): Promise<{ totalTrades: number; totalVolume: number } | null> {
+  try {
+    const result = await publicClient.readContract({
+      address: marketAddress as Address,
+      abi: TRADE_STATS_ABI,
+      functionName: 'getTradeStatistics',
+    });
+    const [totalTrades, totalVolume] = result as [bigint, bigint, bigint];
+    return {
+      totalTrades: Number(totalTrades),
+      totalVolume: Number(totalVolume) / 1e6,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -96,12 +129,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Fetch on-chain trade statistics for all markets in parallel
+    const onChainStatsByAddress = new Map<string, { totalTrades: number; totalVolume: number }>();
+    const marketsWithAddress = (markets || []).filter((m: any) => m.market_address);
+    if (marketsWithAddress.length > 0) {
+      const statsPromises = marketsWithAddress.map(async (m: any) => {
+        const stats = await fetchOnChainStats(m.market_address);
+        if (stats) {
+          onChainStatsByAddress.set(m.market_address.toLowerCase(), stats);
+        }
+      });
+      await Promise.all(statsPromises);
+    }
+
     const rows = (markets || []).map((m: any) => {
       const ticker = tickersByMarketId.get(m.id);
       const sym = (m.symbol || m.market_identifier || '').toUpperCase();
       const trending = trendingBySymbol.get(sym);
       const creatorProfile = m.creator_wallet_address
         ? creatorProfilesByWallet.get(m.creator_wallet_address.toLowerCase())
+        : null;
+      const onChainStats = m.market_address
+        ? onChainStatsByAddress.get(m.market_address.toLowerCase())
         : null;
 
       return {
@@ -134,8 +183,8 @@ export async function GET(req: NextRequest) {
           : trending?.close24h ?? null,
         is_stale: ticker?.is_stale ?? null,
 
-        total_volume: trending?.notionalVolume ?? m.total_volume ?? 0,
-        total_trades: trending?.trades ?? m.total_trades ?? 0,
+        total_volume: onChainStats?.totalVolume ?? 0,
+        total_trades: onChainStats?.totalTrades ?? 0,
         volume_1h: trending?.notional1h ?? 0,
         trades_1h: trending?.trades1h ?? 0,
         price_change_1h: trending?.priceChange1hPct ?? 0,

@@ -1,55 +1,28 @@
 'use client';
 
-import React, { useState } from 'react';
-import { StepProps, SETTLEMENT_PRESETS, TIME_IN_FORCE_OPTIONS } from '../types';
+import React from 'react';
+import { StepProps, TIME_IN_FORCE_OPTIONS } from '../types';
 import styles from '../MarketWizard.module.css';
 
 export default function Step3SettlementConfig({ formData, updateFormData, onNext, errors }: StepProps) {
-  const [selectedPreset, setSelectedPreset] = useState<string>('');
-  const [showCustomDates, setShowCustomDates] = useState(false);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onNext();
   };
 
-  const handlePresetSelect = (presetLabel: string) => {
-    setSelectedPreset(presetLabel);
-    const preset = SETTLEMENT_PRESETS.find(p => p.label === presetLabel);
-    
-    if (preset && preset.label !== 'Custom Timeline') {
-      const now = new Date();
-      const tradingEndDate = new Date(now.getTime() + preset.tradingDurationDays * 24 * 60 * 60 * 1000);
-      const settlementDate = new Date(now.getTime() + preset.settlementDelayDays * 24 * 60 * 60 * 1000);
-      const dataRequestWindow = (preset.dataRequestWindowHours * 3600).toString();
-
-      updateFormData({
-        tradingEndDate: Math.floor(tradingEndDate.getTime() / 1000).toString(),
-        settlementDate: Math.floor(settlementDate.getTime() / 1000).toString(),
-        dataRequestWindow
-      });
-      setShowCustomDates(false);
-    } else {
-      setShowCustomDates(true);
-    }
-  };
-
-  const formatDateForInput = (timestamp: string) => {
-    if (!timestamp) return '';
-    const date = new Date(parseInt(timestamp) * 1000);
-    return date.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM format
-  };
-
-  const handleDateChange = (field: 'settlementDate' | 'tradingEndDate', value: string) => {
-    if (value) {
-      const timestamp = Math.floor(new Date(value).getTime() / 1000).toString();
-      updateFormData({ [field]: timestamp });
-    }
-  };
-
   const calculateDataRequestWindowHours = () => {
     if (!formData.dataRequestWindow) return 0;
     return Math.floor(parseInt(formData.dataRequestWindow) / 3600);
+  };
+
+  const formatSettlementDate = () => {
+    if (!formData.settlementDate) return 'Not set';
+    const date = new Date(parseInt(formData.settlementDate) * 1000);
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
   };
 
   return (
@@ -59,85 +32,24 @@ export default function Step3SettlementConfig({ formData, updateFormData, onNext
         <h1 className={styles.pageTitle}>Settlement Configuration</h1>
       </div>
 
-      {/* Settlement Timeline Presets */}
+      {/* Settlement Timeline Info (read-only) */}
       <div className={styles.fieldRow}>
         <div>
           <div className={styles.fieldLabel}>Settlement Timeline</div>
           <div className={styles.fieldDescription}>
-            Choose when trading ends and when the market settles with final data from the UMA oracle. The data request window determines when settlement data can be requested.
+            All markets settle 1 year from creation. Trading ends 1 week before settlement to allow time for data collection and oracle resolution.
           </div>
         </div>
         <div className={styles.fieldInput}>
-          <div className={styles.inputLabel}>TIMELINE PRESET</div>
-          <div className={styles.categoryTags}>
-            {SETTLEMENT_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => handlePresetSelect(preset.label)}
-                className={`${styles.categoryTag} ${
-                  selectedPreset === preset.label ? styles.categoryTagSelected : ''
-                }`}
-              >
-                <div className={styles.presetTitle}>{preset.label}</div>
-                <div className={styles.presetDescription}>{preset.description}</div>
-              </button>
-            ))}
+          <div className={styles.inputLabel}>SETTLEMENT DATE</div>
+          <div className={styles.fixedValue}>
+            {formatSettlementDate()}
           </div>
           <div className={styles.helpText}>
-            Select a preset timeline or choose custom to set your own dates
+            Fixed 1-year settlement period for all markets
           </div>
         </div>
       </div>
-
-      {/* Custom Dates (shown when Custom Timeline is selected) */}
-      {showCustomDates && (
-        <>
-          <div className={styles.fieldRow}>
-            <div>
-              <div className={styles.fieldLabel}>Trading End Date</div>
-              <div className={styles.fieldDescription}>
-                When trading stops in this market. Should be before the settlement date to allow time for data collection and oracle resolution.
-              </div>
-            </div>
-            <div className={styles.fieldInput}>
-              <div className={styles.inputLabel}>TRADING END DATE (*)</div>
-              <input
-                type="datetime-local"
-                value={formatDateForInput(formData.tradingEndDate)}
-                onChange={(e) => handleDateChange('tradingEndDate', e.target.value)}
-                className={`${styles.input} ${errors.tradingEndDate ? styles.inputError : ''}`}
-              />
-              {errors.tradingEndDate && <div className={styles.errorText}>{errors.tradingEndDate}</div>}
-              <div className={styles.helpText}>
-                Trading must end before settlement to allow oracle data collection
-              </div>
-            </div>
-          </div>
-
-          <div className={styles.fieldRow}>
-            <div>
-              <div className={styles.fieldLabel}>Settlement Date</div>
-              <div className={styles.fieldDescription}>
-                When the market settles with final data from the UMA oracle. This is when the metric value will be determined and positions settled.
-              </div>
-            </div>
-            <div className={styles.fieldInput}>
-              <div className={styles.inputLabel}>SETTLEMENT DATE (*)</div>
-              <input
-                type="datetime-local"
-                value={formatDateForInput(formData.settlementDate)}
-                onChange={(e) => handleDateChange('settlementDate', e.target.value)}
-                className={`${styles.input} ${errors.settlementDate ? styles.inputError : ''}`}
-              />
-              {errors.settlementDate && <div className={styles.errorText}>{errors.settlementDate}</div>}
-              <div className={styles.helpText}>
-                Final settlement date when the metric value is determined
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Data Request Window */}
       <div className={styles.fieldRow}>

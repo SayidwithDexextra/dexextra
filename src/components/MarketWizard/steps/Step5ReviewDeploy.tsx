@@ -221,12 +221,8 @@ export default function Step5ReviewDeploy({
             <h3 className={styles.reviewSectionTitle}>Settlement Configuration</h3>
             <div className={styles.reviewGrid}>
               <div className={styles.reviewItem}>
-                <span className={styles.reviewLabel}>Trading End Date:</span>
-                <span className={styles.reviewValue}>{formatDateTime(formData.tradingEndDate)}</span>
-              </div>
-              <div className={styles.reviewItem}>
-                <span className={styles.reviewLabel}>Settlement Date:</span>
-                <span className={styles.reviewValue}>{formatDateTime(formData.settlementDate)}</span>
+                <span className={styles.reviewLabel}>Settlement Period:</span>
+                <span className={styles.reviewValue}>1 Year (Standard)</span>
               </div>
               <div className={styles.reviewItem}>
                 <span className={styles.reviewLabel}>Data Request Window:</span>

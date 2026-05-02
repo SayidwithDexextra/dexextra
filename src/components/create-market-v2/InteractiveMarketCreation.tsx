@@ -2495,8 +2495,42 @@ export function InteractiveMarketCreation({
       deploymentOverlay.fadeOutAndClose(500);
     } catch (error) {
       console.error('Error creating market:', error);
+      // Close overlay (this also clears pending pipeline from localStorage)
       deploymentOverlay.close();
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to create market');
+      // Check if user rejected the transaction
+      const rawCode =
+        (error as any)?.code ??
+        (error as any)?.cause?.code ??
+        (error as any)?.data?.code ??
+        '';
+      const name = (error as any)?.name ?? '';
+      const rawMessage = (error as any)?.message ?? (error as any)?.reason ?? '';
+      const code =
+        typeof rawCode === 'number'
+          ? rawCode
+          : typeof rawCode === 'string'
+            ? rawCode
+            : '';
+      const msg = String(rawMessage || '').toLowerCase();
+      const isUserRejected =
+        code === 4001 ||
+        code === 'ACTION_REJECTED' ||
+        name === 'UserRejectedRequestError' ||
+        msg.includes('user rejected') ||
+        msg.includes('user denied') ||
+        msg.includes('rejected the request') ||
+        msg.includes('transaction was rejected') ||
+        msg.includes('request rejected') ||
+        msg.includes('action rejected');
+      if (isUserRejected) {
+        // Navigate back to create market page for user cancellation
+        router.replace('/markets/create');
+      } else {
+        // For other errors, redirect to home page with error message
+        const errorMessage = error instanceof Error ? error.message : 'Deployment failed';
+        console.error('Deployment error, redirecting to home:', errorMessage);
+        router.replace(`/?deploymentError=${encodeURIComponent(errorMessage)}`);
+      }
     } finally {
       setIsCreatingMarket(false);
       if (typeof unsubscribePusher === 'function') {

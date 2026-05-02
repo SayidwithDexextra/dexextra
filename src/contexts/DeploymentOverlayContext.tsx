@@ -332,6 +332,10 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
       window.clearTimeout(splashTimerRef.current);
       splashTimerRef.current = null;
     }
+    // Clear any pending "building" hint when closing (e.g., on error/cancel)
+    try {
+      clearPendingPipeline(overlay.meta.marketSymbol);
+    } catch {}
     setOverlay(prev => ({
       ...prev,
       isVisible: false,
@@ -344,7 +348,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
       transactionSigned: false,
       meta: { pipelineId: null, marketSymbol: null },
     }));
-  }, []);
+  }, [overlay.meta.marketSymbol, clearPendingPipeline]);
 
   const value = useMemo<DeploymentOverlayContextValue>(() => ({
     state: overlay,

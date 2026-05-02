@@ -521,16 +521,18 @@ export const CreateMarketPage = () => {
       // Mark the first active step as error for visual feedback
       const active = steps.find(s => s.status === 'active');
       if (active) markError(active.id);
+      // Close overlay (this also clears pending pipeline from localStorage)
+      deploymentOverlay.close();
       // Handle user-cancelled transaction gracefully
       if (isUserRejected(error)) {
-        // Close overlay if it was open
-        deploymentOverlay.close();
         // Navigate back to Create Market form
         router.replace('/markets/create');
         return;
       }
-      deploymentOverlay.close();
-      throw error;
+      // For other errors, redirect to home page with error state
+      const errorMessage = error instanceof Error ? error.message : 'Deployment failed';
+      console.error('Deployment error, redirecting to home:', errorMessage);
+      router.replace(`/?deploymentError=${encodeURIComponent(errorMessage)}`);
     } finally {
       setIsLoading(false);
       // Clean up real-time subscription
