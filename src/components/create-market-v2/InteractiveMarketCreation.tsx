@@ -663,9 +663,6 @@ function MarketDetailsReview({
   onStartOver,
   onCreateMarket,
   isCreating,
-  showSettlementPresets,
-  settlementPreset,
-  onChangeSettlementPreset,
 }: {
   marketName: string;
   marketDescription: string;
@@ -682,9 +679,6 @@ function MarketDetailsReview({
   onStartOver: () => void;
   onCreateMarket: () => void;
   isCreating: boolean;
-  showSettlementPresets?: boolean;
-  settlementPreset?: SettlementPreset;
-  onChangeSettlementPreset?: (preset: SettlementPreset) => void;
 }) {
   const [hasAnimated, setHasAnimated] = React.useState(false);
   const [bondConfig, setBondConfig] = React.useState<{
@@ -782,22 +776,10 @@ function MarketDetailsReview({
               </svg>
               Start over
             </button>
-            {showSettlementPresets ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-white/35">Settles in</span>
-                <select
-                  value={settlementPreset || 'quick-30'}
-                  onChange={(e) => onChangeSettlementPreset?.(e.target.value as SettlementPreset)}
-                  className="h-6 rounded-md border border-white/10 bg-white/[0.03] px-1.5 text-[10px] text-white/60 outline-none focus:border-purple-500/40 transition-colors"
-                >
-                  {SETTLEMENT_PRESETS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-white/35">Settles in</span>
+              <span className="text-[10px] text-white/60">1 year</span>
+            </div>
           </div>
           <button
             type="button"
@@ -1057,7 +1039,7 @@ export function InteractiveMarketCreation({
 }: InteractiveMarketCreationProps = {}) {
   const devToolsEnabled = true; // TEMP: forced on for production testing
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
-  const [settlementPreset, setSettlementPreset] = React.useState<SettlementPreset>('quick-30');
+  const [settlementPreset, setSettlementPreset] = React.useState<SettlementPreset>('standard');
   const [devSpeedRunSourceUrl, setDevSpeedRunSourceUrl] = React.useState('');
   const [devSpeedRunStartPrice, setDevSpeedRunStartPrice] = React.useState('');
   const [devSpeedRunName, setDevSpeedRunName] = React.useState('');
@@ -3702,9 +3684,6 @@ export function InteractiveMarketCreation({
           onStartOver={handleReset}
           onCreateMarket={handleCreateMarket}
           isCreating={isCreatingMarket}
-          showSettlementPresets={true}
-          settlementPreset={settlementPreset}
-          onChangeSettlementPreset={setSettlementPreset}
         />
       )}
 
