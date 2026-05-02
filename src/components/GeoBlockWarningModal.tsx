@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 
 interface GeoBlockWarningModalProps {
   country?: string;
+  forceShow?: boolean;
+  onClose?: () => void;
 }
 
 function getCookie(name: string): string | null {
@@ -15,213 +17,141 @@ function getCookie(name: string): string | null {
   return null;
 }
 
-export default function GeoBlockWarningModal({ country }: GeoBlockWarningModalProps) {
+export default function GeoBlockWarningModal({ country, forceShow, onClose }: GeoBlockWarningModalProps) {
   const [isBlocked, setIsBlocked] = useState(false);
-  const [detectedCountry, setDetectedCountry] = useState<string>(country || '');
+  const [detectedCountry, setDetectedCountry] = useState<string>(country || 'US');
   const [mounted, setMounted] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    
+    if (forceShow) {
+      setIsBlocked(true);
+      setDetectedCountry(country || 'US');
+      setTimeout(() => setIsAnimating(true), 10);
+      return;
+    }
     
     const blocked = getCookie('geo-blocked') === 'true';
     const geoCountry = getCookie('geo-country') || country || '';
     
     setIsBlocked(blocked);
     setDetectedCountry(geoCountry);
-  }, [country]);
+    
+    if (blocked) {
+      setTimeout(() => setIsAnimating(true), 10);
+    }
+  }, [country, forceShow]);
 
   if (!mounted || !isBlocked) return null;
 
   const countryName = detectedCountry === 'US' ? 'United States' : detectedCountry;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      {/* Backdrop - fully blocks interaction */}
+    <div 
+      className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-300 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+    >
+      {/* Backdrop - minimal blur, can see background clearly */}
       <div 
-        className="absolute inset-0"
-        style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.95)',
-          backdropFilter: 'blur(8px)',
-        }}
+        className={`absolute inset-0 bg-black/30 backdrop-blur-[2px] transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+        onClick={onClose}
       />
       
-      {/* Modal Card */}
+      {/* Modal Card - Wide design matching design system */}
       <div 
-        className="relative w-full max-w-md text-center"
+        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
         style={{
-          backgroundColor: '#0F0F0F',
-          border: '1px solid #FF4444',
-          borderRadius: '12px',
-          padding: '40px 32px',
-          boxShadow: '0 0 60px rgba(255, 68, 68, 0.15), 0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-          animation: 'modalPopEnter 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards'
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
         }}
       >
-        {/* Warning Icon */}
-        <div 
-          className="w-16 h-16 mx-auto mb-6 flex items-center justify-center"
-          style={{
-            backgroundColor: 'rgba(255, 68, 68, 0.15)',
-            borderRadius: '50%',
-            border: '2px solid rgba(255, 68, 68, 0.3)'
-          }}
-        >
-          <svg 
-            className="w-8 h-8" 
-            fill="none" 
-            stroke="#FF4444" 
-            viewBox="0 0 24 24"
-            strokeWidth={2}
-          >
-            <path 
-              strokeLinecap="round" 
-              strokeLinejoin="round" 
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
-            />
-          </svg>
+        {/* Header */}
+        <div className="flex items-center justify-between p-2.5 border-b border-[#1A1A1A]">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+            <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+              Region Restricted
+            </h4>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="text-[10px] text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded border border-red-400/20">
+              {detectedCountry}
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-[#1A1A1A] text-[#606060] hover:text-[#9CA3AF] transition-all duration-200"
+              aria-label="Close"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
-        
-        {/* Title */}
-        <h2 
-          className="text-white font-semibold mb-3"
-          style={{
-            fontSize: '20px',
-            lineHeight: '1.3',
-            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
-          }}
-        >
-          Region Restricted
-        </h2>
-        
-        {/* Location Badge */}
-        <div 
-          className="inline-flex items-center gap-2 mb-5 px-3 py-1.5 rounded-full"
-          style={{
-            backgroundColor: 'rgba(255, 68, 68, 0.1)',
-            border: '1px solid rgba(255, 68, 68, 0.2)',
-          }}
-        >
-          <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span className="text-red-400 text-sm font-medium">
-            Detected: {countryName}
-          </span>
-        </div>
-        
-        {/* Main Message */}
-        <p 
-          className="text-[#999999] mb-6"
-          style={{
-            fontSize: '14px',
-            lineHeight: '1.6',
-            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
-          }}
-        >
-          This service is not available to users in the {countryName} due to regulatory restrictions. 
-          Access is only permitted from supported regions.
-        </p>
-        
-        {/* Divider */}
-        <div 
-          className="w-full h-px mb-6"
-          style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
-        />
-        
-        {/* Info Section */}
-        <div 
-          className="text-left p-4 rounded-lg mb-6"
-          style={{
-            backgroundColor: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-          }}
-        >
-          <p 
-            className="text-[#666666] text-xs mb-2"
-            style={{ fontFamily: "'Inter', sans-serif" }}
-          >
-            If you believe this is an error:
+
+        {/* Content */}
+        <div className="p-2.5">
+          {/* Location Row */}
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-3 h-3 text-[#606060] flex-shrink-0" viewBox="0 0 24 24" fill="none">
+              <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span className="text-[11px] font-medium text-[#808080]">
+              Detected location: <span className="text-white">{countryName}</span>
+            </span>
+          </div>
+
+          {/* Message */}
+          <p className="text-[10px] text-[#606060] leading-relaxed mb-3">
+            This service is not available in your region due to regulatory restrictions. 
+            Access is only permitted from supported regions.
           </p>
-          <ul className="text-[#888888] text-xs space-y-1" style={{ fontFamily: "'Inter', sans-serif" }}>
-            <li className="flex items-start gap-2">
-              <span className="text-[#444444] mt-0.5">•</span>
-              <span>Check that your VPN is connected to a supported region</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-[#444444] mt-0.5">•</span>
-              <span>Clear your browser cache and cookies</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-[#444444] mt-0.5">•</span>
-              <span>Contact support if the issue persists</span>
-            </li>
-          </ul>
-        </div>
-        
-        {/* Support Link */}
-        <a
-          href="/support"
-          className="inline-flex items-center gap-2 transition-all duration-200 ease-in-out"
-          style={{
-            backgroundColor: '#1A1A1A',
-            color: '#FFFFFF',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            fontSize: '13px',
-            fontWeight: '500',
-            textDecoration: 'none',
-            border: '1px solid #333333',
-            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif"
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#252525';
-            e.currentTarget.style.borderColor = '#444444';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#1A1A1A';
-            e.currentTarget.style.borderColor = '#333333';
-          }}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Contact Support
-        </a>
-        
-        {/* Legal Links */}
-        <div className="mt-6 flex items-center justify-center gap-4">
-          <a 
-            href="/terms" 
-            className="text-[#555555] hover:text-[#888888] text-xs transition-colors"
-            style={{ fontFamily: "'Inter', sans-serif" }}
-          >
-            Terms of Service
-          </a>
-          <span className="text-[#333333]">|</span>
-          <a 
-            href="/privacy" 
-            className="text-[#555555] hover:text-[#888888] text-xs transition-colors"
-            style={{ fontFamily: "'Inter', sans-serif" }}
-          >
-            Privacy Policy
-          </a>
+
+          {/* Info Card */}
+          <div className="bg-[#1A1A1A] rounded border border-[#222222] p-2 mb-3">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="w-1 h-1 rounded-full bg-[#404040]" />
+              <span className="text-[9px] text-[#606060] uppercase tracking-wide">To access this service</span>
+            </div>
+            <ul className="space-y-1">
+              <li className="flex items-start gap-1.5">
+                <span className="text-[#404040] text-[9px] mt-px">•</span>
+                <span className="text-[9px] text-[#808080]">Connect VPN to a supported region</span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <span className="text-[#404040] text-[9px] mt-px">•</span>
+                <span className="text-[9px] text-[#808080]">Clear browser cache and refresh</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2">
+            <a
+              href="/support"
+              className="flex-1 flex items-center justify-center gap-1.5 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-2 transition-all duration-200"
+            >
+              <svg className="w-3 h-3 text-[#808080]" viewBox="0 0 24 24" fill="none">
+                <path d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span className="text-[10px] font-medium text-[#808080]">Support</span>
+            </a>
+            <a
+              href="/terms"
+              className="flex items-center justify-center bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-2 transition-all duration-200"
+            >
+              <span className="text-[10px] font-medium text-[#606060]">Terms</span>
+            </a>
+            <a
+              href="/privacy"
+              className="flex items-center justify-center bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-2 transition-all duration-200"
+            >
+              <span className="text-[10px] font-medium text-[#606060]">Privacy</span>
+            </a>
+          </div>
         </div>
       </div>
-      
-      {/* Animation Styles */}
-      <style jsx>{`
-        @keyframes modalPopEnter {
-          0% {
-            opacity: 0;
-            transform: scale(0.9) translateY(-10px);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-      `}</style>
     </div>
   );
 

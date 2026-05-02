@@ -62,6 +62,14 @@ function isActiveOrderStatus(status: unknown): boolean {
   return !INACTIVE_ORDER_STATUSES.has(normalized);
 }
 
+function getGeoBlockCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
+  return null;
+}
+
 const Footer: React.FC = () => {
   const pathname = usePathname();
   const { 
@@ -73,6 +81,23 @@ const Footer: React.FC = () => {
     isStale,
     refreshPrice 
   } = useETHPrice();
+
+  // Geo-restriction state
+  const [isGeoBlocked, setIsGeoBlocked] = useState(false);
+  const [geoCountry, setGeoCountry] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkGeoBlock = () => {
+      const blocked = getGeoBlockCookie('geo-blocked') === 'true';
+      const country = getGeoBlockCookie('geo-country');
+      setIsGeoBlocked(blocked);
+      setGeoCountry(country);
+    };
+    checkGeoBlock();
+    // Re-check periodically in case cookies change (VPN switch, etc.)
+    const interval = setInterval(checkGeoBlock, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const { rankedSymbols } = useActiveMarkets();
   const { theme, toggleTheme, canSwitchTheme } = useTheme();
@@ -422,7 +447,7 @@ const Footer: React.FC = () => {
           gap: '24px',
         }}
       >
-        {/* Live Status Indicator */}
+        {/* Status Indicator - Live or Restricted */}
         <div 
           style={{
             display: 'flex',
@@ -431,19 +456,46 @@ const Footer: React.FC = () => {
             padding: '4px 8px',
             fontSize: '12px',
             fontWeight: '500',
-            color: '#00FF88',
+            color: isGeoBlocked ? '#EF4444' : '#00FF88',
+            opacity: isGeoBlocked ? 0.8 : 1,
+            cursor: isGeoBlocked ? 'not-allowed' : 'default',
           }}
+          title={isGeoBlocked ? `Access restricted in ${geoCountry || 'your region'}` : 'System is live'}
         >
           <div 
             style={{
               width: '8px',
               height: '8px',
               borderRadius: '50%',
-              backgroundColor: '#00FF88',
+              backgroundColor: isGeoBlocked ? '#EF4444' : '#00FF88',
             }}
           />
-          Live
+          {isGeoBlocked ? 'Restricted' : 'Live'}
         </div>
+
+        {/* Geo-restriction warning notifier */}
+        {isGeoBlocked && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '3px 8px',
+              fontSize: '10px',
+              fontWeight: '500',
+              color: '#FFA500',
+              backgroundColor: 'rgba(255, 165, 0, 0.1)',
+              border: '1px solid rgba(255, 165, 0, 0.2)',
+              borderRadius: '4px',
+            }}
+            title="Trading features are disabled for users in restricted regions"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+            Region restricted
+          </div>
+        )}
 
         {/* How it works */}
         <Link

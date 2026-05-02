@@ -11,6 +11,7 @@ import DepositExternalInput from './DepositExternalInput'
 import SpokeDepositModal from '@/components/DepositModal/SpokeDepositModal'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { useGeoRestriction } from '@/hooks/useGeoRestriction'
 import { useDepositGasEstimate } from '@/hooks/useDepositGasEstimate'
 import { env } from '@/lib/env'
 import SpokeVaultAbi from '@/lib/abis/SpokeVault.json'
@@ -34,6 +35,7 @@ export default function DepositModal({
   const [error, setError] = useState<string | null>(null)
   const { walletAddress } = useWalletAddress()
   const coreVault = useCoreVault()
+  const { isRestricted: isGeoRestricted, countryName: geoCountryName } = useGeoRestriction()
   const { gasFeeUsd, gasFeeEth, isLoading: isGasLoading } = useDepositGasEstimate(42161) // Arbitrum
   const [isFunctionDepositLoading, setIsFunctionDepositLoading] = useState(false)
   const [showSpokeDepositModal, setShowSpokeDepositModal] = useState(false)
@@ -654,6 +656,52 @@ export default function DepositModal({
   // Close modal
   const handleClose = () => {
     onClose()
+  }
+
+  // Block deposits in geo-restricted regions
+  if (isGeoRestricted && isOpen) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div 
+          className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+          onClick={handleClose}
+        />
+        <div className="relative z-10 w-full max-w-sm bg-[#0F0F0F] rounded-md border border-[#222222] p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                Deposits Restricted
+              </h4>
+            </div>
+            <button
+              onClick={handleClose}
+              className="p-1 rounded hover:bg-[#1A1A1A] text-[#606060] hover:text-[#9CA3AF] transition-all"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+          <p className="text-[11px] text-[#808080] mb-3">
+            Deposits are not available in {geoCountryName || 'your region'} due to regulatory restrictions.
+          </p>
+          <div className="bg-[#1A1A1A] rounded border border-[#222222] p-2 mb-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="w-1 h-1 rounded-full bg-[#404040]" />
+              <span className="text-[9px] text-[#606060] uppercase tracking-wide">To access this feature</span>
+            </div>
+            <p className="text-[9px] text-[#808080]">
+              Connect via VPN to a supported region and refresh the page.
+            </p>
+          </div>
+          <button
+            onClick={handleClose}
+            className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-3 py-2 text-[11px] font-medium text-[#808080] transition-all"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // Delegate rendering to sub-modals which already implement the Sophisticated Minimal Design System

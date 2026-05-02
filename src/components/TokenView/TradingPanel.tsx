@@ -21,6 +21,7 @@ import WalletModal from '@/components/WalletModal';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
 import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
+import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -159,6 +160,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   } = useSession();
   // No per-component status fetch; rely on SessionProvider for session status
 
+  // Geo-restriction check
+  const { isRestricted: isGeoRestricted } = useGeoRestriction();
   
   // Initialize OrderBook hook
   console.log('metricId OrderBook hook', metricId);
@@ -1154,6 +1157,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const canExecuteTrade = useCallback(() => {
+    // Block trading in geo-restricted regions
+    if (isGeoRestricted) return false;
     // Only check basic requirements to enable button
     if (!isConnected) return false;
     if (isSubmittingOrder || isCancelingOrder) return false;
@@ -1171,6 +1176,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     // Enable button even if other checks might fail - we'll handle those during execution
     return true;
   }, [
+    isGeoRestricted,
     isConnected,
     isSubmittingOrder,
     isCancelingOrder,
@@ -1193,6 +1199,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const getTradeButtonText = () => {
+    if (isGeoRestricted) return 'Region Restricted';
     if ((marketRow as any)?.market_status === 'SETTLED') return 'Settled';
     if ((marketRow as any)?.market_status === 'SETTLEMENT_REQUESTED') return 'Settlement Pending';
     if (!isConnected) return 'Connect Wallet';

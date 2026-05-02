@@ -5,6 +5,7 @@ import { CommentSection, type Comment } from '@/components/CommentSection';
 import WithdrawalSuccessModal from '@/components/StatusModals/WithdrawalSuccessModal';
 import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
 import PositionClosedModal from '@/components/StatusModals/PositionClosedModal';
+import GeoBlockWarningModal from '@/components/GeoBlockWarningModal';
 
 type IconSearchResponse = {
   results: Array<{
@@ -261,6 +262,9 @@ export default function DebugSearchPage() {
 
   // Position closed modal state
   const [showClosedModal, setShowClosedModal] = React.useState(false);
+  
+  // Geo block warning modal state
+  const [showGeoBlockModal, setShowGeoBlockModal] = React.useState(false);
   const [closedMarketName, setClosedMarketName] = React.useState('Ethereum');
   const [closedMarketSymbol, setClosedMarketSymbol] = React.useState('ETH');
   const [closedMarketIcon, setClosedMarketIcon] = React.useState('https://assets.coingecko.com/coins/images/279/large/ethereum.png');
@@ -783,6 +787,29 @@ export default function DebugSearchPage() {
         realizedPnl={closedPnl}
         realizedPnlPercent={closedPnlPercent}
       />
+
+      {/* Geo Block Warning Modal Trigger */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">Geo Block Warning Modal</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Warning modal shown to users from restricted regions (e.g., United States). Follows the sophisticated minimal design system with subtle backdrop blur.
+        </div>
+        
+        <button
+          onClick={() => setShowGeoBlockModal(true)}
+          className="rounded bg-red-500/20 border border-red-500/30 px-4 py-2.5 text-[12px] font-medium text-red-300 hover:bg-red-500/30 transition-all"
+        >
+          Trigger Geo Block Warning
+        </button>
+      </div>
+
+      {showGeoBlockModal && (
+        <GeoBlockWarningModal
+          forceShow={true}
+          country="US"
+          onClose={() => setShowGeoBlockModal(false)}
+        />
+      )}
 
       {/* MarketInfoHeader Component Preview */}
       <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
