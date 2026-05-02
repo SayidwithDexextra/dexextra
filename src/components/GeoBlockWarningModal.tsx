@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
 interface GeoBlockWarningModalProps {
@@ -17,17 +17,44 @@ function getCookie(name: string): string | null {
   return null;
 }
 
+const DISMISSAL_KEY = 'geo-warning-dismissed';
+
 export default function GeoBlockWarningModal({ country, forceShow, onClose }: GeoBlockWarningModalProps) {
   const [isBlocked, setIsBlocked] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
   const [detectedCountry, setDetectedCountry] = useState<string>(country || 'US');
   const [mounted, setMounted] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
 
+  // Handle dismissal - works with or without onClose prop
+  const handleDismiss = useCallback(() => {
+    setIsAnimating(false);
+    setTimeout(() => {
+      setIsDismissed(true);
+      // Store dismissal in sessionStorage so it persists during session
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(DISMISSAL_KEY, 'true');
+      }
+      // Call external onClose if provided (for debug mode)
+      onClose?.();
+    }, 200);
+  }, [onClose]);
+
   useEffect(() => {
     setMounted(true);
     
+    // Check if already dismissed this session
+    if (typeof sessionStorage !== 'undefined') {
+      const wasDismissed = sessionStorage.getItem(DISMISSAL_KEY) === 'true';
+      if (wasDismissed && !forceShow) {
+        setIsDismissed(true);
+        return;
+      }
+    }
+    
     if (forceShow) {
       setIsBlocked(true);
+      setIsDismissed(false);
       setDetectedCountry(country || 'US');
       setTimeout(() => setIsAnimating(true), 10);
       return;
@@ -44,7 +71,7 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
     }
   }, [country, forceShow]);
 
-  if (!mounted || !isBlocked) return null;
+  if (!mounted || !isBlocked || isDismissed) return null;
 
   const countryName = detectedCountry === 'US' ? 'United States' : detectedCountry;
 
@@ -55,7 +82,7 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
       {/* Backdrop - minimal blur, can see background clearly */}
       <div 
         className={`absolute inset-0 bg-black/30 backdrop-blur-[2px] transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
-        onClick={onClose}
+        onClick={handleDismiss}
       />
       
       {/* Modal Card - Wide design matching design system */}
@@ -78,7 +105,7 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
               {detectedCountry}
             </div>
             <button
-              onClick={onClose}
+              onClick={handleDismiss}
               className="p-1 rounded hover:bg-[#1A1A1A] text-[#606060] hover:text-[#9CA3AF] transition-all duration-200"
               aria-label="Close"
             >
