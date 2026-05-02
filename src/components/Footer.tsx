@@ -470,32 +470,8 @@ const Footer: React.FC = () => {
               backgroundColor: isGeoBlocked ? '#EF4444' : '#00FF88',
             }}
           />
-          {isGeoBlocked ? 'Restricted' : 'Live'}
+          {isGeoBlocked ? 'Restricted Region' : 'Live'}
         </div>
-
-        {/* Geo-restriction warning notifier */}
-        {isGeoBlocked && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '3px 8px',
-              fontSize: '10px',
-              fontWeight: '500',
-              color: '#FFA500',
-              backgroundColor: 'rgba(255, 165, 0, 0.1)',
-              border: '1px solid rgba(255, 165, 0, 0.2)',
-              borderRadius: '4px',
-            }}
-            title="Trading features are disabled for users in restricted regions"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-            </svg>
-            Region restricted
-          </div>
-        )}
 
         {/* How it works */}
         <Link

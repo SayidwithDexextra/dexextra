@@ -33,6 +33,7 @@ import DecryptedText from './DecryptedText';
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { Wallet } from 'lucide-react'
+import { useGeoRestriction } from '@/hooks/useGeoRestriction'
 
 // Search Icon Component
 const SearchIcon = () => (
@@ -90,6 +91,7 @@ export default function Header() {
   const { walletData, portfolio } = useWallet()
   const router = useRouter()
   const pathname = usePathname()
+  const { isRestricted: isGeoRestricted } = useGeoRestriction()
   const isTokenPage = pathname?.startsWith('/token/')
   const collapsedNavbarWidth = isTokenPage ? 52 : 60
   const [hasMounted, setHasMounted] = useState(false)
@@ -840,19 +842,26 @@ export default function Header() {
             data-walkthrough="deposit-button"
               className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium inline-flex items-center justify-center gap-2"
               style={{
-                backgroundColor: '#4a9eff',
-                color: '#ffffff',
+                backgroundColor: isGeoRestricted ? '#374151' : '#4a9eff',
+                color: isGeoRestricted ? '#6B7280' : '#ffffff',
                 fontSize: '13px',
                 border: 'none',
-                minWidth: '70px'
+                minWidth: '70px',
+                cursor: isGeoRestricted ? 'not-allowed' : 'pointer',
+                opacity: isGeoRestricted ? 0.7 : 1,
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
+                if (!isGeoRestricted) {
+                  (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
+                }
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as any).style.backgroundColor = '#4a9eff'
+                if (!isGeoRestricted) {
+                  (e.currentTarget as any).style.backgroundColor = '#4a9eff'
+                }
               }}
               onClick={() => {
+                if (isGeoRestricted) return;
                 console.log('Deposit button clicked');
                 if (!walletData.isConnected) {
                   setIsWalletModalOpen(true);
@@ -860,8 +869,10 @@ export default function Header() {
                 }
                 setIsDepositModalOpen(true);
               }}
+              disabled={isGeoRestricted}
+              title={isGeoRestricted ? 'Deposits are restricted in your region' : 'Deposit funds'}
             >
-              <span>Deposit</span>
+              <span>{isGeoRestricted ? 'Restricted' : 'Deposit'}</span>
               <span
                 className="flex items-center justify-center w-6 h-6 rounded-md"
                 style={{ border: '1px solid rgba(255,255,255,0.25)', backgroundColor: 'rgba(255,255,255,0.10)' }}
