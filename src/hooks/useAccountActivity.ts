@@ -1,8 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { ethers } from 'ethers'
 import { supabase } from '@/lib/supabase'
 import { useWallet } from '@/hooks/useWallet'
+import { getRpcUrl, getChainId } from '@/lib/network'
+import { OBTradeExecutionFacetABI } from '@/lib/contracts'
 
 export type ActivityType = 
   | 'deposit' 
@@ -117,6 +120,141 @@ const defaultSummary: ActivitySummary = {
   avgFeePerTrade: 0,
 }
 
+async function fetchOnChainFeesForActivity(walletAddress: string, limit: number): Promise<any[]> {
+  try {
+    const provider = new ethers.JsonRpcProvider(getRpcUrl(), getChainId())
+    
+    // Get markets from userOrderHistory
+    const { data: orderHistory } = await supabase
+      .from('userOrderHistory')
+      .select('market_metric_id')
+      .ilike('trader_wallet_address', walletAddress)
+
+    const uniqueMarketIds = [...new Set(
+      (orderHistory || []).map(o => o.market_metric_id).filter(Boolean)
+    )]
+
+    if (uniqueMarketIds.length === 0) {
+      return []
+    }
+
+    // Get market addresses and symbols from the markets table
+    const { data: markets } = await supabase
+      .from('markets')
+      .select('market_identifier, market_address, symbol')
+      .in('market_identifier', uniqueMarketIds)
+
+    const marketMap = new Map<string, { address: string; symbol: string }>()
+    for (const market of (markets || [])) {
+      if (market.market_address) {
+        marketMap.set(market.market_identifier, {
+          address: market.market_address,
+          symbol: market.symbol || market.market_identifier,
+        })
+      }
+    }
+
+    const marketsWithAddresses = uniqueMarketIds
+      .filter(id => marketMap.has(id))
+      .map(id => ({
+        marketId: id,
+        marketAddress: marketMap.get(id)!.address,
+        symbol: marketMap.get(id)!.symbol,
+      }))
+
+    if (marketsWithAddresses.length === 0) {
+      return []
+    }
+
+    const allFees: any[] = []
+    let feeIdCounter = 1
+
+    for (const market of marketsWithAddresses) {
+      try {
+        const contract = new ethers.Contract(
+          market.marketAddress,
+          OBTradeExecutionFacetABI,
+          provider
+        )
+
+        let tradeCount = 0
+        try {
+          tradeCount = Number(await contract.getUserTradeCount(walletAddress))
+        } catch {
+          continue
+        }
+
+        if (tradeCount === 0) continue
+
+        const batchSize = 50
+        let offset = 0
+
+        while (offset < tradeCount && allFees.length < limit) {
+          try {
+            const result = await contract.getUserTrades(walletAddress, offset, batchSize)
+            const tradeData = result[0] || result.tradeData || result
+            const hasMore = result[1] ?? result.hasMore ?? (offset + batchSize < tradeCount)
+
+            if (!tradeData || !Array.isArray(tradeData)) break
+
+            for (const trade of tradeData) {
+              if (allFees.length >= limit) break
+
+              const walletLower = walletAddress.toLowerCase()
+              const isBuyer = trade.buyer.toLowerCase() === walletLower
+
+              const price = Number(ethers.formatUnits(trade.price, 6))
+              const quantity = Number(ethers.formatUnits(trade.amount, 18))
+              const tradeValue = Number(ethers.formatUnits(trade.tradeValue, 6))
+              const buyerFee = Number(ethers.formatUnits(trade.buyerFee, 6))
+              const sellerFee = Number(ethers.formatUnits(trade.sellerFee, 6))
+              const timestamp = new Date(Number(trade.timestamp) * 1000)
+
+              const userFee = isBuyer ? buyerFee : sellerFee
+              const counterpartyFee = isBuyer ? sellerFee : buyerFee
+              const isTaker = userFee > counterpartyFee || (userFee === counterpartyFee && isBuyer)
+
+              allFees.push({
+                id: feeIdCounter++,
+                market_id: market.marketId,
+                market_symbol: market.symbol,
+                market_address: market.marketAddress,
+                fee_amount_usdc: userFee,
+                fee_role: isTaker ? 'taker' : 'maker',
+                trade_price: price,
+                trade_amount: quantity,
+                trade_notional: tradeValue,
+                tx_hash: null,
+                created_at: timestamp.toISOString(),
+                counterparty_address: isBuyer ? trade.seller : trade.buyer,
+              })
+            }
+
+            if (!hasMore) break
+            offset += batchSize
+          } catch (e: any) {
+            console.error(`[useAccountActivity] Error fetching trades batch for ${market.symbol}:`, e?.message)
+            break
+          }
+        }
+      } catch (e: any) {
+        console.error(`[useAccountActivity] Error querying market ${market.symbol}:`, e?.message)
+      }
+    }
+
+    // Sort by timestamp (newest first)
+    allFees.sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+
+    console.log(`[useAccountActivity] Loaded ${allFees.length} fees from on-chain`)
+    return allFees
+  } catch (e: any) {
+    console.error('[useAccountActivity] Error fetching on-chain fees:', e?.message)
+    return []
+  }
+}
+
 export function useAccountActivity(options: UseAccountActivityOptions = {}): UseAccountActivityResult {
   const {
     enabled = true,
@@ -198,33 +336,42 @@ export function useAccountActivity(options: UseAccountActivityOptions = {}): Use
       let settledPositionsCount = 0
       const marketFees = new Map<string, { fees: number; trades: number }>()
 
-      // Process trading fees
+      // Process trading fees from database
+      let dbFees: any[] = []
       if (results[0].status === 'fulfilled' && !results[0].value.error) {
-        const fees = results[0].value.data || []
-        for (const fee of fees) {
-          const feeAmount = Number(fee.fee_amount_usdc) || 0
-          totalFees += feeAmount
-          totalTrades++
+        dbFees = results[0].value.data || []
+      }
 
-          const marketSymbol = String(fee.market_symbol || fee.market_id || 'Unknown').toUpperCase()
-          const existing = marketFees.get(marketSymbol) || { fees: 0, trades: 0 }
-          marketFees.set(marketSymbol, {
-            fees: existing.fees + feeAmount,
-            trades: existing.trades + 1,
-          })
+      // If no database fees, fetch from on-chain
+      if (dbFees.length === 0) {
+        console.log('[useAccountActivity] No database fees, fetching from on-chain...')
+        const onChainFees = await fetchOnChainFeesForActivity(walletAddress, limit)
+        dbFees = onChainFees
+      }
 
-          allActivities.push({
-            id: `fee-${fee.id}`,
-            type: 'trade_fee',
-            amount: -feeAmount,
-            timestamp: fee.created_at,
-            marketId: fee.market_id,
-            marketSymbol,
-            txHash: fee.tx_hash,
-            description: `${fee.fee_role === 'taker' ? 'Taker' : 'Maker'} fee for ${marketSymbol}`,
-            side: 'debit',
-          })
-        }
+      for (const fee of dbFees) {
+        const feeAmount = Number(fee.fee_amount_usdc) || 0
+        totalFees += feeAmount
+        totalTrades++
+
+        const marketSymbol = String(fee.market_symbol || fee.market_id || 'Unknown').toUpperCase()
+        const existing = marketFees.get(marketSymbol) || { fees: 0, trades: 0 }
+        marketFees.set(marketSymbol, {
+          fees: existing.fees + feeAmount,
+          trades: existing.trades + 1,
+        })
+
+        allActivities.push({
+          id: `fee-${fee.id}`,
+          type: 'trade_fee',
+          amount: -feeAmount,
+          timestamp: fee.created_at,
+          marketId: fee.market_id,
+          marketSymbol,
+          txHash: fee.tx_hash,
+          description: `${fee.fee_role === 'taker' ? 'Taker' : 'Maker'} fee for ${marketSymbol}`,
+          side: 'debit',
+        })
       }
 
       // Process vault transactions (deposits, withdrawals)
@@ -355,28 +502,25 @@ export function useAccountActivity(options: UseAccountActivityOptions = {}): Use
         }
       }
       
-      // Process trading_fees into TradeRecord format
-      if (results[0].status === 'fulfilled' && !results[0].value.error) {
-        const fees = results[0].value.data || []
-        for (const fee of fees) {
-          const txHash = fee.tx_hash?.toLowerCase() || ''
-          const side = orderSideMap.get(txHash) || 'BUY' // Default to BUY if unknown
-          
-          allTrades.push({
-            id: `trade-${fee.id}`,
-            marketId: fee.market_id || '',
-            marketSymbol: String(fee.market_symbol || fee.market_id || 'Unknown').toUpperCase(),
-            side,
-            price: Number(fee.trade_price) || 0,
-            quantity: Number(fee.trade_amount) || 0,
-            notional: Number(fee.trade_notional) || (Number(fee.trade_price) * Number(fee.trade_amount)) || 0,
-            fee: Number(fee.fee_amount_usdc) || 0,
-            feeRole: fee.fee_role === 'maker' ? 'maker' : 'taker',
-            counterparty: fee.counterparty_address,
-            txHash: fee.tx_hash,
-            timestamp: fee.created_at,
-          })
-        }
+      // Process fees (from database or on-chain) into TradeRecord format
+      for (const fee of dbFees) {
+        const txHash = fee.tx_hash?.toLowerCase() || ''
+        const side = orderSideMap.get(txHash) || 'BUY' // Default to BUY if unknown
+        
+        allTrades.push({
+          id: `trade-${fee.id}`,
+          marketId: fee.market_id || '',
+          marketSymbol: String(fee.market_symbol || fee.market_id || 'Unknown').toUpperCase(),
+          side,
+          price: Number(fee.trade_price) || 0,
+          quantity: Number(fee.trade_amount) || 0,
+          notional: Number(fee.trade_notional) || (Number(fee.trade_price) * Number(fee.trade_amount)) || 0,
+          fee: Number(fee.fee_amount_usdc) || 0,
+          feeRole: fee.fee_role === 'maker' ? 'maker' : 'taker',
+          counterparty: fee.counterparty_address,
+          txHash: fee.tx_hash,
+          timestamp: fee.created_at,
+        })
       }
       
       // Sort trades by timestamp (newest first)
