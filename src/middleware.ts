@@ -14,6 +14,17 @@ const GEO_EXEMPT_PATHS = [
   '/charting_library',
 ]
 
+// API routes that should be BLOCKED for geo-restricted users (action endpoints only)
+// Read-only data APIs (markets, prices, charts) remain accessible
+const GEO_RESTRICTED_API_ROUTES = [
+  '/api/orders',           // Order placement
+  '/api/gasless',          // Gasless trading sessions
+  '/api/withdraw',         // Withdrawals
+  '/api/deposit',          // Deposits (if exists)
+  '/api/settlements',      // Settlement actions
+  '/api/resolve-market',   // Market resolution
+]
+
 // Blocked countries (ISO 3166-1 alpha-2 codes)
 const BLOCKED_COUNTRIES = ['US']
 
@@ -30,13 +41,15 @@ export async function middleware(request: NextRequest) {
   const country = request.geo?.country || request.headers.get('x-vercel-ip-country') || ''
   const isBlockedCountry = BLOCKED_COUNTRIES.includes(country)
   
-  // For API routes: return 403 for blocked countries
+  // For API routes: only block specific action endpoints, allow read-only data APIs
   if (pathname.startsWith('/api/')) {
-    if (isBlockedCountry) {
+    const isRestrictedEndpoint = GEO_RESTRICTED_API_ROUTES.some(route => pathname.startsWith(route))
+    
+    if (isBlockedCountry && isRestrictedEndpoint) {
       return new NextResponse(
         JSON.stringify({ 
           error: 'Access denied', 
-          message: 'This service is not available in your region.',
+          message: 'This action is not available in your region.',
           code: 'GEO_RESTRICTED' 
         }),
         { 

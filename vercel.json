@@ -6,17 +6,6 @@
   "framework": "nextjs",
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "has": [
-        {
-          "type": "header",
-          "key": "x-vercel-ip-country",
-          "value": "US"
-        }
-      ],
-      "destination": "/api/geo-blocked"
-    },
-    {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     }
