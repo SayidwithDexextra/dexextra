@@ -17,8 +17,6 @@ function getCookie(name: string): string | null {
   return null;
 }
 
-const DISMISSAL_KEY = 'geo-warning-dismissed';
-
 export default function GeoBlockWarningModal({ country, forceShow, onClose }: GeoBlockWarningModalProps) {
   const [isBlocked, setIsBlocked] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
@@ -31,10 +29,6 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
     setIsAnimating(false);
     setTimeout(() => {
       setIsDismissed(true);
-      // Store dismissal in sessionStorage so it persists during session
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem(DISMISSAL_KEY, 'true');
-      }
       // Call external onClose if provided (for debug mode)
       onClose?.();
     }, 200);
@@ -42,15 +36,6 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
 
   useEffect(() => {
     setMounted(true);
-    
-    // Check if already dismissed this session
-    if (typeof sessionStorage !== 'undefined') {
-      const wasDismissed = sessionStorage.getItem(DISMISSAL_KEY) === 'true';
-      if (wasDismissed && !forceShow) {
-        setIsDismissed(true);
-        return;
-      }
-    }
     
     if (forceShow) {
       setIsBlocked(true);

@@ -838,41 +838,37 @@ export default function Header() {
             </div>
 
             {/* Deposit Button */}
-            <button 
-            data-walkthrough="deposit-button"
-              className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium inline-flex items-center justify-center gap-2"
-              style={{
-                backgroundColor: isGeoRestricted ? '#374151' : '#4a9eff',
-                color: isGeoRestricted ? '#6B7280' : '#ffffff',
-                fontSize: '13px',
-                border: 'none',
-                minWidth: '70px',
-                cursor: isGeoRestricted ? 'not-allowed' : 'pointer',
-                opacity: isGeoRestricted ? 0.7 : 1,
-              }}
-              onMouseEnter={(e) => {
-                if (!isGeoRestricted) {
-                  (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isGeoRestricted) {
+            <div className="relative group">
+              <button 
+              data-walkthrough="deposit-button"
+                className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium inline-flex items-center justify-center gap-2"
+                style={{
+                  backgroundColor: '#4a9eff',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  border: 'none',
+                  minWidth: '70px',
+                  cursor: isGeoRestricted ? 'not-allowed' : 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isGeoRestricted) {
+                    (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
+                  }
+                }}
+                onMouseLeave={(e) => {
                   (e.currentTarget as any).style.backgroundColor = '#4a9eff'
-                }
-              }}
-              onClick={() => {
-                if (isGeoRestricted) return;
-                console.log('Deposit button clicked');
-                if (!walletData.isConnected) {
-                  setIsWalletModalOpen(true);
-                  return;
-                }
-                setIsDepositModalOpen(true);
-              }}
-              disabled={isGeoRestricted}
-              title={isGeoRestricted ? 'Deposits are restricted in your region' : 'Deposit funds'}
-            >
-              <span>{isGeoRestricted ? 'Restricted' : 'Deposit'}</span>
+                }}
+                onClick={() => {
+                  if (isGeoRestricted) return;
+                  console.log('Deposit button clicked');
+                  if (!walletData.isConnected) {
+                    setIsWalletModalOpen(true);
+                    return;
+                  }
+                  setIsDepositModalOpen(true);
+                }}
+              >
+                <span>Deposit</span>
               <span
                 className="flex items-center justify-center w-6 h-6 rounded-md"
                 style={{ border: '1px solid rgba(255,255,255,0.25)', backgroundColor: 'rgba(255,255,255,0.10)' }}
@@ -880,7 +876,20 @@ export default function Header() {
               >
                 <Wallet className="w-4 h-4" style={{ color: '#ffffff' }} aria-hidden="true" />
               </span>
-            </button>
+              </button>
+              {/* Geo-restriction tooltip */}
+              {isGeoRestricted && (
+                <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50">
+                  <div className="bg-[#0F0F0F] border border-[#333333] rounded-md px-3 py-2 shadow-lg whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                      <span className="text-[11px] text-[#9CA3AF]">Deposits restricted in your region</span>
+                    </div>
+                  </div>
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-1 w-2 h-2 bg-[#0F0F0F] border-l border-t border-[#333333] rotate-45" />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Notification Icon */}
