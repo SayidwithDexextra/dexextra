@@ -610,20 +610,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									<Wallet className="w-3.5 h-3.5" />
 									<span className="text-[10px] font-medium uppercase tracking-wide">Deposit</span>
 								</button>
-								<button
-									type="button"
-									onClick={() => {
-										onClose()
-										router.push('/analytics')
-									}}
-									className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-t-stroke text-t-fg-sub hover:border-[#10B981] hover:bg-[#10B981]/10 hover:text-[#10B981]"
-									aria-label="View analytics"
-								>
-									<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-									</svg>
-									<span className="text-[10px] font-medium uppercase tracking-wide">Analytics</span>
-								</button>
 										{isMagicWallet ? (
 											<button
 												type="button"

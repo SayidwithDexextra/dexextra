@@ -17,6 +17,7 @@ import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
 import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
 import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
 import ComingSoonGate from "@/components/ComingSoonOverlay";
+import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -69,6 +70,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
               <WalkthroughProvider>
                 <PortfolioSnapshotProvider>
                   <ExternalAppOpenGuard />
+                  <GeoBlockWarningModal />
                   <div className="relative">
                     <Header />
                     <PortfolioSidebar isOpen={isPortfolioSidebarOpen} onClose={() => setIsPortfolioSidebarOpen(false)} />
