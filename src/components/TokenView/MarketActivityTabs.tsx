@@ -1289,6 +1289,61 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     };
   }, [walletAddress, resolveCanonicalSymbol, getBaseSignedSize]);
 
+  // Listen for optimistic position updates (from TradingPanel for instant UI feedback)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+
+    const onOptimisticPositionUpdate = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      if (!detail) return;
+      
+      const trader = String(detail?.trader || '').toLowerCase();
+      const me = String(walletAddress || '').toLowerCase();
+      if (trader && me && trader !== me) return;
+      
+      const sym = resolveCanonicalSymbol(detail?.symbol || '');
+      if (!sym) return;
+      
+      const sizeDelta = Number(detail?.sizeDelta || 0);
+      if (!Number.isFinite(sizeDelta) || sizeDelta === 0) return;
+      
+      const traceId = String(detail?.traceId || `optimistic:${Date.now()}`);
+      
+      // Dedup repeated dispatches
+      const now = Date.now();
+      const dedupKey = traceId;
+      const prev = appliedTraceRef.current.get(dedupKey) || 0;
+      if (now - prev < 10_000) return;
+      appliedTraceRef.current.set(dedupKey, now);
+      
+      const ttlMs = 8_000; // soft TTL
+      const hardTtlMs = 120_000; // hard cap (2 minutes)
+      const existing = posOverlayRef.current.get(sym);
+      const nextDelta = (existing?.delta || 0) + sizeDelta;
+      const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
+      const tradePrice = detail?.entryPrice || existing?.tradePrice || 0;
+      
+      posOverlayRef.current.set(sym, {
+        delta: nextDelta,
+        baseSigned,
+        appliedAt: existing?.appliedAt ?? now,
+        expiresAt: now + ttlMs,
+        hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
+        lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
+        tradePrice,
+      });
+      
+      console.log('[OptimisticUI] positions:overlay:patched', { traceId, symbol: sym, sizeDelta, overlayDelta: nextDelta });
+      setPosOverlayTick((x) => x + 1);
+    };
+
+    window.addEventListener('optimisticPositionUpdate', onOptimisticPositionUpdate as EventListener);
+    return () => {
+      window.removeEventListener('optimisticPositionUpdate', onOptimisticPositionUpdate as EventListener);
+    };
+  }, [walletAddress, resolveCanonicalSymbol, getBaseSignedSize]);
+
   // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
   const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
     try {

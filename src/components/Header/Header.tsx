@@ -242,16 +242,79 @@ export default function Header() {
         // could trigger a lightweight state nudge if needed
       } catch {}
     }
+    
+    // Listen for optimistic balance updates (instant feedback from TradingPanel)
+    const onOptimisticBalanceUpdate = (e: any) => {
+      try {
+        if (!walletData.isConnected) return
+        const detail = (e as CustomEvent)?.detail
+        if (!detail) return
+        
+        const availableCashDelta = Number(detail?.availableCashDelta || 0)
+        if (!Number.isFinite(availableCashDelta)) return
+        
+        console.log('[OptimisticUI] 🎧 [EVT][Header] Received optimisticBalanceUpdate', detail)
+        
+        // Apply delta to current values optimistically
+        setVaultEvent((cur: any) => {
+          if (!cur) return cur
+          const currentAvailable = parseFloat(cur.availableCollateral ?? '0') || 0
+          const newAvailable = currentAvailable + availableCashDelta
+          return {
+            ...cur,
+            availableCollateral: String(Math.max(0, newAvailable)),
+            _isOptimistic: true,
+          }
+        })
+        
+        // Force re-animation
+        setVaultUpdateSeq((s) => s + 1)
+      } catch {}
+    }
+    
+    // Listen for optimistic delta events from TradingPanel
+    const onCoreVaultSummaryDelta = (e: any) => {
+      try {
+        if (!walletData.isConnected) return
+        const detail = (e as CustomEvent)?.detail
+        if (!detail?.isOptimistic) return
+        
+        const availableDelta = Number(detail?.availableCollateralDelta || 0)
+        if (!Number.isFinite(availableDelta)) return
+        
+        console.log('[OptimisticUI] 🎧 [EVT][Header] Received coreVaultSummaryDelta', detail)
+        
+        // Apply delta to current values optimistically
+        setVaultEvent((cur: any) => {
+          if (!cur) return cur
+          const currentAvailable = parseFloat(cur.availableCollateral ?? '0') || 0
+          const newAvailable = currentAvailable + availableDelta
+          return {
+            ...cur,
+            availableCollateral: String(Math.max(0, newAvailable)),
+            _isOptimistic: true,
+          }
+        })
+        
+        // Force re-animation
+        setVaultUpdateSeq((s) => s + 1)
+      } catch {}
+    }
+    
     console.log('[Dispatch] 🔗 [EVT][Header] Subscribing to coreVaultSummary')
     if (typeof window !== 'undefined') {
       window.addEventListener('coreVaultSummary', onSummary)
       window.addEventListener('ordersUpdated', onOrdersUpdated)
+      window.addEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
+      window.addEventListener('coreVaultSummaryDelta', onCoreVaultSummaryDelta)
     }
     return () => {
       console.log('[Dispatch] 🧹 [EVT][Header] Unsubscribing from coreVaultSummary')
       if (typeof window !== 'undefined') {
         window.removeEventListener('coreVaultSummary', onSummary)
         window.removeEventListener('ordersUpdated', onOrdersUpdated)
+        window.removeEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
+        window.removeEventListener('coreVaultSummaryDelta', onCoreVaultSummaryDelta)
       }
     }
   }, [walletData.isConnected])
