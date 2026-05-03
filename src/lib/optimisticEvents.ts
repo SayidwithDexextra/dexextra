@@ -112,7 +112,7 @@ export function dispatchOptimisticTradeUpdates(details: OptimisticTradeDetails):
     isNewPosition: true,
   });
   
-  // 2. Balance update
+  // 2. Balance update (Header listens to this for instant cash display update)
   dispatchOptimisticBalanceUpdate({
     traceId,
     trader: details.trader,
@@ -121,18 +121,6 @@ export function dispatchOptimisticTradeUpdates(details: OptimisticTradeDetails):
     collateralLocked: details.marginRequired,
     timestamp: now,
   });
-  
-  // 3. Also dispatch coreVaultSummary for Header to pick up immediately
-  // This works with the existing Header listener
-  window.dispatchEvent(new CustomEvent('coreVaultSummaryDelta', {
-    detail: {
-      traceId,
-      availableCollateralDelta: -details.marginRequired,
-      marginUsedDelta: details.marginRequired,
-      timestamp: now,
-      isOptimistic: true,
-    }
-  }));
 }
 
 /**

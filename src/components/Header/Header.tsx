@@ -112,10 +112,33 @@ export default function Header() {
   const hidePortfolioUntilSummaryReady = Boolean(walletData.isConnected && !snapshotReady)
   const showPortfolioSkeleton = Boolean(walletData.isConnected && hidePortfolioUntilSummaryReady)
   const isVaultConnected = !!core.isConnected
+  
+  // Optimistic delta for available cash (applied on top of snapshot values)
+  const [optimisticCashDelta, setOptimisticCashDelta] = useState(0)
+  const optimisticDeltaTraceRef = useRef<string | null>(null)
+  const optimisticAppliedAtRef = useRef<number>(0)
+  
+  // Clear optimistic delta when snapshot updates with newer data (real data caught up)
+  // Only clear if the snapshot updated AFTER we applied the optimistic delta
+  useEffect(() => {
+    if (optimisticCashDelta !== 0 && optimisticAppliedAtRef.current > 0) {
+      const snapshotTime = snapshot?.updatedAt || 0
+      // If snapshot is newer than when we applied the delta, the real data has caught up
+      if (snapshotTime > optimisticAppliedAtRef.current) {
+        setOptimisticCashDelta(0)
+        optimisticDeltaTraceRef.current = null
+        optimisticAppliedAtRef.current = 0
+      }
+    }
+  }, [snapshot?.updatedAt, optimisticCashDelta])
+  
   const vaultAvailableCollateral = (() => {
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     const v = snapshot?.availableCash
-    if (Number.isFinite(Number(v))) return Number(v)
+    if (Number.isFinite(Number(v))) {
+      // Apply optimistic delta on top of snapshot value
+      return Math.max(0, Number(v) + optimisticCashDelta)
+    }
     return Number.NaN
   })()
   // Portfolio value approximation consistent with TokenHeader broadcasting:
@@ -244,60 +267,29 @@ export default function Header() {
     }
     
     // Listen for optimistic balance updates (instant feedback from TradingPanel)
+    // Only handle optimisticBalanceUpdate - ignore coreVaultSummaryDelta to avoid duplicate handling
     const onOptimisticBalanceUpdate = (e: any) => {
       try {
         if (!walletData.isConnected) return
         const detail = (e as CustomEvent)?.detail
         if (!detail) return
         
+        const traceId = String(detail?.traceId || '')
         const availableCashDelta = Number(detail?.availableCashDelta || 0)
-        if (!Number.isFinite(availableCashDelta)) return
+        if (!Number.isFinite(availableCashDelta) || availableCashDelta === 0) return
+        
+        // Dedup: skip if we already processed this trace
+        if (traceId && optimisticDeltaTraceRef.current === traceId) return
+        optimisticDeltaTraceRef.current = traceId
         
         console.log('[OptimisticUI] 🎧 [EVT][Header] Received optimisticBalanceUpdate', detail)
         
-        // Apply delta to current values optimistically
-        setVaultEvent((cur: any) => {
-          if (!cur) return cur
-          const currentAvailable = parseFloat(cur.availableCollateral ?? '0') || 0
-          const newAvailable = currentAvailable + availableCashDelta
-          return {
-            ...cur,
-            availableCollateral: String(Math.max(0, newAvailable)),
-            _isOptimistic: true,
-          }
-        })
+        // Track when we applied this delta (for clearing when real data catches up)
+        optimisticAppliedAtRef.current = Date.now()
         
-        // Force re-animation
-        setVaultUpdateSeq((s) => s + 1)
-      } catch {}
-    }
-    
-    // Listen for optimistic delta events from TradingPanel
-    const onCoreVaultSummaryDelta = (e: any) => {
-      try {
-        if (!walletData.isConnected) return
-        const detail = (e as CustomEvent)?.detail
-        if (!detail?.isOptimistic) return
-        
-        const availableDelta = Number(detail?.availableCollateralDelta || 0)
-        if (!Number.isFinite(availableDelta)) return
-        
-        console.log('[OptimisticUI] 🎧 [EVT][Header] Received coreVaultSummaryDelta', detail)
-        
-        // Apply delta to current values optimistically
-        setVaultEvent((cur: any) => {
-          if (!cur) return cur
-          const currentAvailable = parseFloat(cur.availableCollateral ?? '0') || 0
-          const newAvailable = currentAvailable + availableDelta
-          return {
-            ...cur,
-            availableCollateral: String(Math.max(0, newAvailable)),
-            _isOptimistic: true,
-          }
-        })
-        
-        // Force re-animation
-        setVaultUpdateSeq((s) => s + 1)
+        // Apply delta to the optimistic cash delta state (this affects vaultAvailableCollateral)
+        // The existing animateCentsKey effect will automatically trigger animation when the value changes
+        setOptimisticCashDelta(availableCashDelta)
       } catch {}
     }
     
@@ -306,7 +298,6 @@ export default function Header() {
       window.addEventListener('coreVaultSummary', onSummary)
       window.addEventListener('ordersUpdated', onOrdersUpdated)
       window.addEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
-      window.addEventListener('coreVaultSummaryDelta', onCoreVaultSummaryDelta)
     }
     return () => {
       console.log('[Dispatch] 🧹 [EVT][Header] Unsubscribing from coreVaultSummary')
@@ -314,7 +305,6 @@ export default function Header() {
         window.removeEventListener('coreVaultSummary', onSummary)
         window.removeEventListener('ordersUpdated', onOrdersUpdated)
         window.removeEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
-        window.removeEventListener('coreVaultSummaryDelta', onCoreVaultSummaryDelta)
       }
     }
   }, [walletData.isConnected])
