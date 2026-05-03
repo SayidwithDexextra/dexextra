@@ -120,24 +120,6 @@ export default function GeoBlockWarningModal({ country, forceShow, onClose }: Ge
             Access is only permitted from supported regions.
           </p>
 
-          {/* Info Card */}
-          <div className="bg-[#1A1A1A] rounded border border-[#222222] p-2 mb-3">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <div className="w-1 h-1 rounded-full bg-[#404040]" />
-              <span className="text-[9px] text-[#606060] uppercase tracking-wide">To access this service</span>
-            </div>
-            <ul className="space-y-1">
-              <li className="flex items-start gap-1.5">
-                <span className="text-[#404040] text-[9px] mt-px">•</span>
-                <span className="text-[9px] text-[#808080]">Connect VPN to a supported region</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-[#404040] text-[9px] mt-px">•</span>
-                <span className="text-[9px] text-[#808080]">Clear browser cache and refresh</span>
-              </li>
-            </ul>
-          </div>
-
           {/* Actions */}
           <div className="flex items-center gap-2">
             <a
