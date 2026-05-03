@@ -113,32 +113,17 @@ export default function Header() {
   const showPortfolioSkeleton = Boolean(walletData.isConnected && hidePortfolioUntilSummaryReady)
   const isVaultConnected = !!core.isConnected
   
-  // Optimistic delta for available cash (applied on top of snapshot values)
-  const [optimisticCashDelta, setOptimisticCashDelta] = useState(0)
-  const optimisticDeltaTraceRef = useRef<string | null>(null)
-  const optimisticAppliedAtRef = useRef<number>(0)
+  // Optimistic cash delta - stored in ref to avoid triggering animation cascades
+  // Applied ONLY at the final display level, not in any calculations that feed into animation logic
+  const optimisticCashDeltaRef = useRef(0)
+  const optimisticTraceRef = useRef<string | null>(null)
+  const [optimisticDisplayTick, setOptimisticDisplayTick] = useState(0) // Triggers re-render for display only
   
-  // Clear optimistic delta when snapshot updates with newer data (real data caught up)
-  // Only clear if the snapshot updated AFTER we applied the optimistic delta
-  useEffect(() => {
-    if (optimisticCashDelta !== 0 && optimisticAppliedAtRef.current > 0) {
-      const snapshotTime = snapshot?.updatedAt || 0
-      // If snapshot is newer than when we applied the delta, the real data has caught up
-      if (snapshotTime > optimisticAppliedAtRef.current) {
-        setOptimisticCashDelta(0)
-        optimisticDeltaTraceRef.current = null
-        optimisticAppliedAtRef.current = 0
-      }
-    }
-  }, [snapshot?.updatedAt, optimisticCashDelta])
-  
+  // vaultAvailableCollateral does NOT include optimistic delta - keeps animation logic stable
   const vaultAvailableCollateral = (() => {
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     const v = snapshot?.availableCash
-    if (Number.isFinite(Number(v))) {
-      // Apply optimistic delta on top of snapshot value
-      return Math.max(0, Number(v) + optimisticCashDelta)
-    }
+    if (Number.isFinite(Number(v))) return Number(v)
     return Number.NaN
   })()
   // Portfolio value approximation consistent with TokenHeader broadcasting:
@@ -267,7 +252,7 @@ export default function Header() {
     }
     
     // Listen for optimistic balance updates (instant feedback from TradingPanel)
-    // Only handle optimisticBalanceUpdate - ignore coreVaultSummaryDelta to avoid duplicate handling
+    // Uses ref-based delta to avoid triggering animation cascades
     const onOptimisticBalanceUpdate = (e: any) => {
       try {
         if (!walletData.isConnected) return
@@ -279,17 +264,25 @@ export default function Header() {
         if (!Number.isFinite(availableCashDelta) || availableCashDelta === 0) return
         
         // Dedup: skip if we already processed this trace
-        if (traceId && optimisticDeltaTraceRef.current === traceId) return
-        optimisticDeltaTraceRef.current = traceId
+        if (traceId && optimisticTraceRef.current === traceId) return
+        optimisticTraceRef.current = traceId
         
-        console.log('[OptimisticUI] 🎧 [EVT][Header] Received optimisticBalanceUpdate', detail)
+        console.log('[OptimisticUI] 🎧 [EVT][Header] Applying optimistic delta:', availableCashDelta)
         
-        // Track when we applied this delta (for clearing when real data catches up)
-        optimisticAppliedAtRef.current = Date.now()
+        // Store delta in ref (doesn't trigger re-render by itself)
+        optimisticCashDeltaRef.current = availableCashDelta
         
-        // Apply delta to the optimistic cash delta state (this affects vaultAvailableCollateral)
-        // The existing animateCentsKey effect will automatically trigger animation when the value changes
-        setOptimisticCashDelta(availableCashDelta)
+        // Trigger ONE re-render to show the updated value
+        setOptimisticDisplayTick(t => t + 1)
+        
+        // Clear the delta after 30 seconds (real data should have caught up by then)
+        setTimeout(() => {
+          if (optimisticTraceRef.current === traceId) {
+            optimisticCashDeltaRef.current = 0
+            optimisticTraceRef.current = null
+            setOptimisticDisplayTick(t => t + 1)
+          }
+        }, 30000)
       } catch {}
     }
     
@@ -411,10 +404,21 @@ export default function Header() {
   const displayPortfolioValue = !walletData.isConnected 
     ? '$0.00'
     : totalPortfolioValue
-        
-  const displayCashValue = !walletData.isConnected 
-    ? '$0.00'
-    : cashValueDisplay
+  
+  // Apply optimistic delta ONLY at final display level (bypasses animation logic entirely)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _optimisticDisplayDep = optimisticDisplayTick // Force re-evaluation when optimistic update occurs
+  const displayCashValue = useMemo(() => {
+    if (!walletData.isConnected) return '$0.00'
+    if (!Number.isFinite(roundedCashCents)) return '$—'
+    
+    // Apply optimistic delta directly to the display value
+    const baseValue = roundedCashCents / 100
+    const delta = optimisticCashDeltaRef.current
+    const adjustedValue = Math.max(0, baseValue + delta)
+    
+    return formatCurrency(adjustedValue)
+  }, [walletData.isConnected, roundedCashCents, optimisticDisplayTick])
 
   // Helper function to get display name
   const getDisplayName = () => {
