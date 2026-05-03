@@ -227,7 +227,7 @@ export default function DexeteraTopPicksCarousel({
                     alt={item.imageAlt || item.title}
                     fill
                     sizes={isMobile ? '82vw' : '22vw'}
-                    className="object-contain transition duration-300 group-hover:scale-[1.02]"
+                    className="object-cover transition duration-300 group-hover:scale-[1.02]"
                   />
                   <div className="absolute inset-0 bg-black/20 transition group-hover:bg-black/10" />
                 </div>
