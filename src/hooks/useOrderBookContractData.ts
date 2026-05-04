@@ -663,21 +663,28 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         // Reset attempts on success
         resolveAttemptsRef.current = 0;
         // First fetch depth quickly and update state so UI can render bids/asks immediately
+        // NOTE: getOrderBookDepth (full scan) is broken in the contract, so we use pointer walk first
         let depth: OrderBookLiveData['depth'] = null;
         try {
           const levels = BigInt(requestedLevels);
           let d: any = null;
           try {
-            // Prefer pointer walk so we always fetch the levels closest to the spread (best bid/ask outward).
-            d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepthFromPointers', args: [levels] }), 2000, 'getOrderBookDepthFromPointers');
+            // Use pointer walk - getOrderBookDepth (full scan) is broken and returns 0 levels
+            d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepthFromPointers', args: [levels] }), 3000, 'getOrderBookDepthFromPointers');
           } catch (_e) {
-            // Fallback: full scan + sort (can be heavier on large books)
+            // Fallback: full scan (unlikely to work but try anyway)
             try {
               d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepth', args: [levels] }), 2500, 'getOrderBookDepth');
             } catch (_fallbackError) {}
           }
           if (Array.isArray(d) && d.length >= 4) {
             const [bidPrices, bidAmounts, askPrices, askAmounts] = d as [bigint[], bigint[], bigint[], bigint[]];
+            // Debug: Log depth data for troubleshooting
+            console.log(`[useOrderBookContractData] Depth fetched for ${symbol}:`, {
+              requestedLevels,
+              bidLevels: bidPrices?.length || 0,
+              askLevels: askPrices?.length || 0,
+            });
             depth = {
               bidPrices: bidPrices.map((x) => scalePrice(x) || 0),
               bidAmounts: bidAmounts.map((x) => scaleAmount(x)),

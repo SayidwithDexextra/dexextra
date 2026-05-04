@@ -1,9 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { CountdownTickerProps, TimeRemaining, CountdownItemProps } from './types';
 import styles from './CountdownTicker.module.css';
-import Silk from './Silk';
+
+// Lazy load Three.js component - reduces initial bundle size significantly
+const Silk = dynamic(() => import('./Silk'), { 
+  ssr: false,
+  loading: () => <div className={styles.silkPlaceholder} />
+});
 
 // Individual countdown item component
 const CountdownItem: React.FC<CountdownItemProps> = ({ value, label, className }) => {

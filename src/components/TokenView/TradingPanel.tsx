@@ -2153,30 +2153,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       optimisticModalTimeoutRef.current = null;
     }
     
-    console.log('[OPT-DEBUG] 🚀 TradingPanel limit order - checking dispatch conditions:', {
-      hasWindow: typeof window !== 'undefined',
-      address,
-      triggerPrice,
-      displaySize,
-      optimisticMarginRequired
-    });
+    console.log('[OPT-DEBUG] 🚀 TradingPanel limit order - NOT dispatching position updates (limit orders don\'t open positions)');
+    
+    // NOTE: Limit orders do NOT dispatch position updates because no position is opened yet.
+    // The position only opens when the order is filled. We only show the "Order Placed" modal.
+    // Balance is also NOT updated optimistically for limit orders - margin is locked when order fills.
+    
     if (typeof window !== 'undefined' && address && triggerPrice > 0 && displaySize > 0) {
-      console.log('[OPT-DEBUG] 🚀 TradingPanel DISPATCHING optimistic updates (limit)');
-      dispatchOptimisticTradeUpdates({
-        symbol: String(metricId || '').toUpperCase(),
-        side: optimisticSide,
-        size: displaySize,
-        entryPrice: triggerPrice,
-        notionalValue: optimisticNotional,
-        leverage: 1,
-        marginRequired: optimisticMarginRequired,
-        trader: address,
-        orderType: 'LIMIT',
-      });
-      
-      // Show Position Opened modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
-      // This provides instant gratification without waiting for blockchain confirmation
-      // Use enough decimal places to avoid rounding very small sizes to 0
+      // Show "Order Placed" modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
       const limitSizeStr = displaySize >= 0.0001 ? displaySize.toFixed(4) : (displaySize > 0 ? displaySize.toPrecision(3) : '0.0001');
       const optimisticOrderDetails = {
         side: optimisticSide,

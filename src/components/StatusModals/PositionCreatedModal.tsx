@@ -257,9 +257,11 @@ export default function PositionCreatedModal({
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
                   >
-                    <h2 className="text-sm font-semibold text-white uppercase tracking-wide mb-1">Position Opened</h2>
+                    <h2 className="text-sm font-semibold text-white uppercase tracking-wide mb-1">
+                      {orderType === 'LIMIT' ? 'Order Placed' : 'Position Opened'}
+                    </h2>
                     <p className="text-[10px] text-[#606060]">
-                      {orderType} order filled
+                      {orderType === 'LIMIT' ? 'Limit order submitted' : `${orderType} order filled`}
                     </p>
                   </motion.div>
                 </div>
@@ -275,7 +277,7 @@ export default function PositionCreatedModal({
                     onClick={onClose}
                     className={`w-full py-2.5 px-3 ${sideBgColor} hover:opacity-80 border ${sideBorderColor} rounded-md text-[11px] font-medium ${sideColor} transition-all duration-200`}
                   >
-                    View Position
+                    {orderType === 'LIMIT' ? 'View Order' : 'View Position'}
                   </button>
                   <button
                     onClick={onClose}

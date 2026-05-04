@@ -114,6 +114,11 @@ export default function Header() {
   // Global cached snapshot: used by both Header + PortfolioSidebar.
   const { snapshot, isReady: snapshotReady } = usePortfolioSnapshot()
   
+  // Track the last DISPLAYED cash value to prevent redundant animations
+  const lastDisplayedCashRef = useRef<string | null>(null)
+  // Timer for delayed optimistic animation
+  const optimisticAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  
   // Debug: log when snapshot changes
   const lastSnapshotIdRef = useRef<string | null>(null)
   const snapshotId = snapshot ? `${snapshot.updatedAt}|${snapshot.availableCash}|${snapshot.portfolioValue}|${snapshot.unrealizedPnl}` : null
@@ -317,10 +322,21 @@ export default function Header() {
         optimisticCashFloorRef.current = newFloor
         optimisticFloorExpiresRef.current = Date.now() + 90000 // 90 second expiry
         
-        // Trigger ONE re-render to show the updated value
+        // Trigger ONE re-render to show the updated value (without animation)
         setOptimisticDisplayTick(t => t + 1)
         
-        console.log('[OPT-DEBUG] ✅ Floor set, tick incremented')
+        // Schedule a delayed animation (2.5 seconds after trade)
+        // This provides visual feedback that the value changed
+        if (optimisticAnimationTimerRef.current) {
+          clearTimeout(optimisticAnimationTimerRef.current)
+        }
+        optimisticAnimationTimerRef.current = setTimeout(() => {
+          console.log('[OPT-DEBUG] 🎬 Triggering delayed optimistic animation')
+          setVaultUpdateSeq(s => s + 1)
+          optimisticAnimationTimerRef.current = null
+        }, 2500)
+        
+        console.log('[OPT-DEBUG] ✅ Floor set, animation scheduled for 2.5s')
       } catch (err) {
         console.log('[OPT-DEBUG] ❌ Error in handler:', err)
       }
@@ -339,6 +355,11 @@ export default function Header() {
         window.removeEventListener('coreVaultSummary', onSummary)
         window.removeEventListener('ordersUpdated', onOrdersUpdated)
         window.removeEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
+      }
+      // Clear any pending optimistic animation timer
+      if (optimisticAnimationTimerRef.current) {
+        clearTimeout(optimisticAnimationTimerRef.current)
+        optimisticAnimationTimerRef.current = null
       }
     }
   }, [walletData.isConnected])
@@ -410,6 +431,7 @@ export default function Header() {
     // Reset tracking when wallet disconnects
     if (!walletData.isConnected) {
       lastAnimateCentsKeyRef.current = null
+      lastDisplayedCashRef.current = null
       hasCompletedInitialAnimationRef.current = false
       return
     }
@@ -428,9 +450,18 @@ export default function Header() {
       return
     }
 
-    // Subsequent animations: only animate when cents values actually change
+    // Subsequent animations: only animate when chain cents values change
+    // BUT skip animation if an optimistic animation timer is pending (we'll use that instead)
+    // OR if the DISPLAYED value hasn't actually changed (floor was already showing the value)
     if (lastAnimateCentsKeyRef.current !== animateCentsKey) {
-      console.log('[OPT-DEBUG] 🎬 Animation triggered', { oldKey: lastAnimateCentsKeyRef.current, newKey: animateCentsKey })
+      // Check if optimistic animation is already scheduled
+      if (optimisticAnimationTimerRef.current !== null) {
+        console.log('[OPT-DEBUG] ⏭️ Animation skipped - optimistic timer pending')
+        lastAnimateCentsKeyRef.current = animateCentsKey
+        return
+      }
+      
+      console.log('[OPT-DEBUG] 🎬 Animation triggered (chain update)', { oldKey: lastAnimateCentsKeyRef.current, newKey: animateCentsKey })
       lastAnimateCentsKeyRef.current = animateCentsKey
       setVaultUpdateSeq((s) => s + 1)
     }

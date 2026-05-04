@@ -248,35 +248,68 @@ export async function GET(req: NextRequest): Promise<NextResponse<LiveResponse |
       return NextResponse.json({ ok: false, error: 'OrderBook address could not be resolved' }, { status: 404 });
     }
 
-    // Depth first (fast)
+    // Depth first - use pointer walk (getOrderBookDepthFromPointers) as primary
+    // NOTE: getOrderBookDepth (full scan) is broken in the contract and returns 0 levels
     let depth: LiveResponse['data']['depth'] = null;
+    let depthSource: 'pointers' | 'scan' = 'pointers';
     try {
       const lvl = BigInt(levels);
       let d: any = null;
+      
+      // Use getOrderBookDepthFromPointers first - it's the only one returning data
+      // (getOrderBookDepth full scan is broken and returns 0 levels)
       try {
         d = await withTimeout(
           publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepthFromPointers', args: [lvl] }),
-          2000,
+          3000,
           'getOrderBookDepthFromPointers'
         );
-      } catch {
-        // Fallback: full scan + sort (can be heavier on large books)
-        d = await withTimeout(
-          publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepth', args: [lvl] }),
-          2500,
-          'getOrderBookDepth'
-        );
+        depthSource = 'pointers';
+      } catch (pointerErr) {
+        // Fallback to full scan (unlikely to work but try anyway)
+        console.log('[orderbook/live] getOrderBookDepthFromPointers failed, falling back to getOrderBookDepth:', pointerErr);
+        try {
+          d = await withTimeout(
+            publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepth', args: [lvl] }),
+            2500,
+            'getOrderBookDepth'
+          );
+          depthSource = 'scan';
+        } catch (scanErr) {
+          console.log('[orderbook/live] getOrderBookDepth also failed:', scanErr);
+        }
       }
+      
       if (Array.isArray(d) && d.length >= 4) {
         const [bidPrices, bidAmounts, askPrices, askAmounts] = d as [bigint[], bigint[], bigint[], bigint[]];
+        
+        // Debug: Log raw contract response
+        console.log(`[orderbook/live] Depth from ${depthSource} for ${symbol}:`, {
+          requestedLevels: levels,
+          rawBidPricesCount: bidPrices?.length || 0,
+          rawAskPricesCount: askPrices?.length || 0,
+          rawBidPrices: bidPrices?.slice(0, 5).map(String),
+          rawAskPrices: askPrices?.slice(0, 5).map(String),
+        });
+        
         depth = {
           bidPrices: (bidPrices || []).map((x) => scalePrice(x) || 0),
           bidAmounts: (bidAmounts || []).map((x) => scaleAmount(x)),
           askPrices: (askPrices || []).map((x) => scalePrice(x) || 0),
           askAmounts: (askAmounts || []).map((x) => scaleAmount(x)),
         };
+        
+        // Debug: Log scaled depth
+        console.log(`[orderbook/live] Scaled depth for ${symbol}:`, {
+          bidLevels: depth.bidPrices.length,
+          askLevels: depth.askPrices.length,
+          bidPrices: depth.bidPrices.slice(0, 5),
+          askPrices: depth.askPrices.slice(0, 5),
+        });
       }
-    } catch {}
+    } catch (depthErr) {
+      console.error('[orderbook/live] Depth fetch failed entirely:', depthErr);
+    }
 
     // Prices + optional stats/counts/trades
     let bestBidRaw: bigint = 0n;
@@ -345,6 +378,13 @@ export async function GET(req: NextRequest): Promise<NextResponse<LiveResponse |
         if (Array.isArray(counts) && counts.length >= 2) {
           activeBuyOrders = BigInt(counts[0]);
           activeSellOrders = BigInt(counts[1]);
+          // Debug: compare order counts with depth levels
+          console.log(`[orderbook/live] Active orders count for ${symbol}:`, {
+            buyOrders: Number(activeBuyOrders),
+            sellOrders: Number(activeSellOrders),
+            depthBidLevels: depth?.bidPrices?.length || 0,
+            depthAskLevels: depth?.askPrices?.length || 0,
+          });
         }
       } catch {}
     })();
