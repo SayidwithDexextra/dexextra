@@ -7,11 +7,10 @@ import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 import { useOrderBook } from '@/hooks/useOrderBook';
 import { usePositions as usePositionsHook } from '@/hooks/usePositions';
 import { useLightweightOrderBookStore, useOrderBook as useLightweightOB } from '@/stores/lightweightOrderBookStore';
-import { useWallet } from '@/hooks/useWallet';
+import { usePusher } from '@/lib/pusher-client';
 import type { Market } from '@/hooks/useMarkets';
 import type { TokenData } from '@/types/token';
-import { createPublicClient, webSocket, type Address } from 'viem';
-import { CHAIN_CONFIG } from '@/lib/contractConfig';
+import type { Address } from 'viem';
 
 interface MarketDataContextValue {
   symbol: string;
@@ -88,10 +87,6 @@ interface ProviderProps {
 }
 
 export function MarketDataProvider({ symbol, children, tickerEnabled = true }: ProviderProps) {
-  // Get user's wallet address for filtering own orders from event processing
-  const wallet = useWallet() as any;
-  const userAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
-
   const { market, isLoading: isLoadingMarket, error: marketError, refetch } = useMarket(symbol);
   const { data: dbTicker } = useMarketTicker({
     marketId: (market as any)?.id || undefined,
@@ -121,414 +116,171 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   const lightweightStore = useLightweightOrderBookStore();
   const lightweightOrderBook = useLightweightOB(symbol);
 
-  // Track recent trades we initiated as TAKER (to avoid double-counting)
-  // Format: Set of "price:timestamp" strings, auto-expires after 30 seconds
-  const recentTakerTradesRef = useRef<Set<string>>(new Set());
-  
   // Function to record that we placed a trade as taker (called from TradingPanel via context)
-  const recordTakerTrade = useCallback((price: number) => {
-    const key = `${price.toFixed(6)}:${Date.now()}`;
-    recentTakerTradesRef.current.add(key);
-    // Auto-cleanup after 30 seconds
-    setTimeout(() => {
-      recentTakerTradesRef.current.delete(key);
-    }, 30000);
-  }, []);
-  
-  // Check if a trade at this price was recently initiated by us as taker
-  const isRecentTakerTrade = useCallback((price: number): boolean => {
-    const now = Date.now();
-    const priceStr = price.toFixed(6);
-    for (const key of recentTakerTradesRef.current) {
-      const [keyPrice, keyTime] = key.split(':');
-      if (keyPrice === priceStr && now - parseInt(keyTime) < 30000) {
-        return true;
-      }
-    }
-    return false;
+  // This is a simple no-op now since we rely on polling for updates
+  const recordTakerTrade = useCallback((_price: number) => {
+    // No-op: polling handles all updates now
   }, []);
 
-  // Track resting orders by orderId so we can remove liquidity when cancelled
-  // Map of orderId -> { price, amount, isBuy }
-  const restingOrdersRef = useRef<Map<string, { price: number; amount: number; isBuy: boolean }>>(new Map());
-
-  // WEBSOCKET BLOCKCHAIN EVENT LISTENERS
-  // Uses watchContractEvent for real-time event subscriptions
+  // Market address for polling
   const marketAddress = (market as any)?.market_address as Address | undefined;
-  
+
+  // ============================================================================
+  // SIMPLE POLLING: Fetch order book every 2 seconds for reliable real-time updates
+  // This is the most robust approach - works on any chain, no WebSocket dependencies
+  // ============================================================================
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastPollTimeRef = useRef<number>(0);
+  const pollCountRef = useRef<number>(0);
+
   useEffect(() => {
-    if (!marketAddress || !symbol) return;
-    if (!CHAIN_CONFIG.wsRpcUrl) {
-      console.warn('[BlockchainEvents] No WebSocket RPC URL configured, event listeners disabled');
+    // Start polling even before marketAddress is available
+    // The API can resolve the market by symbol
+    if (!symbol) {
+      console.log('[OrderBookPoll] No symbol, skipping');
       return;
     }
-    
-    const ORDER_PLACED_ABI = {
-      type: 'event',
-      name: 'OrderPlaced',
-      inputs: [
-        { indexed: true, name: 'orderId', type: 'uint256' },
-        { indexed: true, name: 'trader', type: 'address' },
-        { indexed: false, name: 'price', type: 'uint256' },
-        { indexed: false, name: 'amount', type: 'uint256' },
-        { indexed: false, name: 'isBuy', type: 'bool' },
-        { indexed: false, name: 'isMarginOrder', type: 'bool' },
-      ],
-    } as const;
-    
-    const ORDER_RESTED_ABI = {
-      type: 'event',
-      name: 'OrderRested',
-      inputs: [
-        { indexed: true, name: 'orderId', type: 'uint256' },
-        { indexed: true, name: 'trader', type: 'address' },
-        { indexed: false, name: 'price', type: 'uint256' },
-        { indexed: false, name: 'amount', type: 'uint256' },
-        { indexed: false, name: 'isBuy', type: 'bool' },
-        { indexed: false, name: 'isMarginOrder', type: 'bool' },
-      ],
-    } as const;
-    
-    const TRADE_EXECUTED_ABI = {
-      type: 'event',
-      name: 'TradeExecutionCompleted',
-      inputs: [
-        { indexed: true, name: 'buyer', type: 'address' },
-        { indexed: true, name: 'seller', type: 'address' },
-        { indexed: false, name: 'price', type: 'uint256' },
-        { indexed: false, name: 'amount', type: 'uint256' },
-      ],
-    } as const;
-    
-    const ORDER_CANCELLED_ABI = {
-      type: 'event',
-      name: 'OrderCancelled',
-      inputs: [
-        { indexed: true, name: 'orderId', type: 'uint256' },
-        { indexed: true, name: 'trader', type: 'address' },
-        { indexed: false, name: 'price', type: 'uint256' },
-        { indexed: false, name: 'amount', type: 'uint256' },
-        { indexed: false, name: 'isBuy', type: 'bool' },
-      ],
-    } as const;
-    
-    const client = createPublicClient({
-      transport: webSocket(CHAIN_CONFIG.wsRpcUrl),
-    });
-    
-    const myAddress = userAddress?.toLowerCase() || '';
-    
-    console.log(`[BlockchainEvents] Starting WebSocket listeners for ${symbol} at ${marketAddress}`);
-    
-    // Watch for OrderPlaced events (dispatched for mark price refresh)
-    const unwatchOrderPlaced = client.watchContractEvent({
-      address: marketAddress,
-      abi: [ORDER_PLACED_ABI],
-      eventName: 'OrderPlaced',
-      onLogs: (logs) => {
-        for (const log of logs) {
-          const args = log.args as any;
-          const price = args.price ? Number(args.price) / 1e6 : 0;
-          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
-          const isBuy = args.isBuy;
-          const trader = args.trader ? String(args.trader).toLowerCase() : '';
-          const orderId = args.orderId ? String(args.orderId) : '?';
-          const rawPrice = args.price ? String(args.price) : '0';
-          const rawAmount = args.amount ? String(args.amount) : '0';
-          
-          console.log(`[BlockchainEvents] OrderPlaced received`, {
-            orderId,
-            price: price.toFixed(4),
-            amount: amount.toFixed(6),
-            isBuy,
-            trader: trader.slice(0, 10) + '...',
-          });
-          
-          // Dispatch window event for mark price refresh (debounced in listeners)
-          try {
-            console.log(`[LiveUpdate][dispatch] OrderPlaced symbol=${symbol} price=${price.toFixed(4)}`);
-            window.dispatchEvent(new CustomEvent('ordersUpdated', {
-              detail: {
-                symbol,
-                eventType: 'OrderPlaced',
-                orderId,
-                price: rawPrice,
-                amount: rawAmount,
-                isBuy,
-                trader,
-                timestamp: Date.now(),
-                source: 'websocket',
-              }
-            }));
-          } catch (err) {
-            console.error('[LiveUpdate][dispatch] OrderPlaced error:', err);
-          }
-        }
-      },
-      onError: (error) => {
-        console.error('[BlockchainEvents] OrderPlaced watcher error:', error);
-      },
-    });
-    
-    // Watch for OrderRested events (limit orders resting on the book)
-    const unwatchOrderRested = client.watchContractEvent({
-      address: marketAddress,
-      abi: [ORDER_RESTED_ABI],
-      eventName: 'OrderRested',
-      onLogs: (logs) => {
-        for (const log of logs) {
-          const args = log.args as any;
-          const orderId = args.orderId ? String(args.orderId) : '';
-          const price = args.price ? Number(args.price) / 1e6 : 0;
-          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
-          const isBuy = args.isBuy;
-          const trader = args.trader ? String(args.trader).toLowerCase() : '';
-          const rawPrice = args.price ? String(args.price) : '0';
-          const rawAmount = args.amount ? String(args.amount) : '0';
-          
-          console.log(`[BlockchainEvents] OrderRested received`, {
-            orderId,
-            price: price.toFixed(4),
-            amount: amount.toFixed(6),
-            isBuy,
-            trader: trader.slice(0, 10) + '...',
-          });
-          
-          // Track this resting order so we can remove it if cancelled
-          if (orderId) {
-            restingOrdersRef.current.set(orderId, { price, amount, isBuy });
-          }
-          
-          // Dispatch window event for mark price refresh (debounced in listeners)
-          try {
-            console.log(`[LiveUpdate][dispatch] OrderRested symbol=${symbol} price=${price.toFixed(4)}`);
-            window.dispatchEvent(new CustomEvent('ordersUpdated', {
-              detail: {
-                symbol,
-                eventType: 'OrderRested',
-                orderId,
-                price: rawPrice,
-                amount: rawAmount,
-                isBuy,
-                trader,
-                timestamp: Date.now(),
-                source: 'websocket',
-              }
-            }));
-          } catch (err) {
-            console.error('[LiveUpdate][dispatch] OrderRested error:', err);
-          }
-          
-          // Skip own orders for liquidity updates - already handled by optimistic updates
-          if (myAddress && trader === myAddress) {
-            console.log(`[BlockchainEvents] Skipping own OrderRested liquidity update (but tracked for cancellation)`);
-            continue;
-          }
-          
-          const side = isBuy ? 'buy' : 'sell';
-          console.log(`[BlockchainEvents] Adding liquidity: ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
-          lightweightStore.addLiquidity(symbol, side, price, amount);
-        }
-      },
-      onError: (error) => {
-        console.error('[BlockchainEvents] OrderRested watcher error:', error);
-      },
-    });
-    
-    // Watch for OrderCancelled events (orders being removed from book)
-    const unwatchOrderCancelled = client.watchContractEvent({
-      address: marketAddress,
-      abi: [ORDER_CANCELLED_ABI],
-      eventName: 'OrderCancelled',
-      onLogs: (logs) => {
-        for (const log of logs) {
-          const args = log.args as any;
-          const orderId = args.orderId ? String(args.orderId) : '';
-          const trader = args.trader ? String(args.trader).toLowerCase() : '';
-          const price = args.price ? Number(args.price) / 1e6 : 0;
-          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
-          const isBuy = args.isBuy;
-          
-          console.log(`[BlockchainEvents] OrderCancelled received`, {
-            orderId,
-            price: price.toFixed(4),
-            amount: amount.toFixed(6),
-            isBuy,
-            trader: trader.slice(0, 10) + '...',
-          });
-          
-          // Remove liquidity directly using event data (no need for tracking map)
-          if (price > 0 && amount > 0) {
-            const side = isBuy ? 'buy' : 'sell';
-            console.log(`[BlockchainEvents] Removing cancelled order liquidity: ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
-            lightweightStore.removeLiquidity(symbol, side, price, amount);
-          }
-          
-          // Also clean up from tracking map if present
-          restingOrdersRef.current.delete(orderId);
-        }
-      },
-      onError: (error) => {
-        console.error('[BlockchainEvents] OrderCancelled watcher error:', error);
-      },
-    });
-    
-    // Watch for TradeExecutionCompleted events (trades removing liquidity)
-    const unwatchTradeExecuted = client.watchContractEvent({
-      address: marketAddress,
-      abi: [TRADE_EXECUTED_ABI],
-      eventName: 'TradeExecutionCompleted',
-      onLogs: (logs) => {
-        for (const log of logs) {
-          const args = log.args as any;
-          const price = args.price ? Number(args.price) / 1e6 : 0;
-          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
-          const buyer = args.buyer ? String(args.buyer).toLowerCase() : '';
-          const seller = args.seller ? String(args.seller).toLowerCase() : '';
-          
-          const isInvolved = myAddress && (buyer === myAddress || seller === myAddress);
-          const isTaker = isInvolved && isRecentTakerTrade(price);
-          
-          console.log(`[LiveUpdate][websocket] TradeExecutionCompleted received for ${symbol}`, {
-            price: price.toFixed(4),
-            amount: amount.toFixed(6),
-            buyer: buyer.slice(0, 10) + '...',
-            seller: seller.slice(0, 10) + '...',
-            isInvolved,
-            isTaker,
-          });
-          
-          // Only skip if we're the TAKER (initiated the trade from TradingPanel)
-          // If we're the MAKER (our resting order got filled), we need the UI update
-          if (isTaker) {
-            console.log(`[BlockchainEvents] Skipping own TAKER trade (already updated optimistically)`);
-            continue;
-          }
-          
-          // Remove liquidity from both sides (we don't know which was maker)
-          console.log(`[BlockchainEvents] Removing liquidity (trade): ${amount.toFixed(6)} @ ${price.toFixed(4)} from both sides`);
-          lightweightStore.removeLiquidity(symbol, 'buy', price, amount);
-          lightweightStore.removeLiquidity(symbol, 'sell', price, amount);
-          
-          // Dispatch window event so other components (TokenHeader, useAllTrades) can react
-          try {
-            const rawPrice = args.price ? String(args.price) : '0';
-            const rawAmount = args.amount ? String(args.amount) : '0';
-            console.log(`[LiveUpdate][dispatch] symbol=${symbol} price=${price.toFixed(4)} rawPrice=${rawPrice}`);
-            window.dispatchEvent(new CustomEvent('ordersUpdated', {
-              detail: {
-                symbol,
-                eventType: 'TradeExecutionCompleted',
-                price: rawPrice,
-                amount: rawAmount,
-                buyer,
-                seller,
-                timestamp: Date.now(),
-                source: 'websocket',
-              }
-            }));
-          } catch (err) {
-            console.error('[LiveUpdate][dispatch] Error:', err);
-          }
-        }
-      },
-      onError: (error) => {
-        console.error('[BlockchainEvents] TradeExecutionCompleted watcher error:', error);
-      },
-    });
-    
-    return () => {
-      console.log(`[BlockchainEvents] Stopping WebSocket listeners for ${symbol}`);
-      unwatchOrderPlaced();
-      unwatchOrderRested();
-      unwatchOrderCancelled();
-      unwatchTradeExecuted();
-    };
-  }, [marketAddress, symbol, userAddress, lightweightStore, isRecentTakerTrade]);
 
-  // Listen for DOM events from user's own order cancellations (from MarketActivityTabs)
-  // This provides immediate optimistic updates when the user cancels their own orders
-  useEffect(() => {
-    if (!symbol) return;
-    
-    const handleOrdersUpdated = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail || detail.symbol?.toUpperCase() !== symbol.toUpperCase()) return;
-      
-      if (detail.eventType === 'OrderCancelled') {
-        const price = detail.price ? Number(detail.price) / 1e6 : 0;
-        const amount = detail.amount ? Number(detail.amount) / 1e18 : 0;
-        const isBuy = detail.isBuy;
-        const orderId = detail.orderId;
+    const POLL_INTERVAL = 2000; // 2 seconds for snappy updates
+
+    const refreshOrderBook = async () => {
+      const now = Date.now();
+      pollCountRef.current += 1;
+      const pollNum = pollCountRef.current;
+
+      try {
+        const url = `/api/orderbook/live?symbol=${encodeURIComponent(symbol)}&levels=25`;
+        const response = await fetch(url);
         
-        if (price > 0 && amount > 0) {
-          const side = isBuy ? 'buy' : 'sell';
-          console.log(`[BlockchainEvents] Own order cancelled (DOM event): ${side.toUpperCase()} ${amount.toFixed(6)} @ ${price.toFixed(4)}`);
-          lightweightStore.removeLiquidity(symbol, side, price, amount);
-          
-          // Also remove from our tracking map if present
-          if (orderId) {
-            restingOrdersRef.current.delete(String(orderId));
-          }
+        if (!response.ok) {
+          console.warn(`[OrderBookPoll] #${pollNum} API error: ${response.status}`);
+          return;
         }
+
+        const json = await response.json();
+        // API returns { ok: true, data: { depth: {...} } }
+        const depth = json?.data?.depth;
+        
+        if (!depth) {
+          // Only log occasionally to avoid spam
+          if (pollNum % 10 === 1) {
+            console.warn(`[OrderBookPoll] #${pollNum} No depth in response`, { ok: json?.ok, hasData: !!json?.data });
+          }
+          return;
+        }
+
+        const bidCount = depth.bidPrices?.length || 0;
+        const askCount = depth.askPrices?.length || 0;
+
+        if (bidCount === 0 && askCount === 0) {
+          return;
+        }
+
+        // Update the zustand store - this triggers React re-renders
+        lightweightStore.initializeOrderBook(symbol, depth, 'api');
+        lastPollTimeRef.current = now;
+
+        // Log every 5th poll to avoid spam
+        if (pollNum % 5 === 1) {
+          console.log(`[OrderBookPoll] #${pollNum} ${symbol}: ${bidCount} bids, ${askCount} asks`);
+        }
+      } catch (err) {
+        console.error(`[OrderBookPoll] #${pollNum} Error:`, err);
       }
     };
+
+    console.log(`[OrderBookPoll] === STARTING for ${symbol} (every ${POLL_INTERVAL}ms) ===`);
     
+    // Initial fetch immediately
+    refreshOrderBook();
+
+    // Set up interval
+    pollIntervalRef.current = setInterval(refreshOrderBook, POLL_INTERVAL);
+
+    // Listen for ordersUpdated events to trigger immediate refresh
+    const handleOrdersUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const eventSymbol = String(detail?.symbol || '').toUpperCase();
+      
+      // Only respond to events for this market
+      if (eventSymbol && eventSymbol !== symbol.toUpperCase()) return;
+
+      console.log(`[OrderBookPoll] ordersUpdated event received, refreshing...`, detail?.eventType);
+      
+      // Immediate refresh (with small delay for chain confirmation)
+      setTimeout(refreshOrderBook, 300);
+    };
+
     window.addEventListener('ordersUpdated', handleOrdersUpdated);
-    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+
+    return () => {
+      console.log(`[OrderBookPoll] === STOPPING for ${symbol} (poll count: ${pollCountRef.current}) ===`);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+    };
   }, [symbol, lightweightStore]);
 
-  // FALLBACK POLLING: For markets without OrderRested upgrade
-  // Periodically fetch fresh order book data from API and re-initialize the lightweight store
-  // This ensures the UI stays in sync even without real-time events
-  const lastFallbackRefreshRef = useRef<number>(0);
-  const hasReceivedEventsRef = useRef<boolean>(false);
-  
+  // ============================================================================
+  // PUSHER SUBSCRIPTION: Listen for events from other users via Pusher
+  // This provides immediate updates when another user places/cancels an order
+  // ============================================================================
+  const pusher = usePusher();
+
   useEffect(() => {
-    if (!symbol || !marketAddress) return;
+    if (!symbol || !pusher) return;
+
+    const channel = `market-${symbol}`;
     
-    const FALLBACK_INTERVAL = 15000; // 15 seconds
-    const MIN_REFRESH_INTERVAL = 10000; // Don't refresh more often than every 10 seconds
-    
-    const refreshFromApi = async () => {
-      const now = Date.now();
-      
-      // Skip if we refreshed recently
-      if (now - lastFallbackRefreshRef.current < MIN_REFRESH_INTERVAL) return;
-      
-      try {
-        const response = await fetch(`/api/orderbook/live?symbol=${encodeURIComponent(symbol)}&levels=25`);
-        if (!response.ok) return;
+    const handlers = {
+      'order-update': (data: any) => {
+        const eventType = String(data?.eventType || '');
+        console.log(`[Pusher] order-update received for ${symbol}:`, eventType);
         
-        const data = await response.json();
-        if (!data?.depth) return;
+        // Dispatch ordersUpdated event so polling and other listeners can react
+        window.dispatchEvent(new CustomEvent('ordersUpdated', {
+          detail: {
+            symbol,
+            source: 'pusher',
+            eventType: eventType || 'order-update',
+            orderId: data?.orderId,
+            price: data?.price,
+            amount: data?.amount || data?.filledAmount,
+            isBuy: data?.isBuy,
+            trader: data?.trader,
+            timestamp: Date.now(),
+          }
+        }));
+      },
+      'trading-event': (data: any) => {
+        console.log(`[Pusher] trading-event received for ${symbol}`);
         
-        const depth = data.depth;
-        if (!depth.bidPrices?.length && !depth.askPrices?.length) return;
-        
-        // Re-initialize the lightweight order book with fresh data
-        lightweightStore.initializeOrderBook(symbol, depth, 'api');
-        lastFallbackRefreshRef.current = now;
-      } catch (err) {
-        // Silently fail - this is just a fallback
-      }
+        // Dispatch ordersUpdated for trades too
+        window.dispatchEvent(new CustomEvent('ordersUpdated', {
+          detail: {
+            symbol,
+            source: 'pusher',
+            eventType: 'TradeExecutionCompleted',
+            price: data?.price,
+            amount: data?.amount,
+            buyer: data?.buyer,
+            seller: data?.seller,
+            timestamp: Date.now(),
+          }
+        }));
+      },
     };
-    
-    // Start fallback polling after a short delay to allow event-based updates to work first
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-    
-    const startDelay = setTimeout(() => {
-      refreshFromApi();
-      intervalId = setInterval(refreshFromApi, FALLBACK_INTERVAL);
-    }, 2000);
-    
+
+    console.log(`[Pusher] Subscribing to channel: ${channel}`);
+    const unsub = pusher.subscribeToChannel(channel, handlers);
+
     return () => {
-      clearTimeout(startDelay);
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      console.log(`[Pusher] Unsubscribing from channel: ${channel}`);
+      try { unsub?.(); } catch {}
     };
-  }, [symbol, marketAddress, lightweightStore]);
+  }, [symbol, pusher]);
   
   // Periodically clean up stale pending trades (every 30 seconds)
   useEffect(() => {

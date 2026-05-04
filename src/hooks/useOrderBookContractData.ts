@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Address } from 'viem';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig';
 import { publicClient as fallbackPublicClient } from '@/lib/viemClient';
-import { useMarketEventHub } from '@/services/realtime/marketEventHub';
+// Removed useMarketEventHub - using simpler direct DOM event listener instead
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
 
@@ -348,28 +348,41 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
     }
   };
 
-  // Centralized real-time event bridge (OrderPlaced + TradeExecutionCompleted).
-  // This replaces the previous mix of in-hook WS watchers + Pusher listeners.
-  const hubSubscriber = useMemo(() => {
-    return {
-      dispatchDomEvents: true,
-      onOrdersChanged: () => {
+  // SIMPLE EVENT LISTENER: When any order event happens, refresh the order book from the contract.
+  // This is much simpler than the previous complex hub/pusher/optimistic sync system.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !symbol) return;
+    
+    const normalizedSymbol = symbol.toUpperCase();
+    
+    const handleOrdersUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail) return;
+      
+      // Only refresh for this market's events
+      const eventSymbol = String(detail?.symbol || '').toUpperCase();
+      if (eventSymbol && eventSymbol !== normalizedSymbol) return;
+      
+      const eventType = String(detail?.eventType || '').trim();
+      
+      // Refresh order book on any relevant event
+      if (eventType === 'OrderRested' || eventType === 'OrderPlaced' || eventType === 'OrderCancelled' || 
+          eventType === 'TradeExecutionCompleted' || eventType === 'order-placed' || eventType === 'order-rested') {
         try {
           // eslint-disable-next-line no-console
-          console.log(`${UI_UPDATE_PREFIX} orderbookLive:onOrdersChanged -> fetchNow`, { symbol: String(symbol || '').toUpperCase() });
+          console.log(`${UI_UPDATE_PREFIX} orderbookLive:ordersUpdated -> fetchNow`, { 
+            symbol: normalizedSymbol, 
+            eventType,
+            source: detail?.source || 'unknown'
+          });
         } catch {}
         fetchNowRef.current?.();
-      },
-      onTradesChanged: () => {
-        try {
-          // eslint-disable-next-line no-console
-          console.log(`${UI_UPDATE_PREFIX} orderbookLive:onTradesChanged -> fetchNow`, { symbol: String(symbol || '').toUpperCase() });
-        } catch {}
-        fetchNowRef.current?.();
-      },
+      }
     };
-  }, []);
-  useMarketEventHub(symbol, watchAddress, hubSubscriber);
+    
+    window.addEventListener('ordersUpdated', handleOrdersUpdated);
+    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+  }, [symbol]);
 
   useEffect(() => {
     let cancelled = false;

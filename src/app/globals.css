@@ -52,6 +52,45 @@
   animation: pending-order-shimmer 2s ease-in-out infinite;
 }
 
+/* Pending order row collapse animation (MarketActivityTabs processing → confirmed) */
+@keyframes pending-order-collapse {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+}
+@keyframes pending-order-cell-collapse {
+  0%, 50% {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    line-height: normal;
+  }
+  100% {
+    padding-top: 0;
+    padding-bottom: 0;
+    line-height: 0;
+    font-size: 0;
+    border-color: transparent;
+  }
+}
+.pending-order-collapse {
+  animation: pending-order-collapse 0.4s ease-out forwards;
+  pointer-events: none;
+  overflow: hidden;
+}
+.pending-order-collapse > td {
+  animation: pending-order-cell-collapse 0.4s ease-out forwards;
+  overflow: hidden;
+}
+
 /* Open order row slide-out to the right (MarketActivityTabs cancel) */
 @keyframes order-row-slide-out {
   from {

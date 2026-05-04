@@ -1714,6 +1714,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     height="100%"
                     defaultView="transactions"
                     hideViewToggle
+                    useLightweightState
                   />
                 }
               />

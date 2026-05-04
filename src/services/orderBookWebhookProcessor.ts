@@ -16,6 +16,11 @@ export const HYPERLIQUID_EVENT_TOPICS = {
   ORDER_CANCELLED: '0xdc408a4b23cfe0edfa69e1ccca52c3f9e60bc441b3b25c09ec6defb38896a4f3',
   ORDER_CANCELLED_ACTUAL: '0xb2705df32ac67fc3101f496cd7036bf59074a603544d97d73650b6f09744986a', // REAL hash from deployed contract
   
+  // 🟢 CRITICAL - OrderRested is the DEFINITIVE event for order book state
+  // Emitted ONLY when a limit order actually rests on the book (not for market orders or fully-crossed limits)
+  // OrderRested(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)
+  ORDER_RESTED: '0x84181bc7dd71479d726c8f6aa524a7bd28f39b4b76d1214d1193f5332b2aa32b',
+  
   // Partial fill events (for incremental order fill tracking)
   ORDER_PARTIALLY_FILLED: '0xff5d5b1b81d52f6ee4735ef3e855e92d966085830dc91daad5efcff6defc5531',
   ORDER_FULLY_FILLED: '0xd1ecaef071efe2a4f447a53abbf877f27caa6c56010b289f8a96b832eb5c40db',
@@ -65,7 +70,7 @@ export interface ProcessedOrderEvent {
   txHash: string;
   blockNumber: number;
   logIndex: number;
-  eventType: 'placed' | 'cancelled' | 'executed' | 'added' | 'matched' | 'partial_fill';
+  eventType: 'placed' | 'cancelled' | 'executed' | 'added' | 'matched' | 'partial_fill' | 'rested';
   contractAddress: string;
   filledAmount?: string;
   remainingAmount?: string;
@@ -448,6 +453,49 @@ export class OrderBookWebhookProcessor {
           }
           break;
 
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_RESTED:
+          // OrderRested(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)
+          // CRITICAL: This is the DEFINITIVE event for order book state updates.
+          // Emitted ONLY when a limit order actually rests on the book.
+          // Market orders and fully-crossed limit orders do NOT emit this event.
+          console.log(`🔍 [DYNAMIC] Processing OrderRested event (DEFINITIVE for order book state)`);
+          if (topics.length >= 3) {
+            const orderId = topics[1]; // uint256 orderId (indexed)
+            const trader = ethers.getAddress('0x' + topics[2].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'bool', 'bool'], data);
+            
+            const price = decodedData[0];
+            const amount = decodedData[1];
+            const isBuy = decodedData[2];
+            const isMarginOrder = decodedData[3];
+
+            console.log(`📊 [ORDER_RESTED] Order resting on book:`, {
+              orderId: orderId.toString(),
+              trader,
+              price: price.toString(),
+              amount: amount.toString(),
+              isBuy,
+              isMarginOrder,
+              metricId: metricId || 'UNKNOWN'
+            });
+
+            return {
+              orderId: orderId,
+              trader: trader,
+              metricId: metricId || 'UNKNOWN',
+              orderType: 1, // LIMIT - only limit orders can rest on the book
+              side: isBuy ? 0 : 1, // 0 = BUY, 1 = SELL
+              quantity: amount.toString(),
+              price: price.toString(),
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'rested', // New event type for rested orders
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
         case HYPERLIQUID_EVENT_TOPICS.ORDER_FILLED:
           // OrderFilled(bytes32 indexed orderId, address indexed taker, address indexed maker, uint256 size, uint256 price, uint256 timestamp)
           console.log(`🔍 [DYNAMIC] Processing OrderFilled event`);
@@ -726,6 +774,16 @@ export class OrderBookWebhookProcessor {
         case 'added':
           console.log(`💾 [DEBUG] Saving added order (market order) to database...`);
           return await this.saveNewOrder(orderEvent, marketId);
+        
+        case 'rested':
+          // OrderRested is the DEFINITIVE event for order book state.
+          // This means a limit order has actually rested on the book.
+          // We don't need to save it separately since OrderPlaced already created the record,
+          // but we DO need to broadcast it for real-time order book updates.
+          console.log(`💾 [DEBUG] Processing OrderRested event (definitive for order book state)...`);
+          // Broadcast OrderRested event for real-time order book updates
+          await this.broadcastOrderRested(orderEvent, marketId);
+          return true;
         
         case 'cancelled':
           console.log(`💾 [DEBUG] Recording order cancellation event...`);
@@ -1829,6 +1887,58 @@ export class OrderBookWebhookProcessor {
         return 'close';
       default:
         return 'open'; // Default fallback
+    }
+  }
+
+  /**
+   * 🚀 Real-time broadcast OrderRested event to connected clients.
+   * This is the DEFINITIVE event for order book state - it means a limit order
+   * has actually rested on the book and should be added to the UI order book.
+   */
+  private async broadcastOrderRested(orderEvent: ProcessedOrderEvent, marketId: string): Promise<void> {
+    try {
+      console.log(`📡 [ORDER_RESTED] Broadcasting OrderRested for ${orderEvent.orderId}`);
+      
+      const PRICE_PRECISION = 1000000; // 1e6 decimals
+      const price = parseFloat(orderEvent.price) / PRICE_PRECISION;
+      const amount = parseFloat(orderEvent.quantity) / PRICE_PRECISION;
+      
+      // Prepare broadcast data with eventType: 'OrderRested' for UI sync
+      const broadcastData = {
+        eventType: 'OrderRested', // Critical: UI sync hook only adds liquidity on this event type
+        orderId: orderEvent.orderId,
+        trader: orderEvent.trader,
+        metricId: marketId,
+        price: price,
+        amount: amount,
+        isBuy: orderEvent.side === 0,
+        isMarginOrder: false, // Could be parsed from event if needed
+        timestamp: Date.now(),
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber
+      };
+
+      console.log(`📡 [ORDER_RESTED] Broadcast data:`, broadcastData);
+
+      // Broadcast to market-specific channel
+      if (marketId && marketId !== 'UNKNOWN') {
+        await this.pusherService['pusher'].trigger(`market-${marketId}`, 'order-update', broadcastData);
+        console.log(`📡 [ORDER_RESTED] Sent to market-${marketId} channel`);
+      }
+
+      // Broadcast to recent-transactions channel
+      await this.pusherService['pusher'].trigger('recent-transactions', 'new-order', broadcastData);
+      console.log(`📡 [ORDER_RESTED] Sent to recent-transactions channel`);
+
+      // Broadcast to user-specific channel (using order-update so existing handlers pick it up)
+      await this.pusherService['pusher'].trigger(`user-${orderEvent.trader}`, 'order-update', broadcastData);
+      console.log(`📡 [ORDER_RESTED] Sent to user-${orderEvent.trader} channel`);
+
+      console.log(`✅ [ORDER_RESTED] Successfully broadcasted OrderRested for ${orderEvent.orderId}`);
+
+    } catch (error) {
+      console.error(`❌ [ORDER_RESTED] Failed to broadcast OrderRested:`, error);
+      // Don't throw - this is a non-critical enhancement
     }
   }
 

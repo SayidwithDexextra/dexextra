@@ -196,7 +196,7 @@ const processEnv = {
   ARBITRUM_RPC_URL: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || process.env.ARBITRUM_RPC_URL,
   RPC_URL_BACKUP: process.env.RPC_URL_BACKUP,
   RPC_URLS: process.env.RPC_URLS,
-  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
+  WS_RPC_URL: process.env.NEXT_PUBLIC_WS_RPC_URL || process.env.WS_RPC_URL || 'wss://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
   WS_RPC_URL_BACKUP: process.env.WS_RPC_URL_BACKUP,
   CHAIN_ID: process.env.CHAIN_ID || '999',
   DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'hyperliquid',

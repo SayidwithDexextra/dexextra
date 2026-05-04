@@ -6,7 +6,7 @@ import { createWsClient } from '@/lib/viemClient';
 import { usePusher } from '@/lib/pusher-client';
 import { CHAIN_CONFIG } from '@/lib/contractConfig';
 
-type MarketEventType = 'order-placed' | 'trade-executed' | 'settlement-update';
+type MarketEventType = 'order-placed' | 'order-rested' | 'order-cancelled' | 'trade-executed' | 'settlement-update';
 type MarketEventSource = 'onchain' | 'pusher';
 
 export type MarketEvent = {
@@ -973,7 +973,7 @@ export function useMarketEventHub(symbol: string, address: Address | null | unde
       const channel = `market-${symbol}`;
       const handlers = {
         'order-update': (data: any) => {
-          // Backend WS watcher sends { eventType: 'OrderPlaced' | 'OrderFilled' | 'OrderPartiallyFilled' | 'OrderCancelled', ... }
+          // Backend WS watcher sends { eventType: 'OrderPlaced' | 'OrderRested' | 'OrderFilled' | 'OrderPartiallyFilled' | 'OrderCancelled', ... }
           const eventType = String((data as any)?.eventType || '').trim();
           if (eventType === 'OrderFilled') {
             // Filled implies orderbook changed + position changed
@@ -997,6 +997,19 @@ export function useMarketEventHub(symbol: string, address: Address | null | unde
                 timestamp: nowMs()
               }
             }));
+            return;
+          }
+          if (eventType === 'OrderRested') {
+            // OrderRested is the DEFINITIVE event for order book state.
+            // This means a limit order has actually rested on the book.
+            // Emit as 'order-rested' so the DOM event handler dispatches with eventType: 'OrderRested'
+            // which is what useLightweightOrderBookSync expects for adding liquidity.
+            emit(u, { type: 'order-rested', source: 'pusher', symbol, address, timestamp: nowMs(), payload: data });
+            return;
+          }
+          if (eventType === 'OrderCancelled') {
+            // Order cancelled - emit as order-cancelled for proper handling
+            emit(u, { type: 'order-cancelled', source: 'pusher', symbol, address, timestamp: nowMs(), payload: data });
             return;
           }
           // Default: treat as order lifecycle change

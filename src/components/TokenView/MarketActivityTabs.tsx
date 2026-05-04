@@ -166,6 +166,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     timestamp: number;
   }>>([]);
 
+  // Track pending orders that are collapsing (playing exit animation)
+  const [collapsingPendingIds, setCollapsingPendingIds] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -188,8 +191,22 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const detail = (e as CustomEvent)?.detail;
       if (detail?.status === 'error') {
         setPendingOrders([]);
+        setCollapsingPendingIds(new Set());
       } else {
-        setTimeout(() => setPendingOrders([]), 1500);
+        // After 1.5s, start the collapse animation
+        setTimeout(() => {
+          setPendingOrders(current => {
+            if (current.length === 0) return current;
+            // Mark all current pending orders as collapsing
+            setCollapsingPendingIds(new Set(current.map(po => po.id)));
+            return current;
+          });
+          // After animation completes (400ms), actually remove the orders
+          setTimeout(() => {
+            setPendingOrders([]);
+            setCollapsingPendingIds(new Set());
+          }, 400);
+        }, 1500);
       }
     };
 
@@ -205,7 +222,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   // Fallback cleanup: remove stale pending orders after 60s
   useEffect(() => {
     if (pendingOrders.length === 0) return;
-    const timer = setTimeout(() => setPendingOrders([]), 60_000);
+    const timer = setTimeout(() => {
+      setPendingOrders([]);
+      setCollapsingPendingIds(new Set());
+    }, 60_000);
     return () => clearTimeout(timer);
   }, [pendingOrders.length]);
 
@@ -2980,10 +3000,12 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                       </tr>
                     </thead>
                     <tbody>
-                      {pendingOrders.map((po) => (
+                      {pendingOrders.map((po) => {
+                        const isCollapsing = collapsingPendingIds.has(po.id);
+                        return (
                         <tr
                           key={po.id}
-                          className="pending-order-shimmer border-b border-t-stroke-sub"
+                          className={`border-b border-t-stroke-sub ${isCollapsing ? 'pending-order-collapse' : 'pending-order-shimmer'}`}
                         >
                           <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
                             <div className="flex items-center gap-1 min-w-0">
@@ -3026,7 +3048,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                             <span className="text-[9px] text-t-fg-label opacity-50">…</span>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {displayedOpenOrders.map((order, index) => {
                         const uiKey = getOrderUiKey(order);
                         const removalKey = getOrderCompositeKey(order.symbol, order.id);
