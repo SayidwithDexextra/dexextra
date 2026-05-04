@@ -709,11 +709,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           <div className="flex items-center gap-1.5 min-w-0 flex-1">
                             {market.icon_image_url ? (
                               <div 
-                                className="w-6 h-6 rounded bg-cover bg-center bg-no-repeat flex-shrink-0"
+                                className="w-9 h-9 rounded-lg bg-cover bg-center bg-no-repeat flex-shrink-0 ring-1 ring-t-stroke/50 shadow-sm"
                                 style={{ backgroundImage: `url(${market.icon_image_url})` }}
                               />
                             ) : (
-                              <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 flex-shrink-0 ${
+                              <div className={`flex items-center justify-center rounded-lg text-[11px] font-semibold w-9 h-9 flex-shrink-0 shadow-sm ${
                                 deploymentStatus === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
                               }`}>
                                 {market.symbol.charAt(0).toUpperCase()}
@@ -866,11 +866,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                                   <div className={`w-1 h-1 rounded-full flex-shrink-0 ${dotColor}`} />
                                   {hist.icon_image_url ? (
                                     <div
-                                      className="w-5 h-5 rounded bg-cover bg-center bg-no-repeat flex-shrink-0 opacity-60"
+                                      className="w-7 h-7 rounded-md bg-cover bg-center bg-no-repeat flex-shrink-0 opacity-70 ring-1 ring-t-stroke/30"
                                       style={{ backgroundImage: `url(${hist.icon_image_url})` }}
                                     />
                                   ) : (
-                                    <div className="flex items-center justify-center rounded text-[8px] font-medium w-5 h-5 flex-shrink-0 bg-t-skeleton text-t-fg-muted">
+                                    <div className="flex items-center justify-center rounded-md text-[9px] font-medium w-7 h-7 flex-shrink-0 bg-t-skeleton text-t-fg-muted">
                                       {hist.symbol.charAt(0).toUpperCase()}
                                     </div>
                                   )}
