@@ -82,11 +82,6 @@ const CloseIcon = () => (
 )
 
 export default function Header() {
-  // Debug: render counter to track re-renders
-  const renderCountRef = useRef(0)
-  renderCountRef.current++
-  console.log('[OPT-DEBUG] 🔄 Header render #' + renderCountRef.current)
-  
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
@@ -114,32 +109,11 @@ export default function Header() {
   // Global cached snapshot: used by both Header + PortfolioSidebar.
   const { snapshot, isReady: snapshotReady } = usePortfolioSnapshot()
   
-  // Track the last DISPLAYED cash value to prevent redundant animations
-  const lastDisplayedCashRef = useRef<string | null>(null)
-  // Timer for delayed optimistic animation
-  const optimisticAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  
-  // Debug: log when snapshot changes
-  const lastSnapshotIdRef = useRef<string | null>(null)
-  const snapshotId = snapshot ? `${snapshot.updatedAt}|${snapshot.availableCash}|${snapshot.portfolioValue}|${snapshot.unrealizedPnl}` : null
-  if (snapshotId !== lastSnapshotIdRef.current) {
-    console.log('[OPT-DEBUG] 📸 Snapshot changed', { oldId: lastSnapshotIdRef.current, newId: snapshotId })
-    lastSnapshotIdRef.current = snapshotId
-  }
-  
   // Avoid showing fallback values that can be briefly wrong until the snapshot is ready.
   const hidePortfolioUntilSummaryReady = Boolean(walletData.isConnected && !snapshotReady)
   const showPortfolioSkeleton = Boolean(walletData.isConnected && hidePortfolioUntilSummaryReady)
   const isVaultConnected = !!core.isConnected
   
-  // Optimistic cash "floor" - the minimum value we expect after a trade
-  // If chain data is above this floor, show the floor. If at/below, show chain data and clear floor.
-  // This prevents the "revert" behavior when stale chain data comes in.
-  const optimisticCashFloorRef = useRef<number | null>(null)
-  const optimisticFloorExpiresRef = useRef<number>(0)
-  const [optimisticDisplayTick, setOptimisticDisplayTick] = useState(0) // Triggers re-render for display only
-  
-  // vaultAvailableCollateral does NOT include optimistic delta - keeps animation logic stable
   const vaultAvailableCollateral = (() => {
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     const v = snapshot?.availableCash
@@ -147,14 +121,6 @@ export default function Header() {
     return Number.NaN
   })()
   
-  // Log when snapshot.availableCash changes
-  useEffect(() => {
-    console.log('[OPT-DEBUG] 🏦 Source:', { snapshotCash: snapshot?.availableCash, vaultCash: vaultAvailableCollateral })
-  }, [snapshot?.availableCash, vaultAvailableCollateral])
-  
-  // Ref to track latest vaultAvailableCollateral for use in event handlers (avoids stale closure)
-  const latestCashRef = useRef(vaultAvailableCollateral)
-  latestCashRef.current = vaultAvailableCollateral
   // Portfolio value approximation consistent with TokenHeader broadcasting:
   // totalCollateral (6d) + realizedPnL (24d formatted) + unrealizedPnL (24d formatted)
   // All are already formatted to decimal strings by useCoreVault
@@ -267,99 +233,19 @@ export default function Header() {
         ].join('|')
 
         if (lastSummaryCentsKeyRef.current === centsKey) {
-          console.log('[OPT-DEBUG] ⏭️ coreVaultSummary skipped (same key)', { centsKey })
           return
         }
-        console.log('[OPT-DEBUG] 🔄 coreVaultSummary updating', { oldKey: lastSummaryCentsKeyRef.current, newKey: centsKey })
         lastSummaryCentsKeyRef.current = centsKey
-
         setVaultEvent(d)
-        console.log('[OPT-DEBUG] ✅ setVaultEvent called')
-      } catch {}
-    }
-    const onOrdersUpdated = (e: any) => {
-      try {
-        console.log('[OPT-DEBUG] 🎧 ordersUpdated', e?.detail)
-        // could trigger a lightweight state nudge if needed
       } catch {}
     }
     
-    // Listen for optimistic balance updates (instant feedback from TradingPanel)
-    // Uses a "floor" approach: set the expected minimum value and don't let display go above it
-    const onOptimisticBalanceUpdate = (e: any) => {
-      console.log('[OPT-DEBUG] 🎧 EVENT RECEIVED: optimisticBalanceUpdate', (e as CustomEvent)?.detail)
-      try {
-        if (!walletData.isConnected) {
-          console.log('[OPT-DEBUG] ⚠️ Wallet not connected, skipping')
-          return
-        }
-        const detail = (e as CustomEvent)?.detail
-        if (!detail) {
-          console.log('[OPT-DEBUG] ⚠️ No detail in event, skipping')
-          return
-        }
-        
-        const availableCashDelta = Number(detail?.availableCashDelta || 0)
-        if (!Number.isFinite(availableCashDelta) || availableCashDelta === 0) {
-          console.log('[OPT-DEBUG] ⚠️ Invalid delta:', availableCashDelta)
-          return
-        }
-        
-        // Get current value from ref (avoids stale closure issue)
-        const currentCash = latestCashRef.current
-        if (!Number.isFinite(currentCash)) {
-          console.log('[OPT-DEBUG] ⚠️ Invalid currentCash:', currentCash)
-          return
-        }
-        
-        // Floor = current value + delta (delta is negative for orders)
-        const newFloor = Math.max(0, currentCash + availableCashDelta)
-        
-        console.log('[OPT-DEBUG] 🎧 Setting floor:', { currentCash, delta: availableCashDelta, newFloor })
-        
-        // Set the floor - display won't go above this until chain confirms
-        // Use 90 second expiry to give enough time for chain confirmation + portfolio refresh
-        optimisticCashFloorRef.current = newFloor
-        optimisticFloorExpiresRef.current = Date.now() + 90000 // 90 second expiry
-        
-        // Trigger ONE re-render to show the updated value (without animation)
-        setOptimisticDisplayTick(t => t + 1)
-        
-        // Schedule a delayed animation (2.5 seconds after trade)
-        // This provides visual feedback that the value changed
-        if (optimisticAnimationTimerRef.current) {
-          clearTimeout(optimisticAnimationTimerRef.current)
-        }
-        optimisticAnimationTimerRef.current = setTimeout(() => {
-          console.log('[OPT-DEBUG] 🎬 Triggering delayed optimistic animation')
-          setVaultUpdateSeq(s => s + 1)
-          optimisticAnimationTimerRef.current = null
-        }, 2500)
-        
-        console.log('[OPT-DEBUG] ✅ Floor set, animation scheduled for 2.5s')
-      } catch (err) {
-        console.log('[OPT-DEBUG] ❌ Error in handler:', err)
-      }
-    }
-    
-    console.log('[OPT-DEBUG] 🔗 Subscribing to events (wallet connected:', walletData.isConnected, ')')
     if (typeof window !== 'undefined') {
       window.addEventListener('coreVaultSummary', onSummary)
-      window.addEventListener('ordersUpdated', onOrdersUpdated)
-      window.addEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
-      console.log('[OPT-DEBUG] ✅ Event listeners attached')
     }
     return () => {
-      console.log('[OPT-DEBUG] 🧹 Unsubscribing from events')
       if (typeof window !== 'undefined') {
         window.removeEventListener('coreVaultSummary', onSummary)
-        window.removeEventListener('ordersUpdated', onOrdersUpdated)
-        window.removeEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
-      }
-      // Clear any pending optimistic animation timer
-      if (optimisticAnimationTimerRef.current) {
-        clearTimeout(optimisticAnimationTimerRef.current)
-        optimisticAnimationTimerRef.current = null
       }
     }
   }, [walletData.isConnected])
@@ -402,10 +288,6 @@ export default function Header() {
     if (!Number.isFinite(vaultAvailableCollateral)) return Number.NaN
     return Math.round(vaultAvailableCollateral * 100)
   }, [walletData.isConnected, hidePortfolioUntilSummaryReady, vaultAvailableCollateral])
-  // Log when rounded cash changes (helps debug updates)
-  useEffect(() => {
-    console.log('[OPT-DEBUG] 💰 Cash cents:', roundedCashCents, '= $' + (roundedCashCents / 100).toFixed(2))
-  }, [roundedCashCents])
   
   const cashValueDisplay = useMemo(() => {
     if (!Number.isFinite(roundedCashCents)) return '$—'
@@ -431,7 +313,6 @@ export default function Header() {
     // Reset tracking when wallet disconnects
     if (!walletData.isConnected) {
       lastAnimateCentsKeyRef.current = null
-      lastDisplayedCashRef.current = null
       hasCompletedInitialAnimationRef.current = false
       return
     }
@@ -445,78 +326,25 @@ export default function Header() {
     if (!hasCompletedInitialAnimationRef.current) {
       lastAnimateCentsKeyRef.current = animateCentsKey
       hasCompletedInitialAnimationRef.current = true
-      console.log('[OPT-DEBUG] 🎬 Initial animation', { animateCentsKey })
       setVaultUpdateSeq((s) => s + 1)
       return
     }
 
-    // Subsequent animations: only animate when chain cents values change
-    // BUT skip animation if an optimistic animation timer is pending (we'll use that instead)
-    // OR if the DISPLAYED value hasn't actually changed (floor was already showing the value)
+    // Subsequent animations: only animate when cents values change
     if (lastAnimateCentsKeyRef.current !== animateCentsKey) {
-      // Check if optimistic animation is already scheduled
-      if (optimisticAnimationTimerRef.current !== null) {
-        console.log('[OPT-DEBUG] ⏭️ Animation skipped - optimistic timer pending')
-        lastAnimateCentsKeyRef.current = animateCentsKey
-        return
-      }
-      
-      console.log('[OPT-DEBUG] 🎬 Animation triggered (chain update)', { oldKey: lastAnimateCentsKeyRef.current, newKey: animateCentsKey })
       lastAnimateCentsKeyRef.current = animateCentsKey
       setVaultUpdateSeq((s) => s + 1)
     }
   }, [walletData.isConnected, animateCentsKey])
-
-  // Trace derived values that trigger UI rendering
-  useEffect(() => {
-    console.log('[OPT-DEBUG] 🔁 Derived changed', { vaultCash: vaultAvailableCollateral, portfolio: vaultPortfolioValue, pnl: unrealizedPnLNum })
-  }, [isVaultConnected, vaultAvailableCollateral, totalCollateralNum, realizedPnLNum, unrealizedPnLNum, vaultPortfolioValue, snapshot?.updatedAt])
 
   // Handle different states for display values
   const displayPortfolioValue = !walletData.isConnected 
     ? '$0.00'
     : totalPortfolioValue
   
-  // Apply optimistic floor at final display level
-  // Floor approach: if chain data is above the floor, show the floor. If at/below, show chain data.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _optimisticDisplayDep = optimisticDisplayTick // Force re-evaluation when optimistic update occurs
-  const displayCashValue = useMemo(() => {
-    if (!walletData.isConnected) return '$0.00'
-    if (!Number.isFinite(roundedCashCents)) return '$—'
-    
-    const chainValue = roundedCashCents / 100
-    const floor = optimisticCashFloorRef.current
-    const floorExpires = optimisticFloorExpiresRef.current
-    const now = Date.now()
-    const floorExpired = now > floorExpires
-    
-    console.log('[OPT-DEBUG] 💵 Display calc:', { chainValue, floor, floorExpired })
-    
-    // If no floor set or floor expired, just show chain value
-    if (floor === null || floorExpired) {
-      // Clear expired floor
-      if (floorExpired && floor !== null) {
-        console.log('[OPT-DEBUG] ⏰ Floor expired, clearing')
-        optimisticCashFloorRef.current = null
-        optimisticFloorExpiresRef.current = 0
-      }
-      return formatCurrency(chainValue)
-    }
-    
-    // If chain value is BELOW the floor, chain has caught up (confirmed the deduction)
-    // Clear floor and show chain value
-    if (chainValue < floor - 0.001) { // Chain confirmed - shows less than our optimistic floor
-      console.log('[OPT-DEBUG] ✅ Chain confirmed (below floor), clearing', { chainValue, floor })
-      optimisticCashFloorRef.current = null
-      optimisticFloorExpiresRef.current = 0
-      return formatCurrency(chainValue)
-    }
-    
-    // Chain value is at or above floor - show the floor (optimistic value)
-    console.log('[OPT-DEBUG] 💰 Showing optimistic floor', { chainValue, floor })
-    return formatCurrency(floor)
-  }, [walletData.isConnected, roundedCashCents, optimisticDisplayTick])
+  const displayCashValue = !walletData.isConnected 
+    ? '$0.00'
+    : cashValueDisplay
 
   // Helper function to get display name
   const getDisplayName = () => {

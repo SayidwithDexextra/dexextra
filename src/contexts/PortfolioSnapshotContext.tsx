@@ -306,12 +306,6 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
   // Persist fresh snapshots (and publish via context state).
   useEffect(() => {
     if (!nextSnapshot || !key) return
-    console.log('[OPT-DEBUG] 📦 PortfolioSnapshot updating', {
-      availableCash: nextSnapshot.availableCash,
-      portfolioValue: nextSnapshot.portfolioValue,
-      unrealizedPnl: nextSnapshot.unrealizedPnl,
-      updatedAt: nextSnapshot.updatedAt
-    })
     memoryCache.set(key, nextSnapshot)
     persistToSession(key, nextSnapshot)
     setSnapshot(nextSnapshot)

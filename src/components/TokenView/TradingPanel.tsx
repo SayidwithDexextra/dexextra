@@ -22,7 +22,6 @@ import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenV
 import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal';
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 import { useGeoRestriction } from '@/hooks/useGeoRestriction';
-import { dispatchOptimisticTradeUpdates, OPTIMISTIC_MODAL_DELAY_MS } from '@/lib/optimisticEvents';
 import { useOrderBook as useLightweightOrderBook } from '@/stores/lightweightOrderBookStore';
 
 interface TradingPanelProps {
@@ -213,11 +212,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     orderType: 'MARKET',
   });
 
-  // Track optimistic modal timeout so we can cancel it if trade completes early
-  const optimisticModalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Track if optimistic modal was already shown (to avoid showing twice)
-  const optimisticModalShownRef = useRef(false);
-
   const startOrderFillModal = useCallback((kind: 'market' | 'limit' | 'cancel') => {
     setOrderFillModal({
       isOpen: true,
@@ -233,13 +227,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   }, []);
 
   const markOrderFillError = useCallback(() => {
-    // Cancel any pending optimistic modal timeout on error
-    if (optimisticModalTimeoutRef.current) {
-      clearTimeout(optimisticModalTimeoutRef.current);
-      optimisticModalTimeoutRef.current = null;
-    }
-    optimisticModalShownRef.current = false;
-    
     setOrderFillModal((cur) => ({
       ...cur,
       isOpen: true,
@@ -260,13 +247,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     notionalValue: string;
     orderType: 'MARKET' | 'LIMIT';
   }, skipPositionModal?: boolean) => {
-    // Cancel any pending optimistic modal timeout
-    if (optimisticModalTimeoutRef.current) {
-      clearTimeout(optimisticModalTimeoutRef.current);
-      optimisticModalTimeoutRef.current = null;
-    }
-    
-    // Only update order fill modal if it's currently open (may have been skipped for optimistic UX)
     setOrderFillModal((cur) => {
       if (!cur.isOpen) return cur;
       return {
@@ -292,15 +272,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         showProgressLabel: undefined,
       }));
       // Show position created modal after order fill modal closes (for market/limit orders, not cancels)
-      // Skip if optimistic modal was already shown or explicitly skipped
-      if (orderDetails && !skipPositionModal && !optimisticModalShownRef.current) {
+      if (orderDetails && !skipPositionModal) {
         setPositionCreatedModal({
           isOpen: true,
           ...orderDetails,
         });
       }
-      // Reset the optimistic modal shown flag
-      optimisticModalShownRef.current = false;
     }, 750);
   }, []);
 
@@ -1367,75 +1344,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
     
     clearAllErrors();
-    // Skip the "Submitting your order" modal - we now use optimistic updates
-    // startOrderFillModal('market'); // DISABLED - optimistic UX
+    startOrderFillModal('market');
     setIsSubmittingOrder(true);
 
-    // Calculate optimistic order details for immediate UI updates
-    // Use execution price (bid/ask based on direction) for more accurate fill estimate
+    // Calculate order details for UI updates
     const isBuyOrder = selectedOption === 'long';
     const execPriceEstimate = isBuyOrder 
       ? (bestAsk > 0 ? bestAsk : (markPrice || 0))
       : (bestBid > 0 ? bestBid : (markPrice || 0));
     const approxPrice = execPriceEstimate > 0 ? execPriceEstimate : (resolveCurrentPrice() || 0);
     const approxSize = isUsdMode && approxPrice > 0 ? amount / approxPrice : amount;
-    // Ensure size is never 0 for display - use minimum displayable value
-    const displaySize = approxSize > 0 ? approxSize : (amount > 0 && approxPrice > 0 ? amount / approxPrice : 0.0001);
-    const optimisticSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
-    const optimisticNotional = displaySize * approxPrice;
-    const marginMultiplier = 1; // 100% collateral / 1x leverage
-    const optimisticMarginRequired = optimisticNotional * marginMultiplier;
-    
-    // Dispatch optimistic updates immediately for instant UI feedback
-    // Reset optimistic modal tracking
-    optimisticModalShownRef.current = false;
-    if (optimisticModalTimeoutRef.current) {
-      clearTimeout(optimisticModalTimeoutRef.current);
-      optimisticModalTimeoutRef.current = null;
-    }
-    
-    console.log('[OPT-DEBUG] 🚀 TradingPanel market order - checking dispatch conditions:', {
-      hasWindow: typeof window !== 'undefined',
-      address,
-      approxPrice,
-      displaySize,
-      optimisticMarginRequired
-    });
-    if (typeof window !== 'undefined' && address && approxPrice > 0 && displaySize > 0) {
-      console.log('[OPT-DEBUG] 🚀 TradingPanel DISPATCHING optimistic updates');
-      dispatchOptimisticTradeUpdates({
-        symbol: String(metricId || '').toUpperCase(),
-        side: optimisticSide,
-        size: displaySize,
-        entryPrice: approxPrice,
-        notionalValue: optimisticNotional,
-        leverage: 1,
-        marginRequired: optimisticMarginRequired,
-        trader: address,
-        orderType: 'MARKET',
-      });
-      
-      // Show Position Opened modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
-      // This provides instant gratification without waiting for blockchain confirmation
-      // Use enough decimal places to avoid rounding very small sizes to 0
-      const sizeStr = displaySize >= 0.0001 ? displaySize.toFixed(4) : (displaySize > 0 ? displaySize.toPrecision(3) : '0.0001');
-      const optimisticOrderDetails = {
-        side: optimisticSide,
-        size: sizeStr,
-        entryPrice: approxPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        notionalValue: optimisticNotional.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        orderType: 'MARKET' as const,
-      };
-      
-      optimisticModalTimeoutRef.current = setTimeout(() => {
-        optimisticModalShownRef.current = true;
-        optimisticModalTimeoutRef.current = null;
-        setPositionCreatedModal({
-          isOpen: true,
-          ...optimisticOrderDetails,
-        });
-      }, OPTIMISTIC_MODAL_DELAY_MS);
-    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
@@ -1989,13 +1907,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           };
           setAmount(0);
           setAmountInput('');
-          // Skip the order fill modal status update since we're using optimistic UX
-          // setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
-          // Finish silently - the optimistic modal was already shown or will be shown
           if (mined) {
-            finishOrderFillModal(gaslessOrderDetails, true); // skip position modal - shown optimistically
+            finishOrderFillModal(gaslessOrderDetails);
           } else {
-            window.setTimeout(() => finishOrderFillModal(gaslessOrderDetails, true), slow ? 5000 : 1400);
+            window.setTimeout(() => finishOrderFillModal(gaslessOrderDetails), slow ? 5000 : 1400);
           }
           return;
         } catch (gerr: any) {
@@ -2049,14 +1964,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       setAmount(0);
       setAmountInput('');
 
-      // Skip position modal - it was already shown optimistically
       finishOrderFillModal({
         side: orderSide,
         size: orderSize,
         entryPrice: orderEntryPrice,
         notionalValue: orderNotional,
         orderType: 'MARKET',
-      }, true);
+      });
       
       } catch (error: any) {
       console.error('💥 Market order execution failed:', error);
@@ -2132,53 +2046,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     
     console.log('📋 Creating limit order with OrderBook...');
     clearAllErrors();
-    // Skip the "Submitting your order" modal - we now use optimistic updates
-    // startOrderFillModal('limit'); // DISABLED - optimistic UX
+    startOrderFillModal('limit');
     setIsSubmittingOrder(true);
 
-    // Calculate optimistic order details for immediate UI updates
+    // Calculate order details
     const approxSize = isUsdMode && triggerPrice > 0 ? amount / triggerPrice : amount;
-    // Ensure size is never 0 for display - use minimum displayable value
-    const displaySize = approxSize > 0 ? approxSize : 0.0001;
-    const optimisticSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
-    const optimisticNotional = displaySize * triggerPrice;
-    const marginMultiplier = 1; // 100% collateral / 1x leverage
-    const optimisticMarginRequired = optimisticNotional * marginMultiplier;
-    
-    // Dispatch optimistic updates immediately for instant UI feedback
-    // Reset optimistic modal tracking
-    optimisticModalShownRef.current = false;
-    if (optimisticModalTimeoutRef.current) {
-      clearTimeout(optimisticModalTimeoutRef.current);
-      optimisticModalTimeoutRef.current = null;
-    }
-    
-    console.log('[OPT-DEBUG] 🚀 TradingPanel limit order - NOT dispatching position updates (limit orders don\'t open positions)');
-    
-    // NOTE: Limit orders do NOT dispatch position updates because no position is opened yet.
-    // The position only opens when the order is filled. We only show the "Order Placed" modal.
-    // Balance is also NOT updated optimistically for limit orders - margin is locked when order fills.
-    
-    if (typeof window !== 'undefined' && address && triggerPrice > 0 && displaySize > 0) {
-      // Show "Order Placed" modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
-      const limitSizeStr = displaySize >= 0.0001 ? displaySize.toFixed(4) : (displaySize > 0 ? displaySize.toPrecision(3) : '0.0001');
-      const optimisticOrderDetails = {
-        side: optimisticSide,
-        size: limitSizeStr,
-        entryPrice: triggerPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        notionalValue: optimisticNotional.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        orderType: 'LIMIT' as const,
-      };
-      
-      optimisticModalTimeoutRef.current = setTimeout(() => {
-        optimisticModalShownRef.current = true;
-        optimisticModalTimeoutRef.current = null;
-        setPositionCreatedModal({
-          isOpen: true,
-          ...optimisticOrderDetails,
-        });
-      }, OPTIMISTIC_MODAL_DELAY_MS);
-    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
@@ -2507,13 +2379,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
-          // Skip the order fill modal status update since we're using optimistic UX
-          // setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
-          // Finish silently - the optimistic modal was already shown or will be shown
+          // Limit orders don't open positions immediately, so no position modal needed
           if (mined) {
-            finishOrderFillModal(undefined, true); // skip position modal - shown optimistically
+            finishOrderFillModal();
           } else {
-            window.setTimeout(() => finishOrderFillModal(undefined, true), slow ? 5000 : (mined ? 750 : 1100));
+            window.setTimeout(() => finishOrderFillModal(), slow ? 5000 : (mined ? 750 : 1100));
           }
           return;
         } catch (gerr: any) {
@@ -2560,8 +2430,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       setTriggerPrice(0);
       setTriggerPriceInput("");
 
-      // Skip position modal - it was already shown optimistically
-      finishOrderFillModal(undefined, true);
+      // Limit orders don't open positions immediately, so no position modal needed
+      finishOrderFillModal();
       
     } catch (error: any) {
       console.error('❌ Limit order creation failed:', error);
