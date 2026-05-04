@@ -130,3 +130,50 @@ export function formatPrice(value: number): string {
   
   return `$${absValue.toExponential(2)}`
 }
+
+/**
+ * Format size with compact display - shows < prefix when truncated after 3 significant digits
+ * Very small non-zero values show "< 0.001" instead of "0"
+ * Example: 0.00001234 -> "< 0.001", 0.0234 -> "0.023", 1.234567 -> "1.234"
+ */
+export function formatCompactSize(value: number | string): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (!Number.isFinite(num)) return '0'
+  if (num === 0) return '0'
+  
+  const absValue = Math.abs(num)
+  const sign = num < 0 ? '-' : ''
+  
+  // Very small values: show "< 0.001" instead of rounding to 0
+  if (absValue > 0 && absValue < 0.001) {
+    return `< ${sign}0.001`
+  }
+  
+  if (absValue >= 1000) {
+    return `${sign}${absValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  }
+  
+  if (absValue >= 100) {
+    return `${sign}${absValue.toFixed(1)}`
+  }
+  
+  if (absValue >= 10) {
+    return `${sign}${absValue.toFixed(2)}`
+  }
+  
+  if (absValue >= 1) {
+    return `${sign}${absValue.toFixed(3)}`
+  }
+  
+  // Values between 0.001 and 1: show 3 significant digits
+  if (absValue >= 0.1) {
+    return `${sign}${absValue.toFixed(3)}`
+  }
+  
+  if (absValue >= 0.01) {
+    return `${sign}${absValue.toFixed(3)}`
+  }
+  
+  // 0.001 to 0.01 range
+  return `${sign}${absValue.toFixed(3)}`
+}

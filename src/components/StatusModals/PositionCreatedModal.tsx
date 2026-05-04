@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
+import { formatCompactSize } from '@/lib/formatters';
 
 interface PositionCreatedModalProps {
   isOpen: boolean;
@@ -308,20 +309,20 @@ export default function PositionCreatedModal({
                   </div>
                 </motion.div>
 
-                {/* Stats grid - 4 columns */}
+                {/* Stats grid - 4 columns with Entry expanded for full price visibility */}
                 <motion.div
-                  className="grid grid-cols-4 gap-3 mb-5"
+                  className="grid grid-cols-[0.8fr_1.2fr_1fr_0.8fr] gap-3 mb-5"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.25 }}
                 >
                   <div className="bg-[#1A1A1A] rounded-md p-3 border border-[#222222] min-w-0">
                     <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1.5">Size</div>
-                    <div className="text-[12px] font-medium text-white font-mono truncate">{size}</div>
+                    <div className="text-[12px] font-medium text-white font-mono">{formatCompactSize(size)}</div>
                   </div>
                   <div className="bg-[#1A1A1A] rounded-md p-3 border border-[#222222] min-w-0">
                     <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1.5">Entry</div>
-                    <div className="text-[12px] font-medium text-white font-mono truncate">${entryPrice}</div>
+                    <div className="text-[12px] font-medium text-white font-mono">${entryPrice}</div>
                   </div>
                   <div className="bg-[#1A1A1A] rounded-md p-3 border border-[#222222] min-w-0">
                     <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1.5">Notional</div>
@@ -329,7 +330,7 @@ export default function PositionCreatedModal({
                   </div>
                   <div className="bg-[#1A1A1A] rounded-md p-3 border border-[#222222] min-w-0">
                     <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1.5">Leverage</div>
-                    <div className="text-[12px] font-medium text-white font-mono truncate">{leverage}x</div>
+                    <div className="text-[12px] font-medium text-white font-mono">{leverage}x</div>
                   </div>
                 </motion.div>
 

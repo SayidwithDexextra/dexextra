@@ -1252,8 +1252,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const ttlMs = 8_000; // soft TTL
       const hardTtlMs = 120_000; // hard cap (2 minutes) to avoid indefinite divergence
       const existing = posOverlayRef.current.get(sym);
-      const nextDelta = (existing?.delta || 0) + signedDelta;
-      const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
+      
+      // IMPORTANT: Skip adding to delta if an optimistic update was ALREADY applied recently.
+      // This prevents double-counting when both optimisticPositionUpdate (from TradingPanel)
+      // and positionsRefreshRequested (from blockchain event) fire for the same trade.
+      const wasOptimisticallyUpdated = existing && (now - (existing.appliedAt || 0)) < 15_000;
       
       // Capture trade price for phantom position rendering (avoid zero mark price)
       let tradePrice = existing?.tradePrice || 0;
@@ -1267,17 +1270,29 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         }
       } catch {}
       
-      posOverlayRef.current.set(sym, {
-        delta: nextDelta,
-        baseSigned,
-        appliedAt: existing?.appliedAt ?? now,
-        expiresAt: now + ttlMs,
-        hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
-        lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
-        tradePrice,
-      });
-      // eslint-disable-next-line no-console
-      console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
+      if (wasOptimisticallyUpdated) {
+        // Optimistic overlay exists - just update metadata (price, TTL) without adding to delta
+        console.log('[OPT-DEBUG] ⏭️ Position skipped (optimistic applied)', { symbol: sym, signedDelta, existingDelta: existing?.delta });
+        posOverlayRef.current.set(sym, {
+          ...existing,
+          expiresAt: now + ttlMs,
+          tradePrice: tradePrice || existing.tradePrice,
+        });
+      } else {
+        // No recent optimistic update - apply the delta from the blockchain event
+        const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
+        const nextDelta = (existing?.delta || 0) + signedDelta;
+        posOverlayRef.current.set(sym, {
+          delta: nextDelta,
+          baseSigned,
+          appliedAt: existing?.appliedAt ?? now,
+          expiresAt: now + ttlMs,
+          hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
+          lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
+          tradePrice,
+        });
+        console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
+      }
       setPosOverlayTick((x) => x + 1);
 
       // Do not touch Order History unless History tab is active.
@@ -1334,7 +1349,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         tradePrice,
       });
       
-      console.log('[OptimisticUI] positions:overlay:patched', { traceId, symbol: sym, sizeDelta, overlayDelta: nextDelta });
+      console.log('[OPT-DEBUG] 📊 Position overlay patched', { symbol: sym, sizeDelta, overlayDelta: nextDelta });
       setPosOverlayTick((x) => x + 1);
     };
 

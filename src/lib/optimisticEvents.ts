@@ -55,7 +55,7 @@ export interface OptimisticTradeDetails {
 export function dispatchOptimisticPositionUpdate(update: OptimisticPositionUpdate): void {
   if (typeof window === 'undefined') return;
   
-  console.log('[OptimisticEvents] Dispatching optimisticPositionUpdate', update);
+  console.log('[OPT-DEBUG] 📤 Dispatching positionUpdate', update);
   
   window.dispatchEvent(new CustomEvent('optimisticPositionUpdate', {
     detail: update
@@ -80,7 +80,7 @@ export function dispatchOptimisticPositionUpdate(update: OptimisticPositionUpdat
 export function dispatchOptimisticBalanceUpdate(update: OptimisticBalanceUpdate): void {
   if (typeof window === 'undefined') return;
   
-  console.log('[OptimisticEvents] Dispatching optimisticBalanceUpdate', update);
+  console.log('[OPT-DEBUG] 📤 Dispatching balanceUpdate', update);
   
   window.dispatchEvent(new CustomEvent('optimisticBalanceUpdate', {
     detail: update
@@ -97,7 +97,7 @@ export function dispatchOptimisticTradeUpdates(details: OptimisticTradeDetails):
   const now = Date.now();
   const traceId = `optimistic:${details.symbol}:${now}`;
   
-  console.log('[OptimisticEvents] Dispatching full optimistic trade updates', details);
+  console.log('[OPT-DEBUG] 📤 Dispatching trade updates', details);
   
   // 1. Position update
   const sizeDelta = details.side === 'LONG' ? details.size : -details.size;

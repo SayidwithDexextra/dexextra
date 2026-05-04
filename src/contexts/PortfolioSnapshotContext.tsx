@@ -240,6 +240,10 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     }
   }, [posKey, walletAddress, isConnected])
 
+  // Track whether we've ever loaded positions to avoid flip-flopping between on-chain and client-side P&L
+  const hasEverLoadedPositionsRef = useRef(false)
+  const lastClientPnlRef = useRef<number | null>(null)
+  
   const nextSnapshot = useMemo((): PortfolioSnapshot | null => {
     if (!isConnected || !walletAddress) return null
     const updatedAt = safeParseNumber((summary.summary as any)?.updatedAt)
@@ -261,30 +265,53 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     // This avoids the discrepancy caused by stale stored marketMarkPrices on-chain
     const positionsArray = Array.isArray(positionsState?.positions) ? positionsState.positions : []
     const positionsHaveLoaded = !positionsState?.isLoading
-    const clientSideUnrealizedPnl = positionsHaveLoaded
-      ? positionsArray.reduce((sum, p: any) => sum + (Number(p?.pnl) || 0), 0)
-      : null
+    
+    // Calculate client-side P&L only when positions have actually loaded (not during loading transitions)
+    let clientSideUnrealizedPnl: number | null = null
+    if (positionsHaveLoaded && positionsArray.length > 0) {
+      clientSideUnrealizedPnl = positionsArray.reduce((sum, p: any) => sum + (Number(p?.pnl) || 0), 0)
+      hasEverLoadedPositionsRef.current = true
+      lastClientPnlRef.current = clientSideUnrealizedPnl
+    } else if (positionsHaveLoaded && positionsArray.length === 0) {
+      // No positions = 0 P&L
+      clientSideUnrealizedPnl = 0
+      hasEverLoadedPositionsRef.current = true
+      lastClientPnlRef.current = 0
+    } else if (hasEverLoadedPositionsRef.current && lastClientPnlRef.current !== null) {
+      // During loading transitions, use the last known client-side P&L to prevent flip-flopping
+      clientSideUnrealizedPnl = lastClientPnlRef.current
+    }
 
-    // Prefer client-side P&L when positions have loaded (even if 0 positions); fall back to on-chain otherwise
+    // Prefer client-side P&L when available; fall back to on-chain otherwise
     const unrealizedPnl = clientSideUnrealizedPnl !== null ? clientSideUnrealizedPnl : onChainUnrealizedPnl
     const portfolioValue = totalCollateral + Math.max(0, realizedPnl) + unrealizedPnl
+    
+    // Round values to cents to prevent micro-fluctuations from triggering animations
+    const roundToCents = (v: number) => Math.round(v * 100) / 100
 
     return {
       version: 1,
       chainId,
       walletAddress: String(walletAddress),
-      updatedAt: positionsHaveLoaded ? Date.now() : updatedAt,
-      availableCash,
-      unrealizedPnl,
-      portfolioValue,
-      totalCollateral,
-      realizedPnl,
+      // Use the actual data timestamp, not Date.now() - prevents constant snapshot changes
+      updatedAt,
+      availableCash: roundToCents(availableCash),
+      unrealizedPnl: roundToCents(unrealizedPnl),
+      portfolioValue: roundToCents(portfolioValue),
+      totalCollateral: roundToCents(totalCollateral),
+      realizedPnl: roundToCents(realizedPnl),
     }
   }, [chainId, isConnected, summary.summary, walletAddress, positionsState?.positions, positionsState?.isLoading])
 
   // Persist fresh snapshots (and publish via context state).
   useEffect(() => {
     if (!nextSnapshot || !key) return
+    console.log('[OPT-DEBUG] 📦 PortfolioSnapshot updating', {
+      availableCash: nextSnapshot.availableCash,
+      portfolioValue: nextSnapshot.portfolioValue,
+      unrealizedPnl: nextSnapshot.unrealizedPnl,
+      updatedAt: nextSnapshot.updatedAt
+    })
     memoryCache.set(key, nextSnapshot)
     persistToSession(key, nextSnapshot)
     setSnapshot(nextSnapshot)

@@ -23,6 +23,7 @@ import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 import { dispatchOptimisticTradeUpdates, OPTIMISTIC_MODAL_DELAY_MS } from '@/lib/optimisticEvents';
+import { useOrderBook as useLightweightOrderBook } from '@/stores/lightweightOrderBookStore';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -368,6 +369,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   } = usePortfolioData({ enabled: Boolean(isConnected), refreshInterval: 0 });
 
   const normalizedSymbol = useMemo(() => (metricId ? metricId.toUpperCase() : null), [metricId]);
+
+  // Lightweight order book for quote fallback when on-chain calls fail
+  const lightweightOB = useLightweightOrderBook(normalizedSymbol || '');
 
   const [sessionOrders, setSessionOrders] = useState<OrderBookOrder[]>([]);
 
@@ -1055,9 +1059,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
         // Fallback: client-side depth walk
         const depth = await getOrderBookDepth(20);
-        const asks = (depth.asks || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => a.price - b.price);
-        const bids = (depth.bids || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => b.price - a.price);
-        const book = isBuy ? asks : bids;
+        let asks = (depth.asks || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => a.price - b.price);
+        let bids = (depth.bids || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => b.price - a.price);
+        let book = isBuy ? asks : bids;
+        
+        // Fallback to lightweight order book store if contract depth is empty
+        if ((!book || book.length === 0) && lightweightOB) {
+          const lwAsks = (lightweightOB.asks || []).filter(l => l.price > 0 && l.amount > 0).map(l => ({ price: l.price, size: l.amount })).sort((a, b) => a.price - b.price);
+          const lwBids = (lightweightOB.bids || []).filter(l => l.price > 0 && l.amount > 0).map(l => ({ price: l.price, size: l.amount })).sort((a, b) => b.price - a.price);
+          asks = lwAsks.length > 0 ? lwAsks : asks;
+          bids = lwBids.length > 0 ? lwBids : bids;
+          book = isBuy ? asks : bids;
+        }
+        
         if (!book || book.length === 0) {
           if (!cancelled) setQuoteState({ isLoading: false, price: 0, units: 0, value: 0, partial: false, levelsUsed: 0, error: 'No liquidity', topPrice: undefined, topSize: undefined, side: sideLabel });
           return;
@@ -1109,7 +1123,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     };
     computeQuote();
     return () => { cancelled = true; };
-  }, [amount, isUsdMode, orderType, selectedOption, triggerPrice, bestBid, bestAsk, getOrderBookDepth, estimateMarketOrder]);
+  }, [amount, isUsdMode, orderType, selectedOption, triggerPrice, bestBid, bestAsk, getOrderBookDepth, estimateMarketOrder, lightweightOB]);
 
   const validateOrderAmount = (): { isValid: boolean; message?: string } => {
     // Check if amount is a valid number
