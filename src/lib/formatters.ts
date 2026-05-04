@@ -133,8 +133,8 @@ export function formatPrice(value: number): string {
 
 /**
  * Format size with compact display - shows < prefix when truncated after 3 significant digits
- * Very small non-zero values show "< 0.001" instead of "0"
- * Example: 0.00001234 -> "< 0.001", 0.0234 -> "0.023", 1.234567 -> "1.234"
+ * Very small non-zero values show "<0.001" instead of "0"
+ * Example: 0.00001234 -> "<0.001", 0.0234 -> "0.023", 1.234567 -> "1.234"
  */
 export function formatCompactSize(value: number | string): string {
   const num = typeof value === 'string' ? parseFloat(value) : value
@@ -144,9 +144,9 @@ export function formatCompactSize(value: number | string): string {
   const absValue = Math.abs(num)
   const sign = num < 0 ? '-' : ''
   
-  // Very small values: show "< 0.001" instead of rounding to 0
+  // Very small values: show "<0.001" instead of rounding to 0
   if (absValue > 0 && absValue < 0.001) {
-    return `< ${sign}0.001`
+    return `<${sign}0.001`
   }
   
   if (absValue >= 1000) {

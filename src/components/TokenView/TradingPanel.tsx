@@ -1372,10 +1372,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     setIsSubmittingOrder(true);
 
     // Calculate optimistic order details for immediate UI updates
-    const approxPrice = resolveCurrentPrice() || 0;
+    // Use execution price (bid/ask based on direction) for more accurate fill estimate
+    const isBuyOrder = selectedOption === 'long';
+    const execPriceEstimate = isBuyOrder 
+      ? (bestAsk > 0 ? bestAsk : (markPrice || 0))
+      : (bestBid > 0 ? bestBid : (markPrice || 0));
+    const approxPrice = execPriceEstimate > 0 ? execPriceEstimate : (resolveCurrentPrice() || 0);
     const approxSize = isUsdMode && approxPrice > 0 ? amount / approxPrice : amount;
+    // Ensure size is never 0 for display - use minimum displayable value
+    const displaySize = approxSize > 0 ? approxSize : (amount > 0 && approxPrice > 0 ? amount / approxPrice : 0.0001);
     const optimisticSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
-    const optimisticNotional = approxSize * approxPrice;
+    const optimisticNotional = displaySize * approxPrice;
     const marginMultiplier = 1; // 100% collateral / 1x leverage
     const optimisticMarginRequired = optimisticNotional * marginMultiplier;
     
@@ -1387,11 +1394,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       optimisticModalTimeoutRef.current = null;
     }
     
-    if (typeof window !== 'undefined' && address && approxPrice > 0 && approxSize > 0) {
+    console.log('[OPT-DEBUG] 🚀 TradingPanel market order - checking dispatch conditions:', {
+      hasWindow: typeof window !== 'undefined',
+      address,
+      approxPrice,
+      displaySize,
+      optimisticMarginRequired
+    });
+    if (typeof window !== 'undefined' && address && approxPrice > 0 && displaySize > 0) {
+      console.log('[OPT-DEBUG] 🚀 TradingPanel DISPATCHING optimistic updates');
       dispatchOptimisticTradeUpdates({
         symbol: String(metricId || '').toUpperCase(),
         side: optimisticSide,
-        size: approxSize,
+        size: displaySize,
         entryPrice: approxPrice,
         notionalValue: optimisticNotional,
         leverage: 1,
@@ -1402,9 +1417,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       // Show Position Opened modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
       // This provides instant gratification without waiting for blockchain confirmation
+      // Use enough decimal places to avoid rounding very small sizes to 0
+      const sizeStr = displaySize >= 0.0001 ? displaySize.toFixed(4) : (displaySize > 0 ? displaySize.toPrecision(3) : '0.0001');
       const optimisticOrderDetails = {
         side: optimisticSide,
-        size: approxSize.toFixed(4),
+        size: sizeStr,
         entryPrice: approxPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         notionalValue: optimisticNotional.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         orderType: 'MARKET' as const,
@@ -1954,10 +1971,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           } catch {}
           await refreshOrders();
           // Capture order details for position created modal
+          // Use execution price (bid/ask) as fill price estimate, not mark price
           const gaslessOrderSide: 'LONG' | 'SHORT' = isBuy ? 'LONG' : 'SHORT';
-          const gaslessOrderSize = quantity.toFixed(4);
-          const gaslessEntryPrice = (quoteState.price || md.markPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const gaslessNotional = (quantity * (quoteState.price || md.markPrice || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          // Use enough decimal places to avoid rounding very small sizes to 0
+          const gaslessQty = quantity > 0 ? quantity : (amount > 0 && refPriceNum > 0 ? amount / refPriceNum : 0.0001);
+          const gaslessOrderSize = gaslessQty >= 0.0001 ? gaslessQty.toFixed(4) : (gaslessQty > 0 ? gaslessQty.toPrecision(3) : '0.0001');
+          const executionPrice = quoteState.price > 0 ? quoteState.price : (isBuy ? (bestAsk > 0 ? bestAsk : 0) : (bestBid > 0 ? bestBid : 0));
+          const fillPrice = executionPrice > 0 ? executionPrice : (refPriceNum > 0 ? refPriceNum : (md.markPrice || 0));
+          const gaslessEntryPrice = fillPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const gaslessNotional = (gaslessQty * fillPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           const gaslessOrderDetails = {
             side: gaslessOrderSide,
             size: gaslessOrderSize,
@@ -2012,10 +2034,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       await refreshOrders();
       
       // Capture order details for position created modal
+      // Use execution price (bid/ask) as fill price estimate, not mark price
       const orderSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
-      const orderSize = quantity.toFixed(4);
-      const orderEntryPrice = (quoteState.price || md.markPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const orderNotional = (quantity * (quoteState.price || md.markPrice || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      // Use enough decimal places to avoid rounding very small sizes to 0
+      const orderQty = quantity > 0 ? quantity : 0.0001;
+      const orderSize = orderQty >= 0.0001 ? orderQty.toFixed(4) : (orderQty > 0 ? orderQty.toPrecision(3) : '0.0001');
+      const orderIsBuy = selectedOption === 'long';
+      const orderExecPrice = quoteState.price > 0 ? quoteState.price : (orderIsBuy ? (bestAsk > 0 ? bestAsk : 0) : (bestBid > 0 ? bestBid : 0));
+      const orderFillPrice = orderExecPrice > 0 ? orderExecPrice : (md.markPrice || 0);
+      const orderEntryPrice = orderFillPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const orderNotional = (orderQty * orderFillPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       
       // Clear input fields after successful order
       setAmount(0);
@@ -2110,8 +2138,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
     // Calculate optimistic order details for immediate UI updates
     const approxSize = isUsdMode && triggerPrice > 0 ? amount / triggerPrice : amount;
+    // Ensure size is never 0 for display - use minimum displayable value
+    const displaySize = approxSize > 0 ? approxSize : 0.0001;
     const optimisticSide: 'LONG' | 'SHORT' = selectedOption === 'long' ? 'LONG' : 'SHORT';
-    const optimisticNotional = approxSize * triggerPrice;
+    const optimisticNotional = displaySize * triggerPrice;
     const marginMultiplier = 1; // 100% collateral / 1x leverage
     const optimisticMarginRequired = optimisticNotional * marginMultiplier;
     
@@ -2123,11 +2153,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       optimisticModalTimeoutRef.current = null;
     }
     
-    if (typeof window !== 'undefined' && address && triggerPrice > 0 && approxSize > 0) {
+    console.log('[OPT-DEBUG] 🚀 TradingPanel limit order - checking dispatch conditions:', {
+      hasWindow: typeof window !== 'undefined',
+      address,
+      triggerPrice,
+      displaySize,
+      optimisticMarginRequired
+    });
+    if (typeof window !== 'undefined' && address && triggerPrice > 0 && displaySize > 0) {
+      console.log('[OPT-DEBUG] 🚀 TradingPanel DISPATCHING optimistic updates (limit)');
       dispatchOptimisticTradeUpdates({
         symbol: String(metricId || '').toUpperCase(),
         side: optimisticSide,
-        size: approxSize,
+        size: displaySize,
         entryPrice: triggerPrice,
         notionalValue: optimisticNotional,
         leverage: 1,
@@ -2138,9 +2176,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       // Show Position Opened modal after OPTIMISTIC_MODAL_DELAY_MS (3 seconds)
       // This provides instant gratification without waiting for blockchain confirmation
+      // Use enough decimal places to avoid rounding very small sizes to 0
+      const limitSizeStr = displaySize >= 0.0001 ? displaySize.toFixed(4) : (displaySize > 0 ? displaySize.toPrecision(3) : '0.0001');
       const optimisticOrderDetails = {
         side: optimisticSide,
-        size: approxSize.toFixed(4),
+        size: limitSizeStr,
         entryPrice: triggerPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         notionalValue: optimisticNotional.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         orderType: 'LIMIT' as const,

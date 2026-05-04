@@ -61,16 +61,9 @@ export function dispatchOptimisticPositionUpdate(update: OptimisticPositionUpdat
     detail: update
   }));
   
-  // Also dispatch the existing positionsRefreshRequested for compatibility
-  // but with a flag indicating it's optimistic (no actual refresh needed yet)
-  window.dispatchEvent(new CustomEvent('positionsRefreshRequested', {
-    detail: {
-      traceId: update.traceId,
-      symbol: update.symbol,
-      optimistic: true,
-      timestamp: update.timestamp,
-    }
-  }));
+  // NOTE: We no longer dispatch positionsRefreshRequested here to avoid double-counting.
+  // The optimisticPositionUpdate event is sufficient for instant UI feedback.
+  // Real positionsRefreshRequested events will come from blockchain confirmations.
 }
 
 /**

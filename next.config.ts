@@ -59,7 +59,7 @@ const nextConfig: NextConfig = {
   
   // Performance optimizations
   experimental: {
-    optimizeCss: true,
+    optimizeCss: process.env.NODE_ENV === 'production',
   },
   
   // Turbopack configuration (moved from experimental.turbo)

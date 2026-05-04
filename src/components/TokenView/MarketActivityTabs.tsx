@@ -735,6 +735,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   // This prevents double-counting if the vault/portfolio data catches up before TTL expiry.
   useEffect(() => {
     const overlay = posOverlayRef.current;
+    console.log('[OPT-DEBUG] 🔄 Reconcile effect triggered', { 
+      hasOverlay: !!overlay, 
+      overlaySize: overlay?.size || 0,
+      positionsCount: positions?.length || 0
+    });
     if (!overlay || overlay.size === 0) return;
 
     const eps = 1e-12;
@@ -748,6 +753,12 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       signedBySym.set(sym, side === 'SHORT' ? -Math.abs(size) : Math.abs(size));
     }
 
+    // Debug log reconciliation
+    console.log('[OPT-DEBUG] 🔄 Reconciling overlays', { 
+      overlaySymbols: Array.from(overlay.keys()),
+      basePositions: Object.fromEntries(signedBySym)
+    });
+
     const now = Date.now();
     let changed = false;
     for (const [sym, o] of overlay.entries()) {
@@ -755,6 +766,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
 
       // Eager prune invalid/expired entries.
       if (!Number.isFinite(o.delta) || o.delta === 0 || (o.hardExpiresAt || 0) <= now) {
+        console.log('[OPT-DEBUG] 🗑️ Pruning expired/invalid overlay', { sym, delta: o.delta, expired: (o.hardExpiresAt || 0) <= now });
         overlay.delete(sym);
         changed = true;
         continue;
@@ -762,6 +774,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
 
       const baseNow = signedBySym.get(sym) ?? 0;
       const baseSigned = Number.isFinite(o.baseSigned) ? o.baseSigned : 0;
+      
+      console.log('[OPT-DEBUG] 🧮 Reconcile check', { sym, baseNow, baseSigned, delta: o.delta, caughtUp: baseNow - baseSigned });
       
       // CRITICAL: If the base position is gone (baseNow === 0) and the overlay delta
       // represents a position reduction (opposite sign to baseSigned), the position
@@ -788,7 +802,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const nextDelta = o.delta - sign * consume;
       const nextBaseSigned = baseSigned + sign * consume;
 
+      console.log('[OPT-DEBUG] ✂️ Consuming overlay', { sym, consume, nextDelta, nextBaseSigned });
+
       if (!Number.isFinite(nextDelta) || Math.abs(nextDelta) <= eps) {
+        console.log('[OPT-DEBUG] ✅ Overlay fully consumed, deleting', { sym });
         overlay.delete(sym);
       } else {
         overlay.set(sym, { ...o, delta: nextDelta, baseSigned: nextBaseSigned });
@@ -804,6 +821,21 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     const now = Date.now();
     const overlay = posOverlayRef.current;
     const next: Position[] = [];
+    
+    // Debug: log overlay state
+    if (overlay.size > 0) {
+      const overlayDebug: Record<string, any> = {};
+      overlay.forEach((v, k) => { 
+        overlayDebug[k] = { 
+          delta: v.delta, 
+          baseSigned: v.baseSigned,
+          hardExpiresAt: v.hardExpiresAt,
+          expired: (v.hardExpiresAt || 0) <= now
+        }; 
+      });
+      console.log('[OPT-DEBUG] 📋 displayedPositions overlay:', overlayDebug, 'base positions:', base.length, 'now:', now);
+    }
+    
     for (const p of base) {
       const sym = String(p.symbol || '').toUpperCase();
       if (settledMarketSymbols.has(sym) && !settlingSymbols.has(sym)) continue;
@@ -814,6 +846,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       }
       const signed = p.side === 'LONG' ? p.size : -p.size;
       const nextSigned = signed + o.delta;
+      console.log('[OPT-DEBUG] 📐 Applying overlay to position', { 
+        sym, 
+        baseSize: p.size, 
+        delta: o.delta, 
+        nextSize: Math.abs(nextSigned),
+        hardExpiresAt: o.hardExpiresAt,
+        now 
+      });
       if (Math.abs(nextSigned) < 1e-12) continue;
       const nextSide: Position['side'] = nextSigned >= 0 ? 'LONG' : 'SHORT';
       next.push({ ...p, side: nextSide, size: Math.abs(nextSigned) });
@@ -1218,6 +1258,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const buyer = String(detail?.buyer || '').toLowerCase();
       const seller = String(detail?.seller || '').toLowerCase();
       const me = String(walletAddress || '').toLowerCase();
+      
+      console.log('[OPT-DEBUG] 🔔 positionsRefreshRequested received', { sym, traceId, buyer, seller, me, amount: detail?.amount });
+      
       if (!sym || !me) return;
       if (buyer !== me && seller !== me) return;
 
@@ -1256,7 +1299,16 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       // IMPORTANT: Skip adding to delta if an optimistic update was ALREADY applied recently.
       // This prevents double-counting when both optimisticPositionUpdate (from TradingPanel)
       // and positionsRefreshRequested (from blockchain event) fire for the same trade.
-      const wasOptimisticallyUpdated = existing && (now - (existing.appliedAt || 0)) < 15_000;
+      // Use 120 second window to account for slow blockchain confirmations
+      const wasOptimisticallyUpdated = existing && (now - (existing.appliedAt || 0)) < 120_000;
+      
+      console.log('[OPT-DEBUG] 🔍 Checking optimistic status', { 
+        sym, 
+        hasExisting: !!existing, 
+        appliedAt: existing?.appliedAt, 
+        timeSinceApplied: existing ? (now - (existing.appliedAt || 0)) : 'N/A',
+        wasOptimisticallyUpdated 
+      });
       
       // Capture trade price for phantom position rendering (avoid zero mark price)
       let tradePrice = existing?.tradePrice || 0;
@@ -1329,27 +1381,40 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const now = Date.now();
       const dedupKey = traceId;
       const prev = appliedTraceRef.current.get(dedupKey) || 0;
-      if (now - prev < 10_000) return;
+      if (now - prev < 10_000) {
+        console.log('[OPT-DEBUG] ⏭️ Position update skipped (dedup)', { traceId, msSinceLast: now - prev });
+        return;
+      }
       appliedTraceRef.current.set(dedupKey, now);
       
       const ttlMs = 8_000; // soft TTL
       const hardTtlMs = 120_000; // hard cap (2 minutes)
       const existing = posOverlayRef.current.get(sym);
-      const nextDelta = (existing?.delta || 0) + sizeDelta;
-      const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
-      const tradePrice = detail?.entryPrice || existing?.tradePrice || 0;
+      
+      // Check if existing overlay is stale (soft-expired) - if so, don't accumulate, start fresh
+      // This prevents residual deltas from previous trades affecting new trades
+      const isStale = existing && (existing.expiresAt || 0) < now;
+      const shouldAccumulate = existing && !isStale;
+      
+      const nextDelta = shouldAccumulate ? (existing.delta || 0) + sizeDelta : sizeDelta;
+      const baseSigned = shouldAccumulate ? existing.baseSigned : getBaseSignedSize(sym);
+      const tradePrice = detail?.entryPrice || (shouldAccumulate ? existing.tradePrice : 0) || 0;
+      
+      if (isStale) {
+        console.log('[OPT-DEBUG] 🧹 Clearing stale overlay before new trade', { sym, staleDelta: existing?.delta });
+      }
       
       posOverlayRef.current.set(sym, {
         delta: nextDelta,
         baseSigned,
-        appliedAt: existing?.appliedAt ?? now,
+        appliedAt: shouldAccumulate ? existing.appliedAt : now,
         expiresAt: now + ttlMs,
-        hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
-        lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
+        hardExpiresAt: shouldAccumulate ? existing.hardExpiresAt : (now + hardTtlMs),
+        lastRefetchRequestedAt: shouldAccumulate ? existing.lastRefetchRequestedAt : undefined,
         tradePrice,
       });
       
-      console.log('[OPT-DEBUG] 📊 Position overlay patched', { symbol: sym, sizeDelta, overlayDelta: nextDelta });
+      console.log('[OPT-DEBUG] 📊 Position overlay patched', { symbol: sym, sizeDelta, overlayDelta: nextDelta, wasStale: isStale });
       setPosOverlayTick((x) => x + 1);
     };
 
@@ -1439,6 +1504,12 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           isUnderLiquidation: Boolean(p?.isUnderLiquidation || false)
         } as Position;
       });
+      // Log when base positions update
+      const positionSizes: Record<string, number> = {};
+      for (const p of mapped) {
+        positionSizes[p.symbol] = p.size;
+      }
+      console.log('[OPT-DEBUG] 🔃 Base positions updated', { count: mapped.length, sizes: positionSizes });
       setPositions(mapped);
     } catch (e) {
       setPositions([]);

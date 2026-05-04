@@ -282,17 +282,30 @@ export default function Header() {
     // Listen for optimistic balance updates (instant feedback from TradingPanel)
     // Uses a "floor" approach: set the expected minimum value and don't let display go above it
     const onOptimisticBalanceUpdate = (e: any) => {
+      console.log('[OPT-DEBUG] 🎧 EVENT RECEIVED: optimisticBalanceUpdate', (e as CustomEvent)?.detail)
       try {
-        if (!walletData.isConnected) return
+        if (!walletData.isConnected) {
+          console.log('[OPT-DEBUG] ⚠️ Wallet not connected, skipping')
+          return
+        }
         const detail = (e as CustomEvent)?.detail
-        if (!detail) return
+        if (!detail) {
+          console.log('[OPT-DEBUG] ⚠️ No detail in event, skipping')
+          return
+        }
         
         const availableCashDelta = Number(detail?.availableCashDelta || 0)
-        if (!Number.isFinite(availableCashDelta) || availableCashDelta === 0) return
+        if (!Number.isFinite(availableCashDelta) || availableCashDelta === 0) {
+          console.log('[OPT-DEBUG] ⚠️ Invalid delta:', availableCashDelta)
+          return
+        }
         
         // Get current value from ref (avoids stale closure issue)
         const currentCash = latestCashRef.current
-        if (!Number.isFinite(currentCash)) return
+        if (!Number.isFinite(currentCash)) {
+          console.log('[OPT-DEBUG] ⚠️ Invalid currentCash:', currentCash)
+          return
+        }
         
         // Floor = current value + delta (delta is negative for orders)
         const newFloor = Math.max(0, currentCash + availableCashDelta)
@@ -300,19 +313,25 @@ export default function Header() {
         console.log('[OPT-DEBUG] 🎧 Setting floor:', { currentCash, delta: availableCashDelta, newFloor })
         
         // Set the floor - display won't go above this until chain confirms
+        // Use 90 second expiry to give enough time for chain confirmation + portfolio refresh
         optimisticCashFloorRef.current = newFloor
-        optimisticFloorExpiresRef.current = Date.now() + 30000 // 30 second expiry
+        optimisticFloorExpiresRef.current = Date.now() + 90000 // 90 second expiry
         
         // Trigger ONE re-render to show the updated value
         setOptimisticDisplayTick(t => t + 1)
-      } catch {}
+        
+        console.log('[OPT-DEBUG] ✅ Floor set, tick incremented')
+      } catch (err) {
+        console.log('[OPT-DEBUG] ❌ Error in handler:', err)
+      }
     }
     
-    console.log('[OPT-DEBUG] 🔗 Subscribing to events')
+    console.log('[OPT-DEBUG] 🔗 Subscribing to events (wallet connected:', walletData.isConnected, ')')
     if (typeof window !== 'undefined') {
       window.addEventListener('coreVaultSummary', onSummary)
       window.addEventListener('ordersUpdated', onOrdersUpdated)
       window.addEventListener('optimisticBalanceUpdate', onOptimisticBalanceUpdate)
+      console.log('[OPT-DEBUG] ✅ Event listeners attached')
     }
     return () => {
       console.log('[OPT-DEBUG] 🧹 Unsubscribing from events')
@@ -454,16 +473,17 @@ export default function Header() {
       return formatCurrency(chainValue)
     }
     
-    // If chain value is at or below the floor, chain has caught up - clear floor and show chain
-    if (chainValue <= floor + 0.01) { // Small tolerance for rounding
-      console.log('[OPT-DEBUG] ✅ Chain caught up, clearing floor', { chainValue, floor })
+    // If chain value is BELOW the floor, chain has caught up (confirmed the deduction)
+    // Clear floor and show chain value
+    if (chainValue < floor - 0.001) { // Chain confirmed - shows less than our optimistic floor
+      console.log('[OPT-DEBUG] ✅ Chain confirmed (below floor), clearing', { chainValue, floor })
       optimisticCashFloorRef.current = null
       optimisticFloorExpiresRef.current = 0
       return formatCurrency(chainValue)
     }
     
-    // Chain value is above floor (stale data) - show the floor instead
-    console.log('[OPT-DEBUG] ⚠️ Showing floor (chain stale)', { chainValue, floor })
+    // Chain value is at or above floor - show the floor (optimistic value)
+    console.log('[OPT-DEBUG] 💰 Showing optimistic floor', { chainValue, floor })
     return formatCurrency(floor)
   }, [walletData.isConnected, roundedCashCents, optimisticDisplayTick])
 

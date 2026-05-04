@@ -6,6 +6,10 @@ import { Wallet } from 'lucide-react'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { useArbitrumUSDCBalance } from '@/hooks/useArbitrumUSDCBalance'
 
+// Buffer to reserve for USDC transaction fees when clicking Max
+// This ensures users have enough USDC remaining to pay gas fees
+const USDC_FEE_BUFFER = 0.10 // $0.10 buffer for transaction fees
+
 interface SpokeDepositModalProps {
   isOpen: boolean
   onClose: () => void
@@ -44,8 +48,12 @@ export default function SpokeDepositModal({
 
   const handleMaxClick = () => {
     if (balance) {
-      // Use full precision balance for the input
-      setAmount(balance)
+      const balanceNum = parseFloat(balance)
+      // Reserve a small buffer for USDC transaction fees
+      const maxAmount = Math.max(0, balanceNum - USDC_FEE_BUFFER)
+      // Format to preserve precision but remove trailing zeros
+      const formattedMax = maxAmount > 0 ? maxAmount.toFixed(6).replace(/\.?0+$/, '') : '0'
+      setAmount(formattedMax)
     }
   }
 
