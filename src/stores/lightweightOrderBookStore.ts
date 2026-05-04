@@ -169,6 +169,7 @@ function createOrderBookFingerprint(bids: OrderBookLevel[], asks: OrderBookLevel
   return `${bids.length}|${asks.length}|${bidPart}|${askPart}`;
 }
 
+
 export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
   subscribeWithSelector((set, get) => ({
     orderBooks: new Map(),
@@ -189,29 +190,32 @@ export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
       const bestAsk = asks.length > 0 ? asks[0].price : 0;
       const { spread, spreadPercent } = calculateSpread(bestBid, bestAsk);
 
-      // Create a fingerprint of the new data to detect actual changes
-      const newFingerprint = createOrderBookFingerprint(bids, asks);
-
       set(state => {
         const existing = state.orderBooks.get(normalizedSymbol);
         
-        // Skip update if data hasn't actually changed (prevents flicker)
         if (existing) {
+          // FIRST: If existing state is from optimistic updates (user action), protect it
+          // from ANY API overwrites until the protection window expires.
+          // This is the primary flicker prevention mechanism.
+          if (existing.snapshotSource === 'optimistic' && source === 'api') {
+            const ageMs = Date.now() - existing.lastUpdated;
+            
+            // Protect optimistic state for 20 seconds - this gives the blockchain
+            // enough time to confirm the transaction. After 20 seconds, we assume
+            // something went wrong and allow API to take over.
+            if (ageMs < 20000) {
+              // Keep the optimistic state, don't overwrite with API data
+              return state;
+            }
+          }
+          
+          // SECOND: If not protected, check if data has actually changed using fingerprint
+          // This prevents unnecessary re-renders when polling returns identical data
+          const newFingerprint = createOrderBookFingerprint(bids, asks);
           const existingFingerprint = createOrderBookFingerprint(existing.bids, existing.asks);
           if (existingFingerprint === newFingerprint) {
             // Data is the same - don't update to prevent unnecessary re-renders
             return state;
-          }
-          
-          // If the existing state is from optimistic updates and is MORE recent,
-          // don't overwrite with older API data (prevents flicker during order placement)
-          if (existing.snapshotSource === 'optimistic' && source === 'api') {
-            const ageMs = Date.now() - existing.lastUpdated;
-            if (ageMs < 3000) {
-              // Optimistic state is less than 3 seconds old - keep it
-              // This prevents API poll from overwriting recent user actions
-              return state;
-            }
           }
         }
 

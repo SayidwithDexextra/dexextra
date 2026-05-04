@@ -363,19 +363,18 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       const eventSymbol = String(detail?.symbol || '').toUpperCase();
       if (eventSymbol && eventSymbol !== normalizedSymbol) return;
       
+      // Skip refresh for local/optimistic events - the zustand store already has
+      // the optimistic data and we don't want to overwrite it with stale API data
+      const source = String(detail?.source || '').toLowerCase();
+      if (source === 'optimistic' || source === 'local') {
+        return;
+      }
+      
       const eventType = String(detail?.eventType || '').trim();
       
-      // Refresh order book on any relevant event
+      // Refresh order book on any relevant event from external sources
       if (eventType === 'OrderRested' || eventType === 'OrderPlaced' || eventType === 'OrderCancelled' || 
           eventType === 'TradeExecutionCompleted' || eventType === 'order-placed' || eventType === 'order-rested') {
-        try {
-          // eslint-disable-next-line no-console
-          console.log(`${UI_UPDATE_PREFIX} orderbookLive:ordersUpdated -> fetchNow`, { 
-            symbol: normalizedSymbol, 
-            eventType,
-            source: detail?.source || 'unknown'
-          });
-        } catch {}
         fetchNowRef.current?.();
       }
     };

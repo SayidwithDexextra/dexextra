@@ -442,26 +442,41 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   // Track last update to avoid excessive re-renders
   const lastOBUpdateRef = React.useRef<number>(0);
   
-  const obData = useMemo(() => {
-    // If lightweight state is enabled and we have data, use it for faster updates
+  // Cache the last good lightweight data to prevent flickering when store updates
+  const lastLightweightDataRef = React.useRef<typeof lightweightOB | null>(null);
+  
+  // Update the cache when we have good lightweight data
+  React.useEffect(() => {
     if (useLightweightState && lightweightOB) {
-      return {
-        depth: {
-          bidPrices: lightweightOB.bids.map(l => l.price),
-          bidAmounts: lightweightOB.bids.map(l => l.amount),
-          askPrices: lightweightOB.asks.map(l => l.price),
-          askAmounts: lightweightOB.asks.map(l => l.amount),
-        },
-        bestBid: lightweightOB.bestBid,
-        bestAsk: lightweightOB.bestAsk,
-        orderBookAddress: md.orderBookAddress,
-        lastUpdated: new Date(lightweightOB.lastUpdated).toISOString(),
-        isLightweight: true,
-        snapshotSource: lightweightOB.snapshotSource,
-      };
+      lastLightweightDataRef.current = lightweightOB;
+    }
+  }, [useLightweightState, lightweightOB]);
+  
+  const obData = useMemo(() => {
+    // If lightweight state is enabled, prefer zustand data
+    if (useLightweightState) {
+      // Use current data if available, otherwise use cached data to prevent flicker
+      const effectiveOB = lightweightOB || lastLightweightDataRef.current;
+      
+      if (effectiveOB) {
+        return {
+          depth: {
+            bidPrices: effectiveOB.bids.map(l => l.price),
+            bidAmounts: effectiveOB.bids.map(l => l.amount),
+            askPrices: effectiveOB.asks.map(l => l.price),
+            askAmounts: effectiveOB.asks.map(l => l.amount),
+          },
+          bestBid: effectiveOB.bestBid,
+          bestAsk: effectiveOB.bestAsk,
+          orderBookAddress: md.orderBookAddress,
+          lastUpdated: new Date(effectiveOB.lastUpdated).toISOString(),
+          isLightweight: true,
+          snapshotSource: effectiveOB.snapshotSource,
+        };
+      }
     }
     
-    // Fallback to standard MarketData depth
+    // Fallback to standard MarketData depth (only when lightweight mode is disabled or no data yet)
     return {
       depth: md.depth,
       bestBid: md.bestBid ?? 0,
