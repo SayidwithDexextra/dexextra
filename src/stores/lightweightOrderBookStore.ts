@@ -155,6 +155,20 @@ function calculateSpread(bestBid: number, bestAsk: number): { spread: number; sp
   return { spread, spreadPercent };
 }
 
+// Create a fingerprint of order book state to detect actual changes
+// This prevents unnecessary re-renders when polling returns the same data
+function createOrderBookFingerprint(bids: OrderBookLevel[], asks: OrderBookLevel[]): string {
+  // Use top 10 levels from each side for fingerprint (sufficient for change detection)
+  const topBids = bids.slice(0, 10);
+  const topAsks = asks.slice(0, 10);
+  
+  // Create a compact string representation
+  const bidPart = topBids.map(b => `${b.price.toFixed(2)}:${b.amount.toFixed(8)}`).join(',');
+  const askPart = topAsks.map(a => `${a.price.toFixed(2)}:${a.amount.toFixed(8)}`).join(',');
+  
+  return `${bids.length}|${asks.length}|${bidPart}|${askPart}`;
+}
+
 export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
   subscribeWithSelector((set, get) => ({
     orderBooks: new Map(),
@@ -175,19 +189,44 @@ export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
       const bestAsk = asks.length > 0 ? asks[0].price : 0;
       const { spread, spreadPercent } = calculateSpread(bestBid, bestAsk);
 
-      const orderBook: LightweightOrderBook = {
-        symbol: normalizedSymbol,
-        bids,
-        asks,
-        bestBid,
-        bestAsk,
-        spread,
-        spreadPercent,
-        lastUpdated: Date.now(),
-        snapshotSource: source,
-      };
+      // Create a fingerprint of the new data to detect actual changes
+      const newFingerprint = createOrderBookFingerprint(bids, asks);
 
       set(state => {
+        const existing = state.orderBooks.get(normalizedSymbol);
+        
+        // Skip update if data hasn't actually changed (prevents flicker)
+        if (existing) {
+          const existingFingerprint = createOrderBookFingerprint(existing.bids, existing.asks);
+          if (existingFingerprint === newFingerprint) {
+            // Data is the same - don't update to prevent unnecessary re-renders
+            return state;
+          }
+          
+          // If the existing state is from optimistic updates and is MORE recent,
+          // don't overwrite with older API data (prevents flicker during order placement)
+          if (existing.snapshotSource === 'optimistic' && source === 'api') {
+            const ageMs = Date.now() - existing.lastUpdated;
+            if (ageMs < 3000) {
+              // Optimistic state is less than 3 seconds old - keep it
+              // This prevents API poll from overwriting recent user actions
+              return state;
+            }
+          }
+        }
+
+        const orderBook: LightweightOrderBook = {
+          symbol: normalizedSymbol,
+          bids,
+          asks,
+          bestBid,
+          bestAsk,
+          spread,
+          spreadPercent,
+          lastUpdated: Date.now(),
+          snapshotSource: source,
+        };
+
         const newOrderBooks = new Map(state.orderBooks);
         newOrderBooks.set(normalizedSymbol, orderBook);
         return {
@@ -196,8 +235,6 @@ export const useLightweightOrderBookStore = create<LightweightOrderBookState>()(
           lastUpdateTimestamp: Date.now(),
         };
       });
-
-      console.log(`[LightweightOB] Initialized ${normalizedSymbol}: ${bids.length} bids, ${asks.length} asks, spread: ${spread.toFixed(4)} (${spreadPercent.toFixed(2)}%)`);
     },
 
     simulateTrade: (symbol, side, type, price, amount) => {

@@ -189,15 +189,14 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       }
     };
 
-    console.log(`[OrderBookPoll] === STARTING for ${symbol} (every ${POLL_INTERVAL}ms) ===`);
-    
     // Initial fetch immediately
     refreshOrderBook();
 
     // Set up interval
     pollIntervalRef.current = setInterval(refreshOrderBook, POLL_INTERVAL);
 
-    // Listen for ordersUpdated events to trigger immediate refresh
+    // Listen for ordersUpdated events - but skip refresh for local optimistic updates
+    // since those are already reflected in the zustand store (prevents flicker)
     const handleOrdersUpdated = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       const eventSymbol = String(detail?.symbol || '').toUpperCase();
@@ -205,16 +204,19 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       // Only respond to events for this market
       if (eventSymbol && eventSymbol !== symbol.toUpperCase()) return;
 
-      console.log(`[OrderBookPoll] ordersUpdated event received, refreshing...`, detail?.eventType);
+      // Skip refresh for local optimistic updates - the store already has the data
+      const source = String(detail?.source || '').toLowerCase();
+      if (source === 'optimistic' || source === 'local') {
+        return;
+      }
       
-      // Immediate refresh (with small delay for chain confirmation)
-      setTimeout(refreshOrderBook, 300);
+      // For external events (pusher, webhooks), schedule a refresh
+      setTimeout(refreshOrderBook, 500);
     };
 
     window.addEventListener('ordersUpdated', handleOrdersUpdated);
 
     return () => {
-      console.log(`[OrderBookPoll] === STOPPING for ${symbol} (poll count: ${pollCountRef.current}) ===`);
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;

@@ -78,7 +78,7 @@ export function AnimatedOrderRow({
       key={orderId}
       className={`
         relative overflow-hidden
-        transition-all duration-400 ease-out
+        ${isNew && !hasAnimated ? 'transition-all duration-300 ease-out' : ''}
         ${isVisible ? `opacity-100 max-h-16 ${visibleTransformClass}` : `opacity-0 max-h-0 ${hiddenTransformClass}`}
         ${isNew && !hasAnimated ? enterAnimationClass : ''}
         ${className}
@@ -100,80 +100,51 @@ export function AnimatedOrderRow({
         />
       )}
 
-      {/* Content with micro-interaction on hover */}
-      <div className="group relative transform transition-all duration-200 hover:scale-[1.02]">
+      {/* Content */}
+      <div className="relative">
         {children}
-        
-        {/* Subtle border enhancement on hover - following design system */}
-        <div className="absolute inset-0 rounded-md border border-transparent group-hover:border-[#333333]/50 transition-colors duration-200 pointer-events-none" />
       </div>
 
-      {/* Clean slide from right animation */}
+      {/* Clean slide animations */}
       <style jsx>{`
         .slide-from-right {
-          animation: slideFromRight 400ms ease-out forwards;
+          animation: slideFromRight 200ms ease-out forwards;
         }
 
         .slide-from-top {
-          animation: slideFromTop 420ms ease-out forwards;
+          animation: slideFromTop 200ms ease-out forwards;
         }
 
         @keyframes slideFromRight {
           0% {
             opacity: 0;
-            transform: translateX(24px);
-            max-height: 0;
-          }
-          50% {
-            opacity: 0.6;
-            max-height: 2rem;
+            transform: translateX(12px);
           }
           100% {
             opacity: 1;
             transform: translateX(0);
-            max-height: 4rem;
           }
         }
 
         @keyframes slideFromTop {
           0% {
             opacity: 0;
-            transform: translateY(-10px);
-            max-height: 0;
-          }
-          60% {
-            opacity: 0.75;
-            max-height: 2rem;
+            transform: translateY(-8px);
           }
           100% {
             opacity: 1;
             transform: translateY(0);
-            max-height: 4rem;
           }
         }
 
         @keyframes enhanced-flash {
-          0% {
-            opacity: 0;
-            transform: translateX(-100%) scale(0.8);
-          }
-          50% {
-            opacity: 0.8;
-            transform: translateX(0%) scale(1.1);
-          }
-          100% {
-            opacity: 0;
-            transform: translateX(100%) scale(0.8);
-          }
+          0% { opacity: 0; }
+          40% { opacity: 0.5; }
+          100% { opacity: 0; }
         }
 
         .animate-enhanced-flash {
-          animation: enhanced-flash 600ms ease-out forwards;
-        }
-
-        /* Enhanced hover effects following design system */
-        .group:hover {
-          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.02), transparent);
+          animation: enhanced-flash 300ms ease-out forwards;
         }
 
         @media (prefers-reduced-motion: reduce) {

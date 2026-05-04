@@ -293,6 +293,7 @@ export function dispatchOptimisticOrderEvent(
   const detail = {
     symbol: symbol.toUpperCase(),
     eventType,
+    source: 'optimistic',
     isBuy: side === 'buy',
     price: BigInt(Math.round(price * 1e6)).toString(),
     amount: BigInt(Math.round(amount * 1e18)).toString(),
@@ -302,6 +303,5 @@ export function dispatchOptimisticOrderEvent(
     timestamp: Date.now(),
   };
 
-  console.log(`[OptimisticOrder] Dispatching ${eventType}:`, detail);
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail }));
 }

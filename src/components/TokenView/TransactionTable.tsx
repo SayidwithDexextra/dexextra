@@ -17,7 +17,7 @@ function OrderBookSkeletonRow({ side, depthPct, delay }: { side: 'ask' | 'bid'; 
   return (
     <div className="relative overflow-hidden" style={{ animationDelay: `${delay}ms` }}>
       <div
-        className="absolute top-0 h-full rounded-r-sm transition-all duration-700"
+        className="absolute top-0 h-full rounded-r-sm"
         style={{
           [side === 'ask' ? 'right' : 'left']: 0,
           width: `${depthPct}%`,
@@ -439,49 +439,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   const lightweightOBDirect = useLightweightOrderBookDirect(validMarketIdentifier);
   const lightweightOB = useLightweightState ? lightweightOBDirect : md.lightweightOrderBook;
   
-  // Debug: log when lightweightOB changes with precise timing
+  // Track last update to avoid excessive re-renders
   const lastOBUpdateRef = React.useRef<number>(0);
-  const storeUpdateTimestampRef = React.useRef<number>(0);
-  
-  // Listen for store update events to measure React re-render lag
-  useEffect(() => {
-    if (!useLightweightState || typeof window === 'undefined') return;
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent)?.detail;
-      storeUpdateTimestampRef.current = detail?.timestamp || Date.now();
-      console.log('[TransactionTable] Store update event received:', detail);
-    };
-    window.addEventListener('lightweightOBUpdated', handler);
-    return () => window.removeEventListener('lightweightOBUpdated', handler);
-  }, [useLightweightState]);
-  
-  useEffect(() => {
-    if (useLightweightState && lightweightOB) {
-      const now = Date.now();
-      const timeSinceLastUpdate = now - lastOBUpdateRef.current;
-      const lagFromStoreEvent = storeUpdateTimestampRef.current > 0 ? now - storeUpdateTimestampRef.current : -1;
-      console.log('[TransactionTable] lightweightOB RENDER triggered:', {
-        bidsCount: lightweightOB.bids?.length,
-        asksCount: lightweightOB.asks?.length,
-        snapshotSource: lightweightOB.snapshotSource,
-        storeLastUpdated: lightweightOB.lastUpdated,
-        renderTimestamp: now,
-        lagFromStoreUpdate: now - lightweightOB.lastUpdated,
-        lagFromStoreEvent,
-        timeSinceLastRender: timeSinceLastUpdate,
-      });
-      lastOBUpdateRef.current = now;
-    }
-  }, [lightweightOB, useLightweightState]);
   
   const obData = useMemo(() => {
     // If lightweight state is enabled and we have data, use it for faster updates
     if (useLightweightState && lightweightOB) {
-      console.log('[TransactionTable] Using lightweight order book data', {
-        bidsCount: lightweightOB.bids.length,
-        asksCount: lightweightOB.asks.length,
-        source: lightweightOB.snapshotSource,
-      });
       return {
         depth: {
           bidPrices: lightweightOB.bids.map(l => l.price),
@@ -599,7 +562,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
       const askOrders = [...askBestFirst].reverse(); // Display order: highest→lowest (best ask at bottom)
 
-      console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length, useLightweightState ? '(lightweight mode)' : '(legacy mode)');
       
       // When using lightweight state, the data already has optimistic updates applied
       // Skip the legacy overlay system entirely
@@ -690,7 +652,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     const sellOrders = pendingOrders
       .filter(order => order.side.toLowerCase() === 'sell')
       .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
-    console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
   }, [obData?.depth, pendingOrders, depthOverlayTick, useLightweightState]);
 

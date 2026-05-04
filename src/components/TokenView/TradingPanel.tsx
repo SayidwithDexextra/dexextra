@@ -1868,6 +1868,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   isMarginOrder: true,
                   isMarketOrder: true,
                   orderType: 'MARKET',
+                  source: 'local',
                 }
               }));
               // Also dispatch TradeExecutionCompleted for market orders since they execute immediately
@@ -1882,7 +1883,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   buyer: isBuy ? address : '',
                   seller: isBuy ? '' : address,
                   timestamp: now,
-                  source: 'tradingPanel',
+                  source: 'local',
                 }
               }));
             }
@@ -2370,6 +2371,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   amount: (sizeWei as unknown as bigint)?.toString?.(),
                   isBuy,
                   isMarginOrder: true,
+                  source: 'local',
                 }
               }));
             }
