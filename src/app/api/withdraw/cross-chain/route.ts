@@ -50,7 +50,8 @@ function getSpokeConfig(chainId: number): SpokeChainConfig {
       // Use Native USDC for withdrawals (matches deposit token in SpokeVault)
       // Hardcoded fallback due to Vercel env var sync issues
       usdcAddress: process.env.SPOKE_ARBITRUM_NATIVE_USDC_ADDRESS || '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-      inboxAddress: process.env.SPOKE_INBOX_ADDRESS_ARBITRUM || '0x1adeA56c1005CcbAE9B043C974077ABad2Dc3d18',
+      // V3 SpokeInboxAdapter (2026-05-05)
+      inboxAddress: process.env.SPOKE_INBOX_ADDRESS_ARBITRUM || '0x8FDFAF6146318DD893E89E5ac2e3FD73554c02b6',
       rpcList: [
         process.env.ALCHEMY_ARBITRUM_HTTP,
         process.env.RPC_URL_ARBITRUM,

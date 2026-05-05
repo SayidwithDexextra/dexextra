@@ -47,5 +47,6 @@ temp-match-test.ts
 AdvancedMarketAutomation/
 scripts/update-vercel-env.sh
 relayers.generated.json
+relayers.generated.v2.json
 relayers.*.json
 relayers.*.csv

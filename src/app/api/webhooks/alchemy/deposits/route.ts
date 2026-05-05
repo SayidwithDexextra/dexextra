@@ -438,6 +438,71 @@ function getDepositRelayerWallet(provider: ethers.JsonRpcProvider, label: string
   return wallet
 }
 
+/**
+ * Record passive deposit on SecureSpokeVaultV3 (for whitelist tracking)
+ * This is called when a user sends USDC directly to the vault address.
+ * The vault needs to know who deposited so they can withdraw later.
+ */
+async function recordPassiveDepositOnVault(params: {
+  user: string
+  amount: bigint
+  chainId: number
+}) {
+  const cfg = getChainConfig(params.chainId)
+  const vaultAddr = (cfg.vaultEnv ? (process.env as any)[cfg.vaultEnv] : '') || ''
+  
+  if (!vaultAddr || !ethers.isAddress(vaultAddr)) {
+    console.log('[alchemy-deposits] ⏭️ skip recordPassiveDeposit: no vault address configured')
+    return null
+  }
+  
+  // Check if this is a V3 vault with recordPassiveDeposit function
+  const provider = await getSpokeProviderForChain(params.chainId)
+  const wallet = getDepositRelayerWallet(provider, `spoke:${cfg.name}:vault`)
+  
+  const VaultIface = new ethers.Interface([
+    'function recordPassiveDeposit(address user, uint256 amount) external',
+    'function hasDeposited(address) view returns (bool)',
+  ])
+  
+  const vault = new ethers.Contract(vaultAddr, VaultIface, wallet)
+  
+  // Check if vault supports this function (V3 only)
+  try {
+    // Try to call hasDeposited to verify it's a V3 vault
+    await vault.hasDeposited(params.user)
+  } catch {
+    console.log('[alchemy-deposits] ⏭️ skip recordPassiveDeposit: vault does not support whitelist (likely V1)')
+    return null
+  }
+  
+  // Simulate first
+  try {
+    await vault.recordPassiveDeposit.staticCall(params.user, params.amount)
+    console.log('[alchemy-deposits] recordPassiveDeposit simulate ok')
+  } catch (simErr: any) {
+    const msg = simErr?.reason || simErr?.message || String(simErr)
+    // If it fails due to access control, the relayer doesn't have the role yet
+    if (msg.toLowerCase().includes('accesscontrol') || msg.toLowerCase().includes('role')) {
+      console.warn('[alchemy-deposits] ⚠️ recordPassiveDeposit: relayer missing BRIDGE_INBOX_ROLE on vault')
+    } else {
+      console.warn('[alchemy-deposits] ⚠️ recordPassiveDeposit simulate failed:', msg)
+    }
+    return null
+  }
+  
+  // Execute
+  try {
+    const tx = await vault.recordPassiveDeposit(params.user, params.amount)
+    const rc = await tx.wait()
+    console.log('[alchemy-deposits] ✅ recordPassiveDeposit complete', { txHash: tx.hash, block: rc?.blockNumber })
+    return { txHash: tx.hash, blockNumber: rc?.blockNumber }
+  } catch (e: any) {
+    console.error('[alchemy-deposits] ❌ recordPassiveDeposit failed:', e?.message || e)
+    return null
+  }
+}
+
 async function sendDepositOnSpoke(params: {
   user: string
   token: string
@@ -1065,6 +1130,18 @@ export async function POST(request: NextRequest) {
             logIndex,
           })
           try {
+            // Step 1: Record passive deposit on vault (for whitelist tracking in V3)
+            // This ensures the user can withdraw later even though they sent USDC directly
+            const vaultRecord = await recordPassiveDepositOnVault({
+              user: from,
+              amount: finalAmount,
+              chainId: chainIdNum,
+            })
+            if (vaultRecord) {
+              console.log('[alchemy-deposits] ✅ user recorded on vault whitelist')
+            }
+            
+            // Step 2: Send deposit notification to hub via outbox
             const sent = await sendDepositOnSpoke({
               user: from,
               token: address,
