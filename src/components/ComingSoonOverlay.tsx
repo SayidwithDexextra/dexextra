@@ -89,15 +89,12 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
           Create and trade any measurable market.
         </p>
         
-        {/* Star Wars Reference */}
+        {/* Release Date */}
         <div className="mb-8">
-          <p className="text-[#9CA3AF] text-lg md:text-xl font-medium mb-2 italic">
-            May the 4th be with you
-          </p>
           <div className="flex items-center justify-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
             <span className="text-[11px] text-[#606060] uppercase tracking-wide">
-              Release Date: May 4th, 2026
+              Release Date: May 8th, 2026
             </span>
           </div>
         </div>
