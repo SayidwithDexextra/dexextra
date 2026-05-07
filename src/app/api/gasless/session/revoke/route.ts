@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
 import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
-import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
+import { loadAllSessionRelayerAddresses } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 
 export async function POST(req: Request) {
@@ -34,12 +34,10 @@ export async function POST(req: Request) {
         stickyKey: sessionId,
         action: async (wallet) => {
           const reg = new ethers.Contract(registryAddress, (GlobalSessionRegistry as any).abi, wallet);
-          const keys = loadRelayerPoolFromEnv({
-            pool: 'global',
-            globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-            allowFallbackSingleKey: true,
-          });
-          const relayerAddrs = keys.map((k) => ethers.getAddress(k.address));
+          // MUST match the address set used to build relayerSetRoot (see
+          // src/app/api/gasless/session/relayer-set/route.ts) — i.e. union of
+          // small + big + legacy pools — otherwise MerkleProof.verify fails.
+          const relayerAddrs = loadAllSessionRelayerAddresses();
           const relayerProof = computeRelayerProof(relayerAddrs, wallet.address);
           return await sendWithNonceRetry({
             provider,

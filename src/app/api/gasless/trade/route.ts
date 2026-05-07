@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
 import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
-import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
+import { loadRelayerPoolFromEnv, loadAllSessionRelayerAddresses } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { gaslessTradeRateLimit, gaslessTradeGlobalRateLimit, tripCircuitBreaker, isCircuitBreakerOpen } from '@/lib/rate-limit';
@@ -538,12 +538,10 @@ export async function POST(req: Request) {
         let data: string | null = null;
         if (isSession) {
           // Need a proof for the "from" address, otherwise estimateGas may revert on relayer checks.
-          const globalKeys = loadRelayerPoolFromEnv({
-            pool: 'global',
-            globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-            allowFallbackSingleKey: true,
-          });
-          const relayerAddrs = globalKeys.map((k) => ethers.getAddress(k.address));
+          // MUST match the address set used to build relayerSetRoot (see
+          // src/app/api/gasless/session/relayer-set/route.ts) — i.e. union of
+          // small + big + legacy pools — otherwise MerkleProof.verify fails.
+          const relayerAddrs = loadAllSessionRelayerAddresses();
           const proof = computeRelayerProof(relayerAddrs, estimateFrom);
 
           const args =
@@ -675,12 +673,11 @@ export async function POST(req: Request) {
           }
 
           // Compute Merkle proof for this relayer wallet address against the configured relayer set.
-          const keys = loadRelayerPoolFromEnv({
-            pool: 'global',
-            globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-            allowFallbackSingleKey: true,
-          });
-          const relayerAddrs = keys.map((k) => ethers.getAddress(k.address));
+          // MUST match the address set used to build relayerSetRoot (see
+          // src/app/api/gasless/session/relayer-set/route.ts) — i.e. union of
+          // small + big + legacy pools — otherwise MerkleProof.verify fails on
+          // big-block escalation paths.
+          const relayerAddrs = loadAllSessionRelayerAddresses();
           const relayerProof = computeRelayerProof(relayerAddrs, wallet.address);
           console.log('[UpGas][API][trade] session path selected', { method, sessionId, params, relayer: wallet.address, proofLen: relayerProof.length });
 

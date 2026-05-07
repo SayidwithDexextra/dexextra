@@ -203,6 +203,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     entryPrice: string;
     notionalValue: string;
     orderType: 'MARKET' | 'LIMIT';
+    // 'submitted' = limit order accepted (resting); 'filled' = position now open
+    phase: 'submitted' | 'filled';
   }>({
     isOpen: false,
     side: 'LONG',
@@ -210,7 +212,23 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     entryPrice: '0',
     notionalValue: '0',
     orderType: 'MARKET',
+    phase: 'filled',
   });
+
+  // Tracks limit orders the user placed in this session that haven't been
+  // filled yet. We pop one when a matching TradeExecutionCompleted event
+  // arrives so we can show the "Position Opened" modal exactly once.
+  type PendingLimitOrder = {
+    symbol: string;
+    side: 'LONG' | 'SHORT';
+    size: string;
+    entryPrice: string;
+    notionalValue: string;
+    qty: number;
+    priceNum: number;
+    placedAt: number;
+  };
+  const pendingLimitOrdersRef = useRef<PendingLimitOrder[]>([]);
 
   const startOrderFillModal = useCallback((kind: 'market' | 'limit' | 'cancel') => {
     setOrderFillModal({
@@ -246,6 +264,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     entryPrice: string;
     notionalValue: string;
     orderType: 'MARKET' | 'LIMIT';
+    // Defaults to 'filled' (a position was opened). Pass 'submitted' for resting
+    // limit orders so the popup says "Order Placed" instead of "Position Opened".
+    phase?: 'submitted' | 'filled';
   }, skipPositionModal?: boolean) => {
     setOrderFillModal((cur) => {
       if (!cur.isOpen) return cur;
@@ -271,11 +292,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         detailText: undefined,
         showProgressLabel: undefined,
       }));
-      // Show position created modal after order fill modal closes (for market/limit orders, not cancels)
+      // Show position-created modal after order fill modal closes (skip for cancels).
       if (orderDetails && !skipPositionModal) {
         setPositionCreatedModal({
           isOpen: true,
           ...orderDetails,
+          phase: orderDetails.phase || 'filled',
         });
       }
     }, 750);
@@ -310,7 +332,84 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }, 9000);
     return true;
   }, []);
-  
+
+  // Listen for trade fills so a resting limit order placed in this session can
+  // trigger the "Position Opened" modal once it gets filled. The realtime hub
+  // dispatches `ordersUpdated` events with eventType `TradeExecutionCompleted`
+  // and the buyer/seller addresses for every fill on the market — see
+  // `src/services/realtime/marketEventHub.ts` (~lines 545/561).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!address) return;
+
+    const userAddrLower = String(address).toLowerCase();
+
+    const onOrdersUpdated = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent)?.detail as any;
+        if (!detail) return;
+        if (String(detail.eventType || '').trim() !== 'TradeExecutionCompleted') return;
+
+        const isBuyMaker = Boolean(detail.isBuy);
+        const traderLower = String(detail.trader || '').toLowerCase();
+        if (!traderLower || traderLower !== userAddrLower) return;
+
+        // Match by symbol + side. Buyer-as-maker => LONG limit; seller-as-maker => SHORT limit.
+        const symbolUpper = String(detail.symbol || '').toUpperCase();
+        const matchSide: 'LONG' | 'SHORT' = isBuyMaker ? 'LONG' : 'SHORT';
+
+        const idx = pendingLimitOrdersRef.current.findIndex(
+          (o) => o.symbol === symbolUpper && o.side === matchSide
+        );
+        if (idx < 0) return;
+
+        const matched = pendingLimitOrdersRef.current[idx];
+        // Remove first so multiple events for the same fill don't fire the modal twice.
+        pendingLimitOrdersRef.current.splice(idx, 1);
+
+        setPositionCreatedModal({
+          isOpen: true,
+          side: matched.side,
+          size: matched.size,
+          entryPrice: matched.entryPrice,
+          notionalValue: matched.notionalValue,
+          orderType: 'LIMIT',
+          phase: 'filled',
+        });
+      } catch {
+        // Swallow — surfacing a celebration popup must never break trading.
+      }
+    };
+
+    // Drop tracked entries when the user (or the system) cancels their limit order
+    // so we don't accidentally show "Position Opened" if a later, unrelated trade
+    // happens to match symbol+side.
+    const onOrdersUpdatedCancel = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent)?.detail as any;
+        if (!detail) return;
+        if (String(detail.eventType || '').trim() !== 'OrderCancelled') return;
+        const traderLower = String(detail.trader || '').toLowerCase();
+        if (!traderLower || traderLower !== userAddrLower) return;
+        const symbolUpper = String(detail.symbol || '').toUpperCase();
+        const isBuy = Boolean(detail.isBuy);
+        const cancelSide: 'LONG' | 'SHORT' = isBuy ? 'LONG' : 'SHORT';
+        // Remove the oldest matching tracked entry; we don't have orderId mapping client-side.
+        const idx = pendingLimitOrdersRef.current.findIndex(
+          (o) => o.symbol === symbolUpper && o.side === cancelSide
+        );
+        if (idx >= 0) pendingLimitOrdersRef.current.splice(idx, 1);
+      } catch {}
+    };
+
+    window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+    window.addEventListener('ordersUpdated', onOrdersUpdatedCancel as EventListener);
+    return () => {
+      window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+      window.removeEventListener('ordersUpdated', onOrdersUpdatedCancel as EventListener);
+    };
+  }, [address]);
+
   // Order cancellation state
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   
@@ -2381,11 +2480,36 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
-          // Limit orders don't open positions immediately, so no position modal needed
+          // Build order details for the "Order Placed" modal and for fill tracking.
+          const limitSide: 'LONG' | 'SHORT' = isBuy ? 'LONG' : 'SHORT';
+          const limitQty = quantity > 0 ? quantity : 0.0001;
+          const limitSizeStr = limitQty >= 0.0001 ? limitQty.toFixed(4) : (limitQty > 0 ? limitQty.toPrecision(3) : '0.0001');
+          const limitPriceNum = Number(triggerPrice) || 0;
+          const limitEntryPrice = limitPriceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const limitNotional = (limitQty * limitPriceNum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const limitOrderDetails = {
+            side: limitSide,
+            size: limitSizeStr,
+            entryPrice: limitEntryPrice,
+            notionalValue: limitNotional,
+            orderType: 'LIMIT' as const,
+            phase: 'submitted' as const,
+          };
+          // Track pending limit order so we can fire "Position Opened" on fill.
+          pendingLimitOrdersRef.current.push({
+            symbol: String(metricId || '').toUpperCase(),
+            side: limitSide,
+            size: limitSizeStr,
+            entryPrice: limitEntryPrice,
+            notionalValue: limitNotional,
+            qty: limitQty,
+            priceNum: limitPriceNum,
+            placedAt: Date.now(),
+          });
           if (mined) {
-            finishOrderFillModal();
+            finishOrderFillModal(limitOrderDetails);
           } else {
-            window.setTimeout(() => finishOrderFillModal(), slow ? 5000 : (mined ? 750 : 1100));
+            window.setTimeout(() => finishOrderFillModal(limitOrderDetails), slow ? 5000 : (mined ? 750 : 1100));
           }
           return;
         } catch (gerr: any) {
@@ -2432,8 +2556,34 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       setTriggerPrice(0);
       setTriggerPriceInput("");
 
-      // Limit orders don't open positions immediately, so no position modal needed
-      finishOrderFillModal();
+      // Build "Order Placed" modal details and start tracking for fill.
+      const onchainLimitIsBuy = selectedOption === 'long';
+      const onchainLimitSide: 'LONG' | 'SHORT' = onchainLimitIsBuy ? 'LONG' : 'SHORT';
+      const onchainLimitQty = quantity > 0 ? quantity : 0.0001;
+      const onchainLimitSizeStr = onchainLimitQty >= 0.0001
+        ? onchainLimitQty.toFixed(4)
+        : (onchainLimitQty > 0 ? onchainLimitQty.toPrecision(3) : '0.0001');
+      const onchainLimitPriceNum = Number(triggerPrice) || 0;
+      const onchainLimitEntryPrice = onchainLimitPriceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const onchainLimitNotional = (onchainLimitQty * onchainLimitPriceNum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      pendingLimitOrdersRef.current.push({
+        symbol: String(metricId || '').toUpperCase(),
+        side: onchainLimitSide,
+        size: onchainLimitSizeStr,
+        entryPrice: onchainLimitEntryPrice,
+        notionalValue: onchainLimitNotional,
+        qty: onchainLimitQty,
+        priceNum: onchainLimitPriceNum,
+        placedAt: Date.now(),
+      });
+      finishOrderFillModal({
+        side: onchainLimitSide,
+        size: onchainLimitSizeStr,
+        entryPrice: onchainLimitEntryPrice,
+        notionalValue: onchainLimitNotional,
+        orderType: 'LIMIT',
+        phase: 'submitted',
+      });
       
     } catch (error: any) {
       console.error('❌ Limit order creation failed:', error);
@@ -2744,6 +2894,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         leverage={1}
         orderType={positionCreatedModal.orderType}
         notionalValue={positionCreatedModal.notionalValue}
+        phase={positionCreatedModal.phase}
       />
       
       {/* Wallet Connection Modal */}

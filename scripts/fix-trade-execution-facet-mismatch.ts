@@ -270,16 +270,17 @@ async function main() {
   }
   console.log('   ✅ Facet has 6-param obExecuteTrade');
 
-  if (!ADMIN_PRIVATE_KEY && !dryRun) {
-    console.error('\n❌ ADMIN_PRIVATE_KEY is required in .env.local to execute the fix');
-    console.error('   Use --dry-run to see what would be done');
-    process.exit(1);
+  if (!ADMIN_PRIVATE_KEY) {
+    if (!dryRun) {
+      console.error('\n❌ ADMIN_PRIVATE_KEY is required in .env.local to execute the fix');
+      console.error('   Use --dry-run to see what would be done without a signer');
+      process.exit(1);
+    }
+    console.log('\n(dry-run: no ADMIN_PRIVATE_KEY set, skipping signer construction)');
+    return;
   }
 
-  const wallet = new ethers.Wallet(
-    ADMIN_PRIVATE_KEY || '0x0000000000000000000000000000000000000000000000000000000000000001',
-    provider
-  );
+  const wallet = new ethers.Wallet(ADMIN_PRIVATE_KEY, provider);
 
   if (!dryRun) {
     const balance = await provider.getBalance(wallet.address);

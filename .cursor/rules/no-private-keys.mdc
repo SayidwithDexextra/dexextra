@@ -1,0 +1,50 @@
+---
+description: CRITICAL SECURITY - Never expose private keys in code
+globs: ["**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx", "**/*.json", "**/*.md", "**/*.sh"]
+alwaysApply: true
+---
+
+# CRITICAL SECURITY RULE: NEVER PUT PRIVATE KEYS IN CODE
+
+## ABSOLUTE PROHIBITIONS
+
+1. **NEVER** write private keys directly in any script, file, or code
+2. **NEVER** hardcode private keys, even temporarily
+3. **NEVER** include private keys in examples or comments
+4. **NEVER** read private keys from JSON files and embed them in scripts
+5. **NEVER** create scripts that contain wallet private keys inline
+
+## REQUIRED APPROACH
+
+When scripts need private keys:
+1. **ALWAYS** use environment variables: `process.env.PRIVATE_KEY`
+2. **ALWAYS** require the user to pass keys via command line: `PRIVATE_KEY=0x... npx tsx script.ts`
+3. **ALWAYS** read from `.env.local` using dotenv (file is gitignored)
+4. **NEVER** read from `relayers.generated.v2.json` and put keys in scripts
+
+## EXAMPLE - CORRECT WAY
+
+```typescript
+// CORRECT: Read from environment variable
+const privateKey = process.env.ADMIN_PRIVATE_KEY;
+if (!privateKey) throw new Error("ADMIN_PRIVATE_KEY required");
+const wallet = new ethers.Wallet(privateKey, provider);
+```
+
+## EXAMPLE - WRONG WAY (NEVER DO THIS)
+
+```typescript
+// WRONG: Hardcoded key - THIS WILL GET COMPROMISED ON GITHUB
+const privateKey = "0x<NEVER_PUT_A_REAL_64_HEX_PRIVATE_KEY_HERE>";
+```
+
+## WHY THIS MATTERS
+
+- Private keys pushed to GitHub are immediately scraped by bots
+- Wallets get drained within seconds of exposure
+- This has happened MULTIPLE TIMES in this project
+- Funds are UNRECOVERABLE once stolen
+
+## ENFORCEMENT
+
+This rule applies to EVERY file in the codebase. There are NO exceptions.

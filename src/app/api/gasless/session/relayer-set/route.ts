@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { ethers } from 'ethers'
-import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys'
+import { loadAllSessionRelayerAddresses } from '@/lib/relayerKeys'
 import { computeRelayerSetRoot } from '@/lib/relayerMerkle'
 
 export const runtime = 'nodejs'
@@ -12,16 +11,15 @@ export const dynamic = 'force-dynamic'
  * - relayerSetRoot (bytes32)
  *
  * The client uses this to sign a single session permit that authorizes any relayer in the set.
+ *
+ * IMPORTANT: This MUST cover every pool the trade router can route to
+ * (small + big + legacy). If a pool is missing here, any trade routed to
+ * that pool will revert with "session: bad relayer" because the relayer's
+ * address won't be in the session's `relayerSetRoot` Merkle tree.
  */
 export async function GET() {
   try {
-    // Use the global keyset (no slots) so sessions authorize the full relayer fleet.
-    const keys = loadRelayerPoolFromEnv({
-      pool: 'global',
-      globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-      allowFallbackSingleKey: true,
-    })
-    const addrs = keys.map((k) => ethers.getAddress(k.address))
+    const addrs = loadAllSessionRelayerAddresses()
     const root = computeRelayerSetRoot(addrs)
     return NextResponse.json({ relayerAddresses: addrs, relayerSetRoot: root })
   } catch (e: any) {

@@ -20,6 +20,9 @@ interface PositionCreatedModalProps {
   notionalValue?: string;
   autoClose?: boolean;
   autoCloseDelay?: number;
+  // 'submitted' = order accepted but not yet filled (resting limit order)
+  // 'filled'    = order filled and a position is now open
+  phase?: 'submitted' | 'filled';
 }
 
 interface Sparkle {
@@ -138,7 +141,9 @@ export default function PositionCreatedModal({
   notionalValue = '0.00',
   autoClose = false,
   autoCloseDelay = 8000,
+  phase = 'filled',
 }: PositionCreatedModalProps) {
+  const isSubmittedOnly = phase === 'submitted';
   const [sparkles, setSparkles] = useState<Sparkle[]>([]);
   const [showContent, setShowContent] = useState(false);
 
@@ -258,10 +263,12 @@ export default function PositionCreatedModal({
                     transition={{ delay: 0.2 }}
                   >
                     <h2 className="text-sm font-semibold text-white uppercase tracking-wide mb-1">
-                      {orderType === 'LIMIT' ? 'Order Placed' : 'Position Opened'}
+                      {isSubmittedOnly ? 'Order Placed' : 'Position Opened'}
                     </h2>
                     <p className="text-[10px] text-[#606060]">
-                      {orderType === 'LIMIT' ? 'Limit order submitted' : `${orderType} order filled`}
+                      {isSubmittedOnly
+                        ? `${orderType === 'LIMIT' ? 'Limit' : orderType} order submitted`
+                        : `${orderType} order filled`}
                     </p>
                   </motion.div>
                 </div>
@@ -277,7 +284,7 @@ export default function PositionCreatedModal({
                     onClick={onClose}
                     className={`w-full py-2.5 px-3 ${sideBgColor} hover:opacity-80 border ${sideBorderColor} rounded-md text-[11px] font-medium ${sideColor} transition-all duration-200`}
                   >
-                    {orderType === 'LIMIT' ? 'View Order' : 'View Position'}
+                    {isSubmittedOnly ? 'View Order' : 'View Position'}
                   </button>
                   <button
                     onClick={onClose}
@@ -359,7 +366,9 @@ export default function PositionCreatedModal({
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.4 }}
                 >
-                  Monitor your position in the Portfolio sidebar or on the market page.
+                  {isSubmittedOnly
+                    ? 'Your order is resting on the book. We will notify you when it fills.'
+                    : 'Monitor your position in the Portfolio sidebar or on the market page.'}
                 </motion.p>
               </div>
             </div>

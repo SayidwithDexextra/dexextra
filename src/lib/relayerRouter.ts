@@ -37,12 +37,18 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_BIG_',
     allowFallbackSingleKey: false,
   },
+  // Bridge deposit/withdrawal pools.
+  // These ONLY hold the dedicated deposit_withdrawal_relayer
+  // (0x0258eDbF16cD01537Fde74a57D49fb10500Ee4b7 in production), which is the
+  // sole address granted RELAYER_ROLE / WITHDRAW_*_ROLE / BRIDGE_ENDPOINT_ROLE
+  // on the hub + spoke contracts. We disable the global RELAYER_PRIVATE_KEYS_JSON
+  // fallback so the trade relayer keyset cannot silently leak into bridge signing.
   hub_inbox: {
     pool: 'hub_inbox',
     jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_INBOX_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_INBOX_',
     allowFallbackSingleKey: true,
-    // Exclude "big" relayer keys - they must never sign session transactions for this pool
+    disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_outbox_arbitrum: {
@@ -50,6 +56,7 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_OUTBOX_ARBITRUM_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_OUTBOX_ARBITRUM_',
     allowFallbackSingleKey: true,
+    disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_inbox_arbitrum: {
@@ -57,6 +64,7 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_INBOX_ARBITRUM_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_INBOX_ARBITRUM_',
     allowFallbackSingleKey: true,
+    disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_outbox_polygon: {
@@ -64,6 +72,7 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_OUTBOX_POLYGON_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_OUTBOX_POLYGON_',
     allowFallbackSingleKey: true,
+    disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_inbox_polygon: {
@@ -71,9 +80,21 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_INBOX_POLYGON_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_INBOX_POLYGON_',
     allowFallbackSingleKey: true,
+    disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
 }
+
+// Pools that must NEVER hold more than one address in production by default.
+// We log a one-time warning at first load if extra keys are configured for them
+// so deployment misconfigurations surface immediately in logs.
+const SINGLE_RELAYER_POOLS = new Set<RelayerPoolName>([
+  'hub_inbox',
+  'spoke_inbox_arbitrum',
+  'spoke_outbox_arbitrum',
+  'spoke_inbox_polygon',
+  'spoke_outbox_polygon',
+])
 
 const poolCache = new Map<RelayerPoolName, RelayerKey[]>()
 const rrCounter = new Map<RelayerPoolName, number>()
@@ -135,6 +156,33 @@ function loadPool(name: RelayerPoolName): RelayerKey[] {
   if (poolCache.has(name)) return poolCache.get(name)!
   const keys = loadRelayerPoolFromEnv(POOLS[name])
   poolCache.set(name, keys)
+
+  // Visibility guard: bridge pools should resolve to exactly one address in
+  // production (the dedicated deposit-withdrawal relayer). Anything else is
+  // almost always an env misconfiguration and we want it screaming in logs.
+  if (SINGLE_RELAYER_POOLS.has(name)) {
+    if (keys.length === 0) {
+      console.error(
+        `[relayer][config] pool ${name} resolved to 0 keys. ` +
+          `Set DEPOSIT_WITHDRAWAL_RELAYER_PRIVATE_KEY (preferred) or RELAYER_PRIVATE_KEY ` +
+          `(back-compat) — or the pool-specific JSON env (${POOLS[name].jsonEnv}). ` +
+          `Deposits/withdrawals will fail until fixed.`
+      )
+    } else if (keys.length > 1) {
+      console.warn(
+        `[relayer][config] pool ${name} has ${keys.length} keys ` +
+          `[${keys.map((k) => k.address).join(', ')}]. ` +
+          `Bridge pools are expected to hold ONLY the dedicated deposit-withdrawal relayer. ` +
+          `Verify ${POOLS[name].jsonEnv} (and indexed ${POOLS[name].indexedPrefix}*) are not ` +
+          `polluted with trade-relayer keys.`
+      )
+    } else {
+      console.log(
+        `[relayer][config] pool ${name} → deposit-withdrawal relayer ${keys[0].address}`
+      )
+    }
+  }
+
   return keys
 }
 

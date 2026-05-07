@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import CoreVaultAbi from '@/lib/abis/CoreVault.json';
 import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
-import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
+import { loadAllSessionRelayerAddresses } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 
 const rpcUrl =
@@ -66,12 +66,10 @@ export async function POST(req: Request) {
     if (isSession) {
       if (!/^0x[0-9a-fA-F]{64}$/.test(sessionId)) return bad('invalid sessionId');
 
-      const globalKeys = loadRelayerPoolFromEnv({
-        pool: 'global',
-        globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-        allowFallbackSingleKey: true,
-      });
-      const relayerAddrs = globalKeys.map((k) => ethers.getAddress(k.address));
+      // MUST match the address set used to build relayerSetRoot (see
+      // src/app/api/gasless/session/relayer-set/route.ts) — i.e. union of
+      // small + big + legacy pools — otherwise MerkleProof.verify fails.
+      const relayerAddrs = loadAllSessionRelayerAddresses();
 
       tx = await withRelayer({
         pool: 'hub_trade',

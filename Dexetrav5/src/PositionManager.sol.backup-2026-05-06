@@ -88,11 +88,16 @@ library PositionManager {
             }
 
             if (result.newSize == 0) {
-                // BUG FIX 2026-05-06: This legacy function does NOT update userPositionIndex.
-                // Closing a position here would leave stale index pointers, causing
-                // ARRAY_RANGE_ERROR(50) panics in subsequent getPositionSummary() calls.
-                // Callers MUST use executePositionNettingWithIndex() to safely close positions.
-                revert("PositionManager: use executePositionNettingWithIndex to close positions");
+                result.newEntryPrice = 0;
+                result.positionClosed = true;
+                result.marginToRelease = position.marginLocked;
+                result.haircutToConfiscate6 = oldHaircut6;
+                
+                if (positionIdx < positions.length - 1) {
+                    positions[positionIdx] = positions[positions.length - 1];
+                }
+                positions.pop();
+                
             } else {
                 bool sameDirection = (position.size > 0 && sizeDelta > 0) || (position.size < 0 && sizeDelta < 0);
 
@@ -371,9 +376,12 @@ library PositionManager {
                 oldEntryPrice = position.entryPrice;
                 
                 if (newSize == 0) {
-                    // BUG FIX 2026-05-06: Legacy updatePosition does not maintain userPositionIndex.
-                    // Closing a position here would corrupt the index mapping.
-                    revert("PositionManager: updatePosition is deprecated, use executePositionNettingWithIndex");
+                    // Close position
+                    if (i < positions.length - 1) {
+                        positions[i] = positions[positions.length - 1];
+                    }
+                    positions.pop();
+                    // Margin tracking removed from position - no separate mapping needed
                 } else {
                     // Update position
                     position.size = newSize;
@@ -554,52 +562,5 @@ library PositionManager {
         }
         return false;
     }
-    // ============================================================================
-    // BUG REPAIR FUNCTION (added 2026-05-06)
-    // ----------------------------------------------------------------------------
-    // healPositionIndex: permissionless self-healing for stale userPositionIndex
-    // entries left behind by the (now reverting) legacy executePositionNetting()
-    // bug. Only mutates storage when corruption is provable; can only clear stale
-    // entries or re-point to the correct existing position - it cannot create
-    // positions or alter their values, so no privilege check is required.
-    // ============================================================================
-    event StalePositionIndexCleared(address indexed user, bytes32 indexed marketId, uint256 staleIndex);
-    event PositionIndexResynced(address indexed user, bytes32 indexed marketId, uint256 oldIndex, uint256 newIndex);
-
-    function healPositionIndex(
-        Position[] storage positions,
-        mapping(bytes32 => uint256) storage positionIndex,
-        bytes32 marketId
-    ) external {
-        uint256 indexPlusOne = positionIndex[marketId];
-        if (indexPlusOne == 0) return; // already clean
-
-        // Case 1: index points beyond array - definitely stale
-        if (indexPlusOne > positions.length) {
-            positionIndex[marketId] = 0;
-            emit StalePositionIndexCleared(msg.sender, marketId, indexPlusOne);
-            return;
-        }
-
-        // Case 2: index is in-bounds but points to a position for a different market
-        if (positions[indexPlusOne - 1].marketId != marketId) {
-            uint256 newIdx = 0;
-            for (uint256 i = 0; i < positions.length; i++) {
-                if (positions[i].marketId == marketId) {
-                    newIdx = i + 1;
-                    break;
-                }
-            }
-            if (newIdx != 0) {
-                positionIndex[marketId] = newIdx;
-                emit PositionIndexResynced(msg.sender, marketId, indexPlusOne, newIdx);
-            } else {
-                positionIndex[marketId] = 0;
-                emit StalePositionIndexCleared(msg.sender, marketId, indexPlusOne);
-            }
-        }
-        // Case 3: index correctly points to position for this market - no-op
-    }
-
 }
 

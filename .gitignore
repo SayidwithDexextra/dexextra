@@ -50,3 +50,15 @@ relayers.generated.json
 relayers.generated.v2.json
 relayers.*.json
 relayers.*.csv
+
+# Local one-off / debugging script files (kept untracked).
+# Already-tracked scripts under scripts/ continue to be tracked normally;
+# this only hides ad-hoc investigation scripts so they don't pollute git status.
+# scripts/git-hooks/ is preserved because it backs the no-private-keys workflow
+# and is referenced from package.json.
+scripts/
+!scripts/git-hooks/
+!scripts/git-hooks/**
+
+# Temp working dirs (relayer/env cleanup, etc.)
+.tmp-*/

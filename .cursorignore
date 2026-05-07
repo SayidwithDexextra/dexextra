@@ -11,8 +11,6 @@ dist/
 node_modules/
 **/node_modules/
 
-# Entire Hardhat project (ignore all - compile when needed)
-Dexetrav5/
 
 # Entire separate worker project (open separately if needed)
 metric-ai-worker/

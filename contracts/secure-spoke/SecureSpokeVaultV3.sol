@@ -297,6 +297,46 @@ contract SecureSpokeVaultV3 is AccessControl, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ADMIN: WHITELIST MANAGEMENT (for migrating existing users)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Add users to whitelist (for migrating users from old vault)
+     * @param users Array of user addresses to whitelist
+     * @param amounts Array of credited deposit amounts for each user
+     * @dev Only callable by admin. Use for users with existing CoreVault balances.
+     */
+    function adminWhitelistUsers(
+        address[] calldata users,
+        uint256[] calldata amounts
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (users.length != amounts.length) revert InvalidAmount();
+        
+        for (uint256 i = 0; i < users.length; i++) {
+            address user = users[i];
+            uint256 amount = amounts[i];
+            
+            if (user == address(0)) continue;
+            
+            if (!hasDeposited[user]) {
+                hasDeposited[user] = true;
+            }
+            totalDeposited[user] += amount;
+            
+            emit Deposited(user, address(0), amount); // token=0 indicates admin whitelist
+        }
+    }
+
+    /**
+     * @notice Remove user from whitelist (emergency use only)
+     * @param user Address to remove
+     */
+    function adminRemoveFromWhitelist(address user) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        hasDeposited[user] = false;
+        // Note: totalDeposited remains for audit trail
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // DEPOSIT (tracks depositors for whitelist)
     // ═══════════════════════════════════════════════════════════════════════
     

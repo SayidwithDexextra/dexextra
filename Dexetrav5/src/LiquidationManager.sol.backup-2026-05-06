@@ -611,13 +611,8 @@ contract LiquidationManager is CoreVaultStorage, ReentrancyGuard, Pausable {
                         basisForMargin = positions[i].entryPrice;
                     }
                     uint256 requiredForCandidate = _calculateExecutionMargin(candidateNewSize, basisForMargin);
-                    // BUG FIX 2026-05-06: Use index-aware netting to keep userPositionIndex consistent.
-                    // The legacy executePositionNetting() does swap-and-pop without updating
-                    // userPositionIndex, leaving stale indices that cause ARRAY_RANGE_ERROR(50) panics
-                    // in VaultViewsManager.getPositionSummary on subsequent calls.
-                    PositionManager.NettingResult memory nr = PositionManager.executePositionNettingWithIndex(
+                    PositionManager.NettingResult memory nr = PositionManager.executePositionNetting(
                         positions,
-                        userPositionIndex[user],
                         user,
                         marketId,
                         sizeDelta,
@@ -1787,12 +1782,6 @@ contract LiquidationManager is CoreVaultStorage, ReentrancyGuard, Pausable {
                 break;
             }
         }
-    }
-
-    // BUG REPAIR (2026-05-06): permissionless thin wrapper over PositionManager.healPositionIndex.
-    // Heavy lifting delegated to library to keep LiquidationManager under EIP-170 limit.
-    function selfHealPositionIndex(address user, bytes32 marketId) external {
-        PositionManager.healPositionIndex(userPositions[user], userPositionIndex[user], marketId);
     }
 }
 

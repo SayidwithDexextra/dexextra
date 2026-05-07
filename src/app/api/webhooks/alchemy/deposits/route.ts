@@ -3,6 +3,10 @@ import { createHmac } from 'crypto'
 import { ethers } from 'ethers'
 import { createClient } from '@supabase/supabase-js'
 import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter'
+import {
+  getDepositWithdrawalRelayerKey,
+  isUsingLegacyDepositWithdrawalRelayerEnv,
+} from '@/lib/relayerKeys'
 import { recordVaultTransaction } from '@/lib/vaultTransactionService'
 
 export const runtime = 'nodejs'
@@ -424,17 +428,29 @@ async function getHubProvider(): Promise<ethers.JsonRpcProvider> {
   return new ethers.JsonRpcProvider(hubRpc)
 }
 
-function getDepositRelayerWallet(provider: ethers.JsonRpcProvider, label: string): ethers.Wallet {
-  const raw = String(process.env.RELAYER_PRIVATE_KEY || '').trim()
-  if (!raw) {
-    throw new Error('[alchemy-deposits] RELAYER_PRIVATE_KEY is not set; cannot relay gasless deposits')
+let warnedLegacyDepositWithdrawalEnv = false
+
+function getDepositWithdrawalRelayerWallet(
+  provider: ethers.JsonRpcProvider,
+  label: string,
+): ethers.Wallet {
+  const pk = getDepositWithdrawalRelayerKey()
+  if (!pk) {
+    throw new Error(
+      '[alchemy-deposits] deposit-withdrawal relayer key is not set; ' +
+        'set DEPOSIT_WITHDRAWAL_RELAYER_PRIVATE_KEY (preferred) or RELAYER_PRIVATE_KEY (back-compat). ' +
+        'Cannot relay gasless deposits.',
+    )
   }
-  const pk = raw.startsWith('0x') ? raw : `0x${raw}`
-  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
-    throw new Error('[alchemy-deposits] RELAYER_PRIVATE_KEY must be a 32-byte hex string (0x...)')
+  if (isUsingLegacyDepositWithdrawalRelayerEnv() && !warnedLegacyDepositWithdrawalEnv) {
+    warnedLegacyDepositWithdrawalEnv = true
+    console.warn(
+      '[alchemy-deposits] using legacy RELAYER_PRIVATE_KEY for deposit-withdrawal relayer; ' +
+        'rename to DEPOSIT_WITHDRAWAL_RELAYER_PRIVATE_KEY in production env to make intent explicit.',
+    )
   }
   const wallet = new ethers.Wallet(pk, provider)
-  console.log('[alchemy-deposits] using single deposit relayer', { label, address: wallet.address })
+  console.log('[alchemy-deposits] using deposit-withdrawal relayer', { label, address: wallet.address })
   return wallet
 }
 
@@ -458,7 +474,7 @@ async function recordPassiveDepositOnVault(params: {
   
   // Check if this is a V3 vault with recordPassiveDeposit function
   const provider = await getSpokeProviderForChain(params.chainId)
-  const wallet = getDepositRelayerWallet(provider, `spoke:${cfg.name}:vault`)
+  const wallet = getDepositWithdrawalRelayerWallet(provider, `spoke:${cfg.name}:vault`)
   
   const VaultIface = new ethers.Interface([
     'function recordPassiveDeposit(address user, uint256 amount) external',
@@ -521,7 +537,7 @@ async function sendDepositOnSpoke(params: {
   }
   const dstDomain = Number(process.env.BRIDGE_DOMAIN_HUB || '999')
   const provider = await getSpokeProviderForChain(params.chainId)
-  const wallet = getDepositRelayerWallet(provider, `spoke:${cfg.name}`)
+  const wallet = getDepositWithdrawalRelayerWallet(provider, `spoke:${cfg.name}`)
 
   const OutboxIface = new ethers.Interface([
     'function sendDeposit(uint64 dstDomain, address user, address token, uint256 amount, bytes32 depositId) external',
@@ -670,7 +686,7 @@ async function deliverToHub(params: {
     throw new Error('Missing chain-specific remote app or outbox to derive srcApp')
   }
   const provider = await getHubProvider()
-  const wallet = getDepositRelayerWallet(provider, 'hub_inbox')
+  const wallet = getDepositWithdrawalRelayerWallet(provider, 'hub_inbox')
 
   const HubInboxIface = new ethers.Interface([
     'function receiveMessage(uint64 srcDomain, bytes32 srcApp, bytes payload) external',
@@ -1075,7 +1091,8 @@ export async function POST(request: NextRequest) {
           ''
         const DST_DOMAIN = Number(process.env.BRIDGE_DOMAIN_HUB || '0')
         const HAS_KEY =
-          !!(process.env.RELAYER_PRIVATE_KEY ||
+          !!(process.env.DEPOSIT_WITHDRAWAL_RELAYER_PRIVATE_KEY ||
+            process.env.RELAYER_PRIVATE_KEY ||
             (process.env as any).BRIDGE_RELAYER_PRIVATE_KEY ||
             (process.env as any).PRIVATE_KEY_RELAY ||
             process.env.PRIVATE_KEY)

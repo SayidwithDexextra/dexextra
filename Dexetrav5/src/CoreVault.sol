@@ -901,6 +901,16 @@ contract CoreVault is
         _delegateLiq(abi.encodeWithSelector(this.batchLiquidate.selector, marketIds, traders));
     }
 
+    // BUG REPAIR (added 2026-05-06): permissionless wrapper for the
+    // LiquidationManager's selfHealPositionIndex. Heals stale userPositionIndex
+    // entries left over from the legacy executePositionNetting() bug.
+    // Permissionless because the underlying function can only repair provable
+    // corruption (clear out-of-bounds indices or re-point to actual positions);
+    // it cannot create positions or alter values.
+    function selfHealPositionIndex(address user, bytes32 marketId) external {
+        _delegateLiq(abi.encodeWithSelector(this.selfHealPositionIndex.selector, user, marketId));
+    }
+
     // ============ Internal: Liquidation Price ============
 
     function _recomputeAndStoreLiquidationPrice(address user, bytes32 marketId) internal {

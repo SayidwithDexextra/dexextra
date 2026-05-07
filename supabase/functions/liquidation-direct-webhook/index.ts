@@ -301,6 +301,20 @@ function isInsufficientFundsError(err: any): boolean {
   );
 }
 
+// Distinguish "position is already closed/healthy" reverts from generic sim failures.
+// When this matches, the queue row should be marked done (not requeued) — the work
+// is implicitly complete because there's nothing left to liquidate.
+function isPositionGoneError(err: any): boolean {
+  const msg = String(err?.reason || err?.shortMessage || err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("not liquidatable") ||
+    msg.includes("no position") ||
+    msg.includes("position closed") ||
+    msg.includes("zero size") ||
+    msg.includes("nothing to liquidate")
+  );
+}
+
 const lowBalanceCache = new Map<string, number>();
 const LOW_BALANCE_TTL_MS = 60_000;
 
@@ -1057,6 +1071,7 @@ async function fetchQueuedLiquidations(
       .select("address")
       .ilike("market_id", marketHex.toLowerCase())
       .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .in("status", ["queued", "processing"])
       .lt("attempts", LIQ_MAX_ATTEMPTS)
       .order("priority", { ascending: false })
       .order("created_at", { ascending: true })
@@ -1087,13 +1102,15 @@ async function markQueuedLiquidationComplete(
 ) {
   if (!supabase) return;
   try {
-    // Find the job ID first, then complete via RPC
+    // Find the job ID first, then complete via RPC. Restrict to live rows only so
+    // we don't touch already-terminal (done/failed) rows.
     const { data: jobs } = await supabase
       .from("liq_queue")
       .select("id")
       .ilike("address", wallet.toLowerCase())
       .ilike("market_id", marketHex.toLowerCase())
       .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .in("status", ["queued", "processing"])
       .limit(1);
     
     if (jobs && jobs.length > 0) {
@@ -1114,13 +1131,16 @@ async function incrementQueuedLiquidationAttempts(
 ) {
   if (!supabase) return;
   try {
-    // Find the job ID first, then update via fail_or_requeue_liq_job
+    // Find the job ID first, then update via fail_or_requeue_liq_job. Restrict to
+    // live rows only — defense-in-depth on top of the SQL-side guard so we don't
+    // even attempt to requeue a row that is already terminal.
     const { data: jobs } = await supabase
       .from("liq_queue")
       .select("id")
       .ilike("address", wallet.toLowerCase())
       .ilike("market_id", marketHex.toLowerCase())
       .eq("chain_id", LIQ_QUEUE_CHAIN_ID)
+      .in("status", ["queued", "processing"])
       .limit(1);
     
     if (jobs && jobs.length > 0) {
@@ -1131,6 +1151,55 @@ async function incrementQueuedLiquidationAttempts(
       });
     }
   } catch {}
+}
+
+// Wait for a transaction receipt with extended polling. HyperEVM/Alchemy can lag
+// 30–90s on receipt visibility; the prior 60s hard timeout treated successful
+// late-arriving txs as `receipt_check_failed`, which then re-queued already-done
+// jobs. We give viem the first 60s, then poll directly for another 60s before
+// declaring failure. Total budget: ~120s.
+async function awaitReceiptRobust(
+  publicClient: any,
+  tx: `0x${string}`,
+  traceId: string
+): Promise<{ status: "success" | "reverted" }> {
+  try {
+    const r = await publicClient.waitForTransactionReceipt({
+      hash: tx,
+      timeout: 60_000,
+      confirmations: 1,
+    });
+    return { status: r.status as "success" | "reverted" };
+  } catch (e: any) {
+    const m = String(e?.message || e).toLowerCase();
+    if (m.includes("reverted")) throw e;
+    // Fall through to extended polling for "timed out" / "could not be found".
+  }
+
+  for (let i = 0; i < 6; i++) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    try {
+      const r = await publicClient.getTransactionReceipt({ hash: tx });
+      if (r) {
+        logStep(traceId, "RECEIPT_LATE", { tx, attempt: i + 1 });
+        return { status: r.status as "success" | "reverted" };
+      }
+    } catch (pollErr: any) {
+      const m = String(pollErr?.message || pollErr).toLowerCase();
+      // viem throws TransactionReceiptNotFoundError when not yet mined — keep polling.
+      if (
+        m.includes("could not be found") ||
+        m.includes("not found") ||
+        m.includes("transactionreceiptnotfound")
+      ) {
+        continue;
+      }
+      // Unknown poll error — log and keep trying; we don't want to fail solely on RPC blips.
+      logStep(traceId, "RECEIPT_POLL_WARN", { tx, attempt: i + 1, reason: m.slice(0, 120) });
+    }
+  }
+
+  throw new Error(`receipt_check_failed:${tx}:no_receipt_after_120s`);
 }
 
 async function sendLiquidationTx(opts: {
@@ -1175,20 +1244,12 @@ async function sendLiquidationTx(opts: {
     }
   } catch { /* ignore */ }
 
-  // Wait for receipt and verify the tx actually succeeded on-chain
-  try {
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: tx,
-      timeout: 60_000,
-    });
-    if (receipt.status === "reverted") {
-      throw new Error(`tx_reverted:${tx}`);
-    }
-  } catch (receiptErr: any) {
-    const msg = receiptErr?.message || String(receiptErr);
-    if (msg.includes("tx_reverted")) throw receiptErr;
-    logStep(traceId, "RECEIPT_WARN", { tx, reason: msg.slice(0, 120) });
-    throw new Error(`receipt_check_failed:${tx}:${msg.slice(0, 100)}`);
+  // Wait for receipt and verify the tx actually succeeded on-chain.
+  // Uses an extended polling budget (~120s) so RPC propagation lag doesn't get
+  // misclassified as a failure and reopen an already-completed queue row.
+  const receipt = await awaitReceiptRobust(publicClient, tx, traceId);
+  if (receipt.status === "reverted") {
+    throw new Error(`tx_reverted:${tx}`);
   }
 
   return { tx, relayer: relayer.address, pool: relayer.pool };
@@ -1280,16 +1341,25 @@ async function findCandidatesAndLiquidate(
   const candidates: LiqCandidate[] = [];
   
   for (const [wallet, { size, liqPrice }] of positionMap.entries()) {
-    if (liqPrice === 0n) continue;
-    
+    const isQueued = queuedSet.has(wallet.toLowerCase());
+
+    // No on-chain position (or no liquidation price). For queued rows this means
+    // the work is already done — close the row instead of leaving it stranded.
+    if (liqPrice === 0n) {
+      if (isQueued) {
+        await markQueuedLiquidationComplete(supabase, wallet, marketHexTyped, traceId);
+        log(traceId, "📋", `Removed ${wallet.slice(0, 8)} from queue (no on-chain position)`);
+      }
+      continue;
+    }
+
     const isLong = size > 0n;
     const shouldLiq = isLong ? markPrice <= liqPrice : markPrice >= liqPrice;
-    const isQueued = queuedSet.has(wallet.toLowerCase());
-    
+
     // For queued liquidations, always retry even if position seems healthy
     // (price may have changed since queueing)
     if (!shouldLiq && !isQueued) continue;
-    
+
     // If position is no longer liquidatable, remove from queue
     if (!shouldLiq && isQueued) {
       await markQueuedLiquidationComplete(supabase, wallet, marketHexTyped, traceId);
@@ -1372,7 +1442,15 @@ async function findCandidatesAndLiquidate(
           account: simAccount.address,
         });
       } catch (simErr: any) {
-        // If this was a queued liquidation that failed simulation, increment attempts
+        // Position is already gone (race with another liquidator, or just got closed).
+        // Treat as success: mark the row done so it isn't requeued forever.
+        if (isPositionGoneError(simErr)) {
+          if (isQueued) {
+            await markQueuedLiquidationComplete(supabase, walletHex, marketHexTyped, traceId);
+          }
+          return { status: "skipped", wallet: walletHex, reason: "position_gone" };
+        }
+        // Generic sim failure — increment attempts only for queued rows.
         if (isQueued) {
           const errMsg = simErr?.shortMessage || simErr?.message || "simulation_failed";
           await incrementQueuedLiquidationAttempts(supabase, walletHex, marketHexTyped, errMsg.slice(0, 200), traceId);

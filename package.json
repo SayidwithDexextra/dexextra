@@ -33,7 +33,9 @@
     "dev:edge": "concurrently -k -n next,edge -c blue,green \"next dev\" \"npx supabase@latest functions serve --env-file .env.local --no-verify-jwt\"",
     "relayer-balance-check": "tsx scripts/relayer-balance-check.ts",
     "fund-relayers-hype": "tsx scripts/fund-relayers-hype.ts",
-    "disperse-hype-to-wallets": "tsx AdvancedMarketAutomation/disperse-hype-to-wallets.ts"
+    "disperse-hype-to-wallets": "tsx AdvancedMarketAutomation/disperse-hype-to-wallets.ts",
+    "setup:hooks": "bash scripts/git-hooks/install.sh",
+    "check:private-keys": "bash scripts/git-hooks/check-private-keys.sh"
   },
   "dependencies": {
     "@clickhouse/client": "^1.11.2",
