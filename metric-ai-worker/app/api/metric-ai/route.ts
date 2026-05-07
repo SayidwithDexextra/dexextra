@@ -2393,7 +2393,7 @@ EXTRACTED NUMERIC VALUE:`;
         pipelineLog('PIPELINE_COMPLETE', {
           jobId,
           totalTimeMs: totalProcessingTimeMs,
-          pathTaken: resolution.fast_path ? 'FAST_PATH' : 'FULL_PIPELINE',
+          pathTaken: resolution.pipeline.path === 'FAST_PATH' ? 'FAST_PATH' : 'FULL_PIPELINE',
           fusionTier: resolution.fusion_tier || 'N/A',
           result: {
             value: resolution.asset_price_suggestion,
@@ -2403,7 +2403,7 @@ EXTRACTED NUMERIC VALUE:`;
             hadWorkingLocators: hadWorkingLocatorsBefore,
             wasDiscoveredThisRun: !hadWorkingLocatorsBefore && discoveryEligible,
           },
-          nextFetchExpectation: resolution.fast_path 
+          nextFetchExpectation: resolution.pipeline.path === 'FAST_PATH' 
             ? 'Will continue using FAST PATH'
             : (!hadWorkingLocatorsBefore && discoveryEligible)
               ? 'Next fetch will use FAST PATH (locators discovered this run)'
