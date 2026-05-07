@@ -2369,6 +2369,45 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
 
+      // Optimistic simulation: figure out whether this limit order will cross the
+      // book (and thus immediately fill as a taker) or rest on the book. We use
+      // this to (a) pick the right post-submit modal — "Position Opened" for a
+      // taker fill vs "Order Placed" for a resting maker — and (b) skip pushing
+      // the order into `pendingLimitOrdersRef` when it's already fully filled,
+      // which would otherwise re-fire the same fill modal once the on-chain
+      // TradeExecutionCompleted event arrives.
+      //
+      // Run this before the gasless/on-chain branch so both paths share the
+      // same source of truth.
+      let limitFilledQty = 0;
+      try {
+        if (triggerPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
+          const limitOptimisticStartTime = Date.now();
+          const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'limit', triggerPrice, quantity);
+          limitFilledQty = optResult.filledAmount || 0;
+          if (limitFilledQty > 0 && md.recordTakerTrade) {
+            md.recordTakerTrade(triggerPrice);
+          }
+          console.log('[OptimisticUI] Limit order simulated:', optResult, {
+            inputAmount: amount,
+            tokenQuantity: quantity,
+            isUsdMode,
+            crossedBook: limitFilledQty > 0,
+            elapsedMs: Date.now() - limitOptimisticStartTime,
+          });
+        }
+      } catch (simErr) {
+        console.warn('[OptimisticUI] Limit order simulation failed:', simErr);
+      }
+
+      // Treat the order as a taker fill if any non-trivial portion crossed the
+      // book. We use a small epsilon so floating-point dust (e.g. 1e-12) from
+      // the simulator doesn't accidentally trip the "filled" branch.
+      const fillEpsilon = Math.max(quantity * 1e-6, 1e-9);
+      const limitDidCross = limitFilledQty > fillEpsilon;
+      const limitFullyFilled = limitFilledQty >= quantity - fillEpsilon;
+      const limitPhase: 'submitted' | 'filled' = limitDidCross ? 'filled' : 'submitted';
+
       // [GASLESS] toggle and OB address log
       const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       let obAddrForGasless: string | undefined;
@@ -2393,24 +2432,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             showError('Trading session is not enabled. Click Enable Trading before placing limit orders.', 'Session Required');
             markOrderFillError();
             return;
-          }
-
-          // Optimistic UI update: add liquidity immediately for limit orders
-          // Use `quantity` (token units) not `amount` (which may be USD)
-          const limitOptimisticStartTime = Date.now();
-          if (triggerPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
-            // For limit orders, we simulate as a limit which will add liquidity if it doesn't cross
-            const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'limit', triggerPrice, quantity);
-            // If the limit order crosses (filledAmount > 0), record as taker trade
-            if (optResult.filledAmount > 0 && md.recordTakerTrade) {
-              md.recordTakerTrade(triggerPrice);
-            }
-            console.log('[OptimisticUI] Limit order simulated:', optResult, { 
-              inputAmount: amount, 
-              tokenQuantity: quantity, 
-              isUsdMode,
-              elapsedMs: Date.now() - limitOptimisticStartTime,
-            });
           }
 
             const r = await submitSessionTrade({
@@ -2480,7 +2501,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
-          // Build order details for the "Order Placed" modal and for fill tracking.
+          // Build order details for the post-submit modal. If the optimistic
+          // simulation says the order crossed the book, surface it as a filled
+          // taker trade ("Position Opened"); otherwise it's a resting maker
+          // order ("Order Placed").
           const limitSide: 'LONG' | 'SHORT' = isBuy ? 'LONG' : 'SHORT';
           const limitQty = quantity > 0 ? quantity : 0.0001;
           const limitSizeStr = limitQty >= 0.0001 ? limitQty.toFixed(4) : (limitQty > 0 ? limitQty.toPrecision(3) : '0.0001');
@@ -2493,19 +2517,24 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             entryPrice: limitEntryPrice,
             notionalValue: limitNotional,
             orderType: 'LIMIT' as const,
-            phase: 'submitted' as const,
+            phase: limitPhase,
           };
-          // Track pending limit order so we can fire "Position Opened" on fill.
-          pendingLimitOrdersRef.current.push({
-            symbol: String(metricId || '').toUpperCase(),
-            side: limitSide,
-            size: limitSizeStr,
-            entryPrice: limitEntryPrice,
-            notionalValue: limitNotional,
-            qty: limitQty,
-            priceNum: limitPriceNum,
-            placedAt: Date.now(),
-          });
+          // Only track the limit order when there is a resting portion that
+          // could fill later. A fully-filled-on-submit order has no resting
+          // remainder, so tracking it would just cause the post-fill modal to
+          // re-fire when the on-chain TradeExecutionCompleted event arrives.
+          if (!limitFullyFilled) {
+            pendingLimitOrdersRef.current.push({
+              symbol: String(metricId || '').toUpperCase(),
+              side: limitSide,
+              size: limitSizeStr,
+              entryPrice: limitEntryPrice,
+              notionalValue: limitNotional,
+              qty: limitQty,
+              priceNum: limitPriceNum,
+              placedAt: Date.now(),
+            });
+          }
           if (mined) {
             finishOrderFillModal(limitOrderDetails);
           } else {
@@ -2556,7 +2585,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       setTriggerPrice(0);
       setTriggerPriceInput("");
 
-      // Build "Order Placed" modal details and start tracking for fill.
+      // Build the post-submit modal details. Reuse the hoisted simulation
+      // result (`limitPhase` / `limitFullyFilled`) so a limit order that
+      // crossed the book is surfaced as filled rather than as a resting order.
       const onchainLimitIsBuy = selectedOption === 'long';
       const onchainLimitSide: 'LONG' | 'SHORT' = onchainLimitIsBuy ? 'LONG' : 'SHORT';
       const onchainLimitQty = quantity > 0 ? quantity : 0.0001;
@@ -2566,23 +2597,25 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const onchainLimitPriceNum = Number(triggerPrice) || 0;
       const onchainLimitEntryPrice = onchainLimitPriceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const onchainLimitNotional = (onchainLimitQty * onchainLimitPriceNum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      pendingLimitOrdersRef.current.push({
-        symbol: String(metricId || '').toUpperCase(),
-        side: onchainLimitSide,
-        size: onchainLimitSizeStr,
-        entryPrice: onchainLimitEntryPrice,
-        notionalValue: onchainLimitNotional,
-        qty: onchainLimitQty,
-        priceNum: onchainLimitPriceNum,
-        placedAt: Date.now(),
-      });
+      if (!limitFullyFilled) {
+        pendingLimitOrdersRef.current.push({
+          symbol: String(metricId || '').toUpperCase(),
+          side: onchainLimitSide,
+          size: onchainLimitSizeStr,
+          entryPrice: onchainLimitEntryPrice,
+          notionalValue: onchainLimitNotional,
+          qty: onchainLimitQty,
+          priceNum: onchainLimitPriceNum,
+          placedAt: Date.now(),
+        });
+      }
       finishOrderFillModal({
         side: onchainLimitSide,
         size: onchainLimitSizeStr,
         entryPrice: onchainLimitEntryPrice,
         notionalValue: onchainLimitNotional,
         orderType: 'LIMIT',
-        phase: 'submitted',
+        phase: limitPhase,
       });
       
     } catch (error: any) {

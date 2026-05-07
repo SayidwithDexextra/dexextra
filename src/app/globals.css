@@ -52,6 +52,59 @@
   animation: pending-order-shimmer 2s ease-in-out infinite;
 }
 
+/* Metric AI fetching: thin diagonal shine sweep across the live-price card */
+@keyframes metric-ai-shine {
+  0%   { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(220%) skewX(-18deg); opacity: 0; }
+}
+.metric-ai-shine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.metric-ai-shine::before {
+  content: '';
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  left: 0;
+  width: 28%;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0)   0%,
+    rgba(255, 200, 200, 0.08) 35%,
+    rgba(255, 230, 230, 0.22) 50%,
+    rgba(255, 200, 200, 0.08) 65%,
+    rgba(255, 255, 255, 0)   100%
+  );
+  filter: blur(0.5px);
+  transform: translateX(-120%) skewX(-18deg);
+  animation: metric-ai-shine 2.4s cubic-bezier(0.4, 0.0, 0.2, 1) infinite;
+}
+
+/* Metric AI success: one-shot border + dot glow when a fresh value lands */
+@keyframes metric-ai-success-border {
+  0%   { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.0), inset 0 0 0 1px rgba(74, 222, 128, 0.0); }
+  20%  { box-shadow: 0 0 14px 0 rgba(74, 222, 128, 0.35), inset 0 0 0 1px rgba(74, 222, 128, 0.55); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.0), inset 0 0 0 1px rgba(74, 222, 128, 0.0); }
+}
+.metric-ai-success-pulse {
+  animation: metric-ai-success-border 1.6s cubic-bezier(0.22, 0.61, 0.36, 1) 1 both;
+}
+@keyframes metric-ai-success-dot {
+  0%   { transform: scale(1);   background-color: rgb(239, 68, 68); }
+  25%  { transform: scale(1.6); background-color: rgb(74, 222, 128); }
+  60%  { transform: scale(1);   background-color: rgb(74, 222, 128); }
+  100% { transform: scale(1);   background-color: rgb(239, 68, 68); }
+}
+.metric-ai-success-dot {
+  animation: metric-ai-success-dot 1.6s cubic-bezier(0.22, 0.61, 0.36, 1) 1 both;
+}
+
 /* Pending order row collapse animation (MarketActivityTabs processing → confirmed) */
 @keyframes pending-order-collapse {
   0% {

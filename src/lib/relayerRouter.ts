@@ -9,8 +9,6 @@ export type RelayerPoolName =
   | 'hub_inbox'
   | 'spoke_outbox_arbitrum'
   | 'spoke_inbox_arbitrum'
-  | 'spoke_outbox_polygon'
-  | 'spoke_inbox_polygon'
 
 const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
   hub_trade: {
@@ -67,22 +65,6 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     disableGlobalFallback: true,
     excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
-  spoke_outbox_polygon: {
-    pool: 'spoke_outbox_polygon',
-    jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_OUTBOX_POLYGON_JSON',
-    indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_OUTBOX_POLYGON_',
-    allowFallbackSingleKey: true,
-    disableGlobalFallback: true,
-    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
-  },
-  spoke_inbox_polygon: {
-    pool: 'spoke_inbox_polygon',
-    jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_INBOX_POLYGON_JSON',
-    indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_INBOX_POLYGON_',
-    allowFallbackSingleKey: true,
-    disableGlobalFallback: true,
-    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
-  },
 }
 
 // Pools that must NEVER hold more than one address in production by default.
@@ -92,8 +74,6 @@ const SINGLE_RELAYER_POOLS = new Set<RelayerPoolName>([
   'hub_inbox',
   'spoke_inbox_arbitrum',
   'spoke_outbox_arbitrum',
-  'spoke_inbox_polygon',
-  'spoke_outbox_polygon',
 ])
 
 const poolCache = new Map<RelayerPoolName, RelayerKey[]>()

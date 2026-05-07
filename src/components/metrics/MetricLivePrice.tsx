@@ -3,6 +3,8 @@
 import React from 'react';
 import { getSupabaseClient } from '../../lib/supabase-browser';
 
+export type MetricAIState = 'idle' | 'fetching' | 'success' | 'failed';
+
 export interface MetricLivePriceProps {
   marketId?: string;
   token?: string;
@@ -23,6 +25,15 @@ export interface MetricLivePriceProps {
   htmlSnippet?: string;
   pollIntervalMs?: number;
   enableLiveMetric?: boolean;
+  /**
+   * Visual state of the Metric AI worker fetch driven by the parent (e.g. token page).
+   * - 'fetching': render a subtle shine sweep while the worker resolves a fresh value
+   * - 'success' : render a one-shot border + dot glow when a fresh value lands
+   * - 'failed' / 'idle': default appearance
+   *
+   * The parent should auto-reset 'success'/'failed' back to 'idle' after the animation.
+   */
+  aiState?: MetricAIState;
 }
 
 export function MetricLivePrice(props: MetricLivePriceProps) {
@@ -35,6 +46,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     url,
     pollIntervalMs,
     onOpenSettlement,
+    aiState = 'idle',
   } = props;
 
   const supabase = getSupabaseClient();
@@ -248,6 +260,20 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
 
   const hasSource = source.kind !== 'none' && !!source.value;
 
+  // Track a one-shot "success pulse" key so the keyframes restart cleanly each
+  // time aiState transitions into 'success' (without lingering when re-rendering).
+  const [successPulseKey, setSuccessPulseKey] = React.useState<number>(0);
+  const prevAiStateRef = React.useRef<MetricAIState>(aiState);
+  React.useEffect(() => {
+    if (prevAiStateRef.current !== 'success' && aiState === 'success') {
+      setSuccessPulseKey((n) => n + 1);
+    }
+    prevAiStateRef.current = aiState;
+  }, [aiState]);
+
+  const isFetching = aiState === 'fetching' && !settlementActive;
+  const isSuccess = aiState === 'success' && !settlementActive;
+
   return (
     <div
       className={`relative rounded-md border transition-all duration-300 overflow-hidden ${
@@ -263,15 +289,38 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
       {hasSource && !settlementActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-red-500/[0.03] via-transparent to-red-500/[0.02] pointer-events-none" />
       )}
+      {isFetching && (
+        <div aria-hidden="true" className="metric-ai-shine" />
+      )}
+      {isSuccess && (
+        <div
+          key={successPulseKey}
+          aria-hidden="true"
+          className="metric-ai-success-pulse absolute inset-0 rounded-md pointer-events-none"
+        />
+      )}
       <div className="relative flex items-center justify-between p-2">
         <div className="flex items-center gap-1.5">
           {hasSource && (
             <div className="relative flex items-center justify-center w-2 h-2">
-              <div className="absolute w-2 h-2 rounded-full bg-red-500/30 animate-ping" />
-              <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+              <div
+                className={`absolute w-2 h-2 rounded-full bg-red-500/30 ${
+                  isFetching ? 'animate-pulse' : 'animate-ping'
+                }`}
+              />
+              <div
+                key={isSuccess ? `dot-${successPulseKey}` : 'dot-idle'}
+                className={`w-1.5 h-1.5 rounded-full bg-red-500 ${
+                  isSuccess ? 'metric-ai-success-dot' : ''
+                }`}
+              />
             </div>
           )}
-          <span className={`text-[11px] font-medium leading-none ${hasSource ? 'text-[#c0c0c0]' : 'text-[#808080]'}`}>
+          <span
+            className={`text-[11px] font-medium leading-none transition-colors duration-300 ${
+              hasSource ? 'text-[#c0c0c0]' : 'text-[#808080]'
+            } ${isFetching ? 'text-[#e6e6e6]' : ''}`}
+          >
             {label}
           </span>
         </div>

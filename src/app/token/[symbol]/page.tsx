@@ -95,6 +95,15 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const [isWatchlistLoading, setIsWatchlistLoading] = useState(false);
   const [watchlistCount, setWatchlistCount] = useState<number | null>(null);
   const [settlementPnlData, setSettlementPnlData] = useState<SettlementPnLSummary | null>(null);
+  // Visual state for the Metric Live Price card driven by the Metric AI worker
+  // ingestion useEffect below. The first viewer with stale ClickHouse data wins
+  // the fetch (see freshness check), so this state only flips for that viewer.
+  const [metricAIState, setMetricAIState] = useState<'idle' | 'fetching' | 'success' | 'failed'>('idle');
+  useEffect(() => {
+    if (metricAIState !== 'success' && metricAIState !== 'failed') return;
+    const t = setTimeout(() => setMetricAIState('idle'), 1700);
+    return () => clearTimeout(t);
+  }, [metricAIState]);
   const symbolUpper = String(symbol || '').toUpperCase();
 
   // Rollover notification modal state
@@ -1152,7 +1161,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           timestamp: new Date().toISOString(),
         });
         console.log('[Metric-AI] ═══════════════════════════════════════════════════');
-        
+
+        // First viewer past the freshness check is the one actually fetching;
+        // surface that to the Metric Live Price card via aiState.
+        if (!cancelled) setMetricAIState('fetching');
+
         const workerStartTime = Date.now();
         
         const ai = await runMetricAIWithPolling(
@@ -1181,6 +1194,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             metricName,
             workerDurationMs,
           });
+          setMetricAIState('failed');
           return;
         }
 
@@ -1203,6 +1217,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             raw: ai.asset_price_suggestion ?? ai.value,
             parsed: value,
           });
+          setMetricAIState('failed');
           return;
         }
 
@@ -1237,6 +1252,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             marketId,
             metricName,
           });
+          setMetricAIState('failed');
         } else {
           console.log('[Metric-AI] ═══════════════════════════════════════════════════');
           console.log('[Metric-AI] ✅ METRIC INGESTION COMPLETE', {
@@ -1248,6 +1264,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             timestamp: new Date().toISOString(),
           });
           console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+          setMetricAIState('success');
         }
       } catch (e) {
         const totalDurationMs = Date.now() - runStartTime;
@@ -1257,6 +1274,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           metricName,
           totalDurationMs,
         });
+        setMetricAIState((prev) => (prev === 'fetching' ? 'failed' : prev));
       }
     };
 
@@ -1877,6 +1895,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                         marketStatus={(md.market as any)?.market_status || undefined}
                         onOpenSettlement={() => setIsSettlementView(true)}
                         enableLiveMetric={false}
+                        aiState={metricAIState}
                       />
                     );
                   })()}

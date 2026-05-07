@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ethers } from 'ethers'
 import { withRelayer, sendWithNonceRetry, isInsufficientFundsError } from '@/lib/relayerRouter'
+import {
+  createWithdrawalJob,
+  markWithdrawalStep,
+  failOrRequeueWithdrawalJob,
+  completeWithdrawalJob,
+} from '@/lib/withdrawalJobs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,19 +36,7 @@ type SpokeChainConfig = {
 }
 
 function getSpokeConfig(chainId: number): SpokeChainConfig {
-  if (chainId === 137) {
-    return {
-      name: 'polygon',
-      chainId: 137,
-      usdcAddress: process.env.SPOKE_POLYGON_USDC_ADDRESS || '',
-      inboxAddress: process.env.SPOKE_INBOX_ADDRESS_POLYGON || process.env.SPOKE_INBOX_ADDRESS || '',
-      rpcList: [
-        process.env.ALCHEMY_POLYGON_HTTP,
-        process.env.RPC_URL_POLYGON,
-        process.env.POLYGON_RPC_URL,
-      ],
-    }
-  }
+  // Arbitrum is the only supported spoke chain. Polygon was removed.
   if (chainId === 42161) {
     return {
       name: 'arbitrum',
@@ -60,7 +54,7 @@ function getSpokeConfig(chainId: number): SpokeChainConfig {
       ],
     }
   }
-  throw new Error(`Unsupported target chain: ${chainId}`)
+  throw new Error(`Unsupported target chain: ${chainId} (only Arbitrum / 42161 is supported)`)
 }
 
 function getHubRpc(): string {
@@ -80,94 +74,118 @@ function toBytes32Address(addr: string): string {
   return '0x' + '0'.repeat(24) + hex
 }
 
+function shortErr(err: any): string {
+  return String(err?.reason || err?.shortMessage || err?.message || err || '').slice(0, 800)
+}
+
 export async function POST(request: NextRequest) {
   const tag = '[cross-chain-withdraw]'
 
+  let body: any
   try {
-    const body = await request.json()
-    const { user, amount, targetChainId } = body as {
-      user?: string
-      amount?: string
-      targetChainId?: number
-    }
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
 
-    if (!user || !ethers.isAddress(user)) {
-      return NextResponse.json({ error: 'Invalid user address' }, { status: 400 })
-    }
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-      return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
-    }
-    if (!targetChainId || (targetChainId !== 137 && targetChainId !== 42161)) {
-      return NextResponse.json(
-        { error: 'targetChainId must be 137 (Polygon) or 42161 (Arbitrum)' },
-        { status: 400 }
-      )
-    }
+  const { user, amount, targetChainId } = body as {
+    user?: string
+    amount?: string
+    targetChainId?: number
+  }
 
-    const spokeCfg = getSpokeConfig(targetChainId)
-    const amountWei = ethers.parseUnits(amount, 6)
-    
-    // Debug: log the config being used
-    console.log(`${tag} Using spoke config:`, {
-      name: spokeCfg.name,
-      usdcAddress: spokeCfg.usdcAddress,
-      inboxAddress: spokeCfg.inboxAddress,
-      envInboxValue: process.env.SPOKE_INBOX_ADDRESS_ARBITRUM || 'NOT_SET',
-    })
+  if (!user || !ethers.isAddress(user)) {
+    return NextResponse.json({ error: 'Invalid user address' }, { status: 400 })
+  }
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
+  }
+  if (!targetChainId || targetChainId !== 42161) {
+    return NextResponse.json(
+      { error: 'targetChainId must be 42161 (Arbitrum). Polygon withdrawals are not supported.' },
+      { status: 400 }
+    )
+  }
 
-    // Hardcoded fallbacks due to Vercel env var sync issues
-    const collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS || '0xB4d81a5093dB98de9088a061fb1b3982Fe09D3b5'
-    const hubOutboxAddr = process.env.HUB_OUTBOX_ADDRESS || '0x4c32ff22b927a134a3286d5E33212debF951AcF5'
-    if (!collateralHubAddr || !ethers.isAddress(collateralHubAddr)) {
-      return NextResponse.json({ error: 'COLLATERAL_HUB_ADDRESS not configured' }, { status: 500 })
-    }
-    if (!hubOutboxAddr || !ethers.isAddress(hubOutboxAddr)) {
-      return NextResponse.json({ error: 'HUB_OUTBOX_ADDRESS not configured' }, { status: 500 })
-    }
+  const spokeCfg = getSpokeConfig(targetChainId)
+  const amountWei = ethers.parseUnits(amount, 6)
 
-    const spokeUsdcAddr = spokeCfg.usdcAddress
-    if (!spokeUsdcAddr || !ethers.isAddress(spokeUsdcAddr)) {
-      return NextResponse.json(
-        { error: `USDC address not configured for ${spokeCfg.name}` },
-        { status: 500 }
-      )
-    }
+  // Hardcoded fallbacks due to Vercel env var sync issues
+  const collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS || '0xB4d81a5093dB98de9088a061fb1b3982Fe09D3b5'
+  const hubOutboxAddr = process.env.HUB_OUTBOX_ADDRESS || '0x4c32ff22b927a134a3286d5E33212debF951AcF5'
+  if (!collateralHubAddr || !ethers.isAddress(collateralHubAddr)) {
+    return NextResponse.json({ error: 'COLLATERAL_HUB_ADDRESS not configured' }, { status: 500 })
+  }
+  if (!hubOutboxAddr || !ethers.isAddress(hubOutboxAddr)) {
+    return NextResponse.json({ error: 'HUB_OUTBOX_ADDRESS not configured' }, { status: 500 })
+  }
 
-    const spokeInboxAddr = spokeCfg.inboxAddress
-    if (!spokeInboxAddr || !ethers.isAddress(spokeInboxAddr)) {
-      return NextResponse.json(
-        { error: `Spoke inbox not configured for ${spokeCfg.name}` },
-        { status: 500 }
-      )
-    }
+  const spokeUsdcAddr = spokeCfg.usdcAddress
+  if (!spokeUsdcAddr || !ethers.isAddress(spokeUsdcAddr)) {
+    return NextResponse.json(
+      { error: `USDC address not configured for ${spokeCfg.name}` },
+      { status: 500 }
+    )
+  }
 
-    const hubProvider = new ethers.JsonRpcProvider(getHubRpc())
-    const hubDomain = Number(process.env.BRIDGE_DOMAIN_HUB || '999')
+  const spokeInboxAddr = spokeCfg.inboxAddress
+  if (!spokeInboxAddr || !ethers.isAddress(spokeInboxAddr)) {
+    return NextResponse.json(
+      { error: `Spoke inbox not configured for ${spokeCfg.name}` },
+      { status: 500 }
+    )
+  }
 
-    // Step 1: Call CollateralHub.requestWithdraw on the hub chain
-    // This debits userCrossChainCredit and emits WithdrawIntent
-    console.log(`${tag} Step 1: requestWithdraw on CollateralHub`, {
+  // Persist the saga BEFORE touching the chain so we never lose track of an
+  // in-flight withdrawal (and the retry worker can pick it up if we crash).
+  let jobId = ''
+  try {
+    jobId = await createWithdrawalJob({
       user,
       targetChainId,
-      amount: amountWei.toString(),
+      amountWei,
+      amountHuman: amount,
+      spokeToken: spokeUsdcAddr,
+      metadata: {
+        spokeName: spokeCfg.name,
+        spokeInbox: spokeInboxAddr.toLowerCase(),
+        hubOutbox: hubOutboxAddr.toLowerCase(),
+        collateralHub: collateralHubAddr.toLowerCase(),
+      },
+      maxAttempts: 8,
     })
+  } catch (e: any) {
+    console.error(`${tag} failed to create withdrawal job`, shortErr(e))
+    return NextResponse.json(
+      { error: 'Failed to persist withdrawal job; refusing to start chain calls.' },
+      { status: 500 }
+    )
+  }
 
-    let withdrawId: string = ''
+  console.log(`${tag} job ${jobId} starting`, {
+    user, targetChainId, amount, spokeInbox: spokeInboxAddr,
+  })
 
+  const hubProvider = new ethers.JsonRpcProvider(getHubRpc())
+  const hubDomain = Number(process.env.BRIDGE_DOMAIN_HUB || '999')
+  let withdrawId: string = ''
+
+  // ─────────── STEP 1: requestWithdraw on hub ───────────
+  // This is the ONLY irreversible step from a user-credit POV. If this
+  // succeeds and step 2/3 fail, the retry worker handles the rest.
+  await markWithdrawalStep(jobId, 'hub_debiting')
+
+  try {
     await withRelayer({
       pool: 'hub_inbox',
       provider: hubProvider,
       action: async (wallet) => {
         const hub = new ethers.Contract(collateralHubAddr, COLLATERAL_HUB_ABI, wallet)
 
-        // Simulate first
         try {
           withdrawId = await hub.requestWithdraw.staticCall(user, targetChainId, amountWei)
-          console.log(`${tag} requestWithdraw simulate OK`, { withdrawId })
         } catch (simErr: any) {
-          const msg = simErr?.reason || simErr?.shortMessage || simErr?.message || String(simErr)
-          console.error(`${tag} requestWithdraw simulate FAILED`, msg)
-          throw new Error(`CollateralHub.requestWithdraw failed: ${msg}`)
+          throw new Error(`CollateralHub.requestWithdraw simulate failed: ${shortErr(simErr)}`)
         }
 
         const tx = await sendWithNonceRetry({
@@ -179,12 +197,8 @@ export async function POST(request: NextRequest) {
           label: 'withdraw:hub:requestWithdraw',
         })
         const rc = await tx.wait()
-        console.log(`${tag} requestWithdraw confirmed`, {
-          txHash: tx.hash,
-          block: rc?.blockNumber,
-        })
+        console.log(`${tag} job ${jobId} step1 confirmed`, { txHash: tx.hash, block: rc?.blockNumber })
 
-        // Extract withdrawId from logs if static call didn't provide it
         if (!withdrawId) {
           const iface = new ethers.Interface([
             'event WithdrawIntent(address indexed user, uint64 targetChainId, uint256 amount, bytes32 withdrawId)',
@@ -192,54 +206,54 @@ export async function POST(request: NextRequest) {
           for (const log of rc?.logs || []) {
             try {
               const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data })
-              if (parsed?.name === 'WithdrawIntent') {
-                withdrawId = parsed.args.withdrawId
-                break
-              }
+              if (parsed?.name === 'WithdrawIntent') { withdrawId = parsed.args.withdrawId; break }
             } catch {}
           }
         }
+
+        await markWithdrawalStep(jobId, 'hub_debited', {
+          withdraw_id: withdrawId || undefined,
+          hub_request_tx: tx.hash,
+          hub_request_block: rc?.blockNumber ?? undefined,
+        })
       },
     })
-
-    if (!withdrawId) {
+  } catch (err: any) {
+    // Step 1 failure → user wasn't debited. Mark hub_debit_failed (terminal).
+    await markWithdrawalStep(jobId, 'hub_debit_failed', { last_error: shortErr(err) }).catch(() => {})
+    if (isInsufficientFundsError(err)) {
       return NextResponse.json(
-        { error: 'Failed to obtain withdrawId from CollateralHub' },
-        { status: 500 }
+        { jobId, error: 'all_relayers_insufficient_funds', message: 'All hub relayers are out of gas. Please retry shortly.' },
+        { status: 503 }
       )
     }
+    return NextResponse.json({ jobId, error: shortErr(err) }, { status: 500 })
+  }
 
-    // Step 2: Call HubBridgeOutboxWormhole.sendWithdraw on the hub chain
-    // This emits WithdrawSent with the encoded payload
-    console.log(`${tag} Step 2: sendWithdraw on HubBridgeOutbox`, {
-      dstDomain: targetChainId,
-      user,
-      token: spokeUsdcAddr,
-      amount: amountWei.toString(),
-      withdrawId,
-    })
+  if (!withdrawId) {
+    await failOrRequeueWithdrawalJob(jobId, 'no withdrawId after step1', 'requires_manual', 0).catch(() => {})
+    return NextResponse.json(
+      { jobId, error: 'Failed to obtain withdrawId from CollateralHub' },
+      { status: 500 }
+    )
+  }
 
+  // ─────────── STEP 2: sendWithdraw on hub outbox ───────────
+  // From here on, any failure is RECOVERABLE by the retry worker because
+  // we have withdrawId persisted. We mark `outbox_failed` so the worker
+  // knows to re-emit the WithdrawSent event.
+  await markWithdrawalStep(jobId, 'hub_sending')
+  try {
     await withRelayer({
       pool: 'hub_inbox',
       provider: hubProvider,
       action: async (wallet) => {
         const outbox = new ethers.Contract(hubOutboxAddr, HUB_OUTBOX_ABI, wallet)
-
         try {
-          await outbox.sendWithdraw.staticCall(
-            targetChainId,
-            user,
-            spokeUsdcAddr,
-            amountWei,
-            withdrawId
-          )
-          console.log(`${tag} sendWithdraw simulate OK`)
+          await outbox.sendWithdraw.staticCall(targetChainId, user, spokeUsdcAddr, amountWei, withdrawId)
         } catch (simErr: any) {
-          const msg = simErr?.reason || simErr?.shortMessage || simErr?.message || String(simErr)
-          console.error(`${tag} sendWithdraw simulate FAILED`, msg)
-          throw new Error(`HubBridgeOutbox.sendWithdraw failed: ${msg}`)
+          throw new Error(`HubBridgeOutbox.sendWithdraw simulate failed: ${shortErr(simErr)}`)
         }
-
         const tx = await sendWithNonceRetry({
           provider: hubProvider,
           wallet,
@@ -248,87 +262,86 @@ export async function POST(request: NextRequest) {
           args: [targetChainId, user, spokeUsdcAddr, amountWei, withdrawId],
           label: 'withdraw:hub:sendWithdraw',
         })
-        await tx.wait()
-        console.log(`${tag} sendWithdraw confirmed`, { txHash: tx.hash })
+        const rc = await tx.wait()
+        console.log(`${tag} job ${jobId} step2 confirmed`, { txHash: tx.hash })
+        await markWithdrawalStep(jobId, 'hub_sent', {
+          hub_send_tx: tx.hash,
+          hub_send_block: rc?.blockNumber ?? undefined,
+        })
       },
     })
-
-    // Step 3: Deliver to spoke — call SpokeBridgeInboxWormhole.receiveMessage
-    // This instructs SpokeVault.releaseToUser to send USDC to the user
-    const spokeRpc = spokeCfg.rpcList.find((v) => !!v) || ''
-    if (!spokeRpc) {
-      return NextResponse.json(
-        { error: `No RPC configured for ${spokeCfg.name}` },
-        { status: 500 }
-      )
-    }
-
-    const spokeProvider = new ethers.JsonRpcProvider(spokeRpc)
-    const srcDomain = hubDomain
-
-    const hubOutboxRemoteApp =
-      (spokeCfg.name === 'polygon'
-        ? process.env.BRIDGE_REMOTE_APP_HUB_FOR_POLYGON
-        : process.env.BRIDGE_REMOTE_APP_HUB_FOR_ARBITRUM) ||
-      process.env.BRIDGE_REMOTE_APP_HUB ||
-      (hubOutboxAddr ? toBytes32Address(hubOutboxAddr) : '')
-
-    if (!hubOutboxRemoteApp || !/^0x[0-9a-fA-F]{64}$/.test(hubOutboxRemoteApp)) {
-      return NextResponse.json(
-        { error: 'Cannot derive hub remote app for spoke delivery' },
-        { status: 500 }
-      )
-    }
-
-    const TYPE_WITHDRAW = 2
-    const spokePayload = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['uint8', 'address', 'address', 'uint256', 'bytes32'],
-      [TYPE_WITHDRAW, user, spokeUsdcAddr, amountWei, withdrawId]
+  } catch (err: any) {
+    const outcome = await failOrRequeueWithdrawalJob(
+      jobId, shortErr(err), 'outbox_failed', 30
+    ).catch(() => 'requeued' as const)
+    return NextResponse.json(
+      {
+        jobId, withdrawId,
+        error: 'hub_outbox_failed',
+        message: 'Hub debit succeeded; outbox send failed and is queued for retry.',
+        recoverable: outcome !== 'requires_manual',
+      },
+      { status: 202 }
     )
+  }
 
-    console.log(`${tag} Step 3: receiveMessage on spoke inbox (${spokeCfg.name})`, {
-      spokeInbox: spokeInboxAddr,
-      srcDomain,
-      srcApp: hubOutboxRemoteApp,
-      withdrawId,
-    })
+  // ─────────── STEP 3: deliver to spoke ───────────
+  const spokeRpc = spokeCfg.rpcList.find((v) => !!v) || ''
+  if (!spokeRpc) {
+    await failOrRequeueWithdrawalJob(jobId, `No RPC for ${spokeCfg.name}`, 'spoke_pending', 30).catch(() => {})
+    return NextResponse.json(
+      { jobId, withdrawId, error: 'spoke_rpc_missing', message: `No RPC configured for ${spokeCfg.name}; queued for retry.` },
+      { status: 202 }
+    )
+  }
 
-    const spokePoolName =
-      spokeCfg.name === 'polygon' ? 'spoke_inbox_polygon' : 'spoke_inbox_arbitrum'
+  const spokeProvider = new ethers.JsonRpcProvider(spokeRpc)
+  const srcDomain = hubDomain
 
+  const hubOutboxRemoteApp =
+    process.env.BRIDGE_REMOTE_APP_HUB_FOR_ARBITRUM ||
+    process.env.BRIDGE_REMOTE_APP_HUB ||
+    (hubOutboxAddr ? toBytes32Address(hubOutboxAddr) : '')
+
+  if (!hubOutboxRemoteApp || !/^0x[0-9a-fA-F]{64}$/.test(hubOutboxRemoteApp)) {
+    await failOrRequeueWithdrawalJob(jobId, 'Cannot derive hub remote app', 'spoke_pending', 60).catch(() => {})
+    return NextResponse.json(
+      { jobId, withdrawId, error: 'spoke_remote_app_missing', message: 'Cannot derive hub remote app; queued for retry.' },
+      { status: 202 }
+    )
+  }
+
+  const TYPE_WITHDRAW = 2
+  const spokePayload = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['uint8', 'address', 'address', 'uint256', 'bytes32'],
+    [TYPE_WITHDRAW, user, spokeUsdcAddr, amountWei, withdrawId]
+  )
+
+  const spokePoolName = 'spoke_inbox_arbitrum'
+
+  await markWithdrawalStep(jobId, 'spoke_delivering')
+
+  try {
     await withRelayer({
-      pool: spokePoolName as any,
+      pool: spokePoolName,
       provider: spokeProvider,
       action: async (wallet) => {
         const inbox = new ethers.Contract(spokeInboxAddr, SPOKE_INBOX_ABI, wallet)
 
         try {
           await inbox.receiveMessage.staticCall(srcDomain, hubOutboxRemoteApp, spokePayload)
-          console.log(`${tag} spoke receiveMessage simulate OK`)
         } catch (simErr: any) {
-          const msg = simErr?.reason || simErr?.shortMessage || simErr?.message || String(simErr)
-          console.error(`${tag} spoke receiveMessage simulate FAILED`, msg)
-          throw new Error(`SpokeBridgeInbox.receiveMessage failed: ${msg}`)
+          throw new Error(`SpokeBridgeInbox.receiveMessage simulate failed: ${shortErr(simErr)}`)
         }
 
         const fee = await spokeProvider.getFeeData().catch(() => ({} as any))
-        const maxPriorityFeePerGas =
-          spokeCfg.name === 'arbitrum'
-            ? ethers.parseUnits('0.05', 'gwei')
-            : fee?.maxPriorityFeePerGas || ethers.parseUnits('35', 'gwei')
+        const maxPriorityFeePerGas = ethers.parseUnits('0.05', 'gwei')
         const base = fee?.maxFeePerGas || fee?.gasPrice || maxPriorityFeePerGas * 2n
-        const maxFeePerGas =
-          spokeCfg.name === 'arbitrum'
-            ? base + maxPriorityFeePerGas
-            : base + maxPriorityFeePerGas * 2n
+        const maxFeePerGas = base + maxPriorityFeePerGas
 
-        let gasLimit = spokeCfg.name === 'arbitrum' ? 150000n : 300000n
+        let gasLimit = 150000n
         try {
-          const est = await inbox.receiveMessage.estimateGas(
-            srcDomain,
-            hubOutboxRemoteApp,
-            spokePayload
-          )
+          const est = await inbox.receiveMessage.estimateGas(srcDomain, hubOutboxRemoteApp, spokePayload)
           gasLimit = (est * 130n) / 100n
         } catch {}
 
@@ -342,36 +355,26 @@ export async function POST(request: NextRequest) {
           label: `withdraw:spoke:${spokeCfg.name}`,
         })
         const rc = await tx.wait()
-        console.log(`${tag} spoke delivery confirmed`, {
-          txHash: tx.hash,
-          block: rc?.blockNumber,
-        })
+        console.log(`${tag} job ${jobId} step3 confirmed`, { txHash: tx.hash })
+        await completeWithdrawalJob(jobId, tx.hash, rc?.blockNumber ?? undefined)
       },
     })
-
-    console.log(`${tag} Cross-chain withdrawal complete`, {
-      user,
-      targetChainId,
-      amount: amountWei.toString(),
-      withdrawId,
-    })
-
-    return NextResponse.json({
-      success: true,
-      withdrawId,
-      targetChainId,
-      amount: amount,
-    })
   } catch (err: any) {
-    if (isInsufficientFundsError(err) || String(err?.message || '').includes('insufficient funds for gas')) {
-      console.error('[WITHDRAW] all relayers out of funds', err?.message || err);
-      return NextResponse.json(
-        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
-        { status: 503 }
-      );
-    }
-    const msg = err?.message || String(err)
-    console.error(`${tag} ERROR`, msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    const outcome = await failOrRequeueWithdrawalJob(
+      jobId, shortErr(err), 'spoke_failed', 30
+    ).catch(() => 'requeued' as const)
+    return NextResponse.json(
+      {
+        jobId, withdrawId,
+        error: 'spoke_delivery_failed',
+        message: 'Hub steps succeeded; spoke delivery failed and is queued for retry.',
+        recoverable: outcome !== 'requires_manual',
+        hubSent: true,
+      },
+      { status: 202 }
+    )
   }
+
+  console.log(`${tag} job ${jobId} complete`, { user, targetChainId, withdrawId })
+  return NextResponse.json({ success: true, jobId, withdrawId, targetChainId, amount })
 }
