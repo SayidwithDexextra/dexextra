@@ -682,9 +682,9 @@ export async function POST(req: NextRequest) {
               if (marketId) {
                 try {
                   const updatedLocator = {
-                    ...storedLocatorData,
+                    ...storedLocatorData!,
                     last_successful_at: new Date().toISOString(),
-                    success_count: (storedLocatorData.success_count || 0) + 1,
+                    success_count: (storedLocatorData!.success_count || 0) + 1,
                   };
                   const updatePayload: any = {
                     ai_source_locator: updatedLocator,
