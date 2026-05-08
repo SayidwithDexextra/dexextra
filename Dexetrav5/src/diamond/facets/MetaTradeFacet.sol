@@ -346,6 +346,25 @@ contract MetaTradeFacet is EIP712 {
     ) external returns (uint256 filledAmount) {
         OrderBookStorage.State storage st = OrderBookStorage.state();
         uint256 refPrice = isBuy ? st.bestAsk : st.bestBid;
+        if (refPrice == 0) {
+            // Self-heal stale `bestAsk`/`bestBid`. Settlement code in
+            // OBSettlementFacet / OBBatchSettlementFacet unconditionally zeroes
+            // these scalars without walking the linked list, so the cached
+            // value can be 0 while real liquidity sits at the head. Mirror the
+            // same heal that OBOrderPlacementFacet performs in its market-order
+            // entry points (see `_refreshBestAsk` / `_refreshBestBid`) so this
+            // gate doesn't reject a trade that would actually match.
+            uint256 head = isBuy ? st.sellPriceHead : st.buyPriceHead;
+            if (head != 0) {
+                OrderBookStorage.PriceLevel storage lvl = isBuy
+                    ? st.sellLevels[head]
+                    : st.buyLevels[head];
+                if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
+                    if (isBuy) { st.bestAsk = head; } else { st.bestBid = head; }
+                    refPrice = head;
+                }
+            }
+        }
         require(refPrice != 0, "OB: no liq");
         uint256 notional = Math.mulDiv(amount, refPrice, 1e18);
         _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_MARKET, notional, relayerProof);
