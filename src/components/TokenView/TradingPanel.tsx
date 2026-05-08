@@ -1501,8 +1501,69 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       let startTimePrices = Date.now();
       const obReadProvider = getReadProvider();
       const obViewReadOnly = new ethers.Contract(await contracts.obView.getAddress(), contracts.obView.interface, obReadProvider);
-      const bestBid: bigint = await obViewReadOnly.bestBid();
-      const bestAsk: bigint = await obViewReadOnly.bestAsk();
+      let bestBid: bigint = await obViewReadOnly.bestBid();
+      let bestAsk: bigint = await obViewReadOnly.bestAsk();
+
+      // Self-heal fallback for stale `bestBid`/`bestAsk` scalars.
+      // The on-chain placement facet now refreshes these scalars from the
+      // linked-list head (`buyPriceHead` / `sellPriceHead`) at every market
+      // entry point — but until the next match writes the scalar back, the
+      // cached value can read 0 while real liquidity sits at the head. We
+      // mirror that heal here so the preflight doesn't spuriously refuse a
+      // close. See `_refreshBestAsk` in OBOrderPlacementFacet and the
+      // matching fallback in `src/app/api/gasless/trade/route.ts`.
+      if (bestBid === 0n || bestAsk === 0n) {
+        try {
+          const headView = new ethers.Contract(
+            await contracts.obView.getAddress(),
+            [
+              'function buyPriceHead() view returns (uint256)',
+              'function sellPriceHead() view returns (uint256)',
+              'function buyLevels(uint256) view returns (tuple(uint256 totalAmount,uint256 firstOrderId,uint256 lastOrderId,bool exists))',
+              'function sellLevels(uint256) view returns (tuple(uint256 totalAmount,uint256 firstOrderId,uint256 lastOrderId,bool exists))',
+            ],
+            obReadProvider,
+          );
+          const [buyHeadRaw, sellHeadRaw] = await Promise.all([
+            bestBid === 0n ? headView.buyPriceHead() : Promise.resolve(0n),
+            bestAsk === 0n ? headView.sellPriceHead() : Promise.resolve(0n),
+          ]);
+          if (bestBid === 0n) {
+            const buyHead = BigInt(buyHeadRaw || 0);
+            if (buyHead > 0n) {
+              const lvl: any = await headView.buyLevels(buyHead);
+              if (
+                lvl?.exists &&
+                BigInt(lvl?.totalAmount ?? 0) > 0n &&
+                BigInt(lvl?.firstOrderId ?? 0) > 0n
+              ) {
+                console.log(`🩹 [RPC] bestBid stale (0) — using buyPriceHead=${buyHead.toString()}`);
+                bestBid = buyHead;
+              }
+            }
+          }
+          if (bestAsk === 0n) {
+            const sellHead = BigInt(sellHeadRaw || 0);
+            if (sellHead > 0n) {
+              const lvl: any = await headView.sellLevels(sellHead);
+              if (
+                lvl?.exists &&
+                BigInt(lvl?.totalAmount ?? 0) > 0n &&
+                BigInt(lvl?.firstOrderId ?? 0) > 0n
+              ) {
+                console.log(`🩹 [RPC] bestAsk stale (0) — using sellPriceHead=${sellHead.toString()}`);
+                bestAsk = sellHead;
+              }
+            }
+          }
+        } catch (headErr: any) {
+          console.warn(
+            '⚠️ [RPC] head-fallback unavailable (FacetRegistry not promoted yet?):',
+            headErr?.shortMessage || headErr?.message || headErr,
+          );
+        }
+      }
+
       const durationPrices = Date.now() - startTimePrices;
       console.log(`✅ [RPC] Reference prices fetched in ${durationPrices}ms`, {
         bestBid: bestBid.toString(),
