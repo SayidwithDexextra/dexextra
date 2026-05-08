@@ -23,6 +23,12 @@ interface PositionCreatedModalProps {
   // 'submitted' = order accepted but not yet filled (resting limit order)
   // 'filled'    = order filled and a position is now open
   phase?: 'submitted' | 'filled';
+  // Fired when the user clicks the primary CTA ("View Position" when a
+  // position was opened, "View Order" while a limit order is still resting).
+  // The modal still calls `onClose` afterwards, so callers only need to
+  // handle the navigation/tab-switch side effect here.
+  onViewPosition?: () => void;
+  onViewOrder?: () => void;
 }
 
 interface Sparkle {
@@ -142,8 +148,23 @@ export default function PositionCreatedModal({
   autoClose = false,
   autoCloseDelay = 8000,
   phase = 'filled',
+  onViewPosition,
+  onViewOrder,
 }: PositionCreatedModalProps) {
   const isSubmittedOnly = phase === 'submitted';
+
+  const handlePrimaryAction = useCallback(() => {
+    try {
+      if (isSubmittedOnly) {
+        onViewOrder?.();
+      } else {
+        onViewPosition?.();
+      }
+    } catch {
+      // Never let a navigation hook prevent the modal from closing.
+    }
+    onClose();
+  }, [isSubmittedOnly, onViewOrder, onViewPosition, onClose]);
   const [sparkles, setSparkles] = useState<Sparkle[]>([]);
   const [showContent, setShowContent] = useState(false);
 
@@ -281,7 +302,7 @@ export default function PositionCreatedModal({
                   transition={{ delay: 0.35 }}
                 >
                   <button
-                    onClick={onClose}
+                    onClick={handlePrimaryAction}
                     className={`w-full py-2.5 px-3 ${sideBgColor} hover:opacity-80 border ${sideBorderColor} rounded-md text-[11px] font-medium ${sideColor} transition-all duration-200`}
                   >
                     {isSubmittedOnly ? 'View Order' : 'View Position'}

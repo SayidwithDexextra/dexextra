@@ -188,8 +188,27 @@ library PositionManager {
         uint256 indexPlusOne = positionIndex[marketId];
         bool found = indexPlusOne != 0;
         uint256 positionIdx = found ? indexPlusOne - 1 : 0;
-        
-        // Fallback: if index not set, do O(N) search for legacy positions
+
+        // BUG FIX 2026-05-08: Validate the index points at a slot whose marketId
+        // matches. Stale pointers from pre-2026-05-06 close paths can leave one
+        // marketId's index aimed at another marketId's position slot (after
+        // swap-and-pop). Without this guard, executePositionNettingWithIndex
+        // silently merged trades for marketId B into market A's position via
+        // the same-direction weighted-average branch, corrupting entryPrice and
+        // marginLocked across markets. Self-heal by clearing the stale pointer
+        // so the fallback below either finds the real slot or creates a new one.
+        if (
+            found &&
+            (positionIdx >= positions.length ||
+                positions[positionIdx].marketId != marketId)
+        ) {
+            positionIndex[marketId] = 0;
+            indexPlusOne = 0;
+            found = false;
+        }
+
+        // Fallback: if index not set (or just self-healed above), do O(N)
+        // search for legacy positions and re-anchor the index.
         if (!found) {
             for (uint256 i = 0; i < positions.length; i++) {
                 if (positions[i].marketId == marketId) {

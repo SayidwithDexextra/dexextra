@@ -40,12 +40,18 @@ contract OBPricingFacet {
         returns (uint256[] memory bidPrices, uint256[] memory bidAmounts, uint256[] memory askPrices, uint256[] memory askAmounts)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        // Bids: walk from buyPriceHead (linked list head) downward
-        // NOTE: Use buyPriceHead instead of bestBid - bestBid may not be connected to linked list
+        // BUG FIX 2026-05-08: Anchor the walk on s.bestBid / s.bestAsk instead of
+        // s.buyPriceHead / s.sellPriceHead. The two-source-of-truth design caused
+        // the order-book panel (which read this function) to drift from the market
+        // info header (which reads s.bestBid / s.bestAsk via getMarketPriceData).
+        // Symptom: orphaned linked-list entries with stale level.totalAmount > 0
+        // were rendered as phantom levels even after bestBid/bestAsk were cleared.
+        // By anchoring here, the panel and the header are guaranteed to start from
+        // the same scalar; if bestBid == 0 we return [] (matching the header).
         uint256[] memory tmpBidPrices = new uint256[](levels);
         uint256[] memory tmpBidAmounts = new uint256[](levels);
         uint256 bCount = 0;
-        uint256 p = s.buyPriceHead;
+        uint256 p = s.bestBid;
         while (bCount < levels && p != 0) {
             OrderBookStorage.PriceLevel storage lvl = s.buyLevels[p];
             if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
@@ -59,12 +65,10 @@ contract OBPricingFacet {
         bidAmounts = new uint256[](bCount);
         for (uint256 i = 0; i < bCount; i++) { bidPrices[i] = tmpBidPrices[i]; bidAmounts[i] = tmpBidAmounts[i]; }
 
-        // Asks: walk from sellPriceHead (linked list head) upward
-        // NOTE: Use sellPriceHead instead of bestAsk - bestAsk may not be connected to linked list
         uint256[] memory tmpAskPrices = new uint256[](levels);
         uint256[] memory tmpAskAmounts = new uint256[](levels);
         uint256 aCount = 0;
-        uint256 p2 = s.sellPriceHead;
+        uint256 p2 = s.bestAsk;
         while (aCount < levels && p2 != 0) {
             OrderBookStorage.PriceLevel storage lvl2 = s.sellLevels[p2];
             if (lvl2.exists && lvl2.totalAmount > 0 && lvl2.firstOrderId != 0) {

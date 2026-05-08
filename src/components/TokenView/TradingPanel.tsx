@@ -3018,6 +3018,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         orderType={positionCreatedModal.orderType}
         notionalValue={positionCreatedModal.notionalValue}
         phase={positionCreatedModal.phase}
+        onViewPosition={() => {
+          if (typeof window === 'undefined') return;
+          window.dispatchEvent(
+            new CustomEvent('requestActivityTab', {
+              detail: { tab: 'positions', symbol: tokenData.symbol || '' },
+            })
+          );
+        }}
+        onViewOrder={() => {
+          if (typeof window === 'undefined') return;
+          window.dispatchEvent(
+            new CustomEvent('requestActivityTab', {
+              detail: { tab: 'orders', symbol: tokenData.symbol || '' },
+            })
+          );
+        }}
       />
       
       {/* Wallet Connection Modal */}

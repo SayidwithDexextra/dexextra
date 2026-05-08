@@ -919,6 +919,50 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     };
   }, [displayedPositions]);
 
+  // External tab requests: e.g. PositionCreatedModal "View Position" CTA fires
+  // a `requestActivityTab` window event so we can jump to the matching tab and
+  // scroll the activity panel into view, even when the modal was opened from a
+  // different scroll position on the page.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onRequestTab = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail as { tab?: TabType; symbol?: string } | undefined;
+      const requested = detail?.tab;
+      if (
+        requested !== 'positions' &&
+        requested !== 'orders' &&
+        requested !== 'trades' &&
+        requested !== 'history'
+      ) {
+        return;
+      }
+
+      // Ignore requests targeted at a different market (the page wraps one
+      // <MarketActivityTabs> per visible market and we don't want a stale
+      // background instance to react).
+      const requestedSymbol = String(detail?.symbol || '').trim().toUpperCase();
+      const ourSymbol = String(symbol || '').trim().toUpperCase();
+      if (requestedSymbol && ourSymbol && requestedSymbol !== ourSymbol) return;
+
+      setActiveTab(requested);
+
+      try {
+        const container = document.querySelector('[data-walkthrough="token-activity"]');
+        if (container) {
+          (container as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      } catch {
+        // Scrolling is a best-effort affordance; never break the tab switch.
+      }
+    };
+
+    window.addEventListener('requestActivityTab', onRequestTab as EventListener);
+    return () => {
+      window.removeEventListener('requestActivityTab', onRequestTab as EventListener);
+    };
+  }, [symbol]);
+
   // removeOrderFromSessionCache: after a cancel, trigger a global context re-fetch
   const removeOrderFromSessionCache = useCallback(
     (_targetOrderId?: string | number | bigint, _marketSymbol?: string | null) => {
