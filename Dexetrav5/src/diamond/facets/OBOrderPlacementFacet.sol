@@ -387,20 +387,45 @@ contract OBOrderPlacementFacet {
             while (remaining > 0 && currentOrderId != 0 && matchCount < MAX_MATCHES_PER_ORDER) {
                 OrderBookStorage.Order storage sellOrder = s.orders[currentOrderId];
                 uint256 nextSellOrderId = sellOrder.nextOrderId;
-                uint256 matchAmount = remaining < sellOrder.amount ? remaining : sellOrder.amount;
-                
+
+                // Self-trade prevention: never match a trader against their own resting order.
+                // Cancel the resting maker in-place so the off-chain order book stays consistent
+                // (emits OrderCancelled), but do NOT consume the taker's remaining amount and do
+                // NOT call the trade-execution facet (no TradeRecorded, no position update, no
+                // phantom tick into ClickHouse). The taker continues scanning for real liquidity.
                 if (sellOrder.trader == buyOrder.trader) {
-                } else {
-                    pendingMatches[matchCount] = OrderBookStorage.PendingMatch({
-                        counterparty: sellOrder.trader,
-                        price: currentPrice,
-                        amount: matchAmount,
-                        counterpartyIsMargin: sellOrder.isMarginOrder,
-                        restingOrderId: currentOrderId
-                    });
-                    matchCount++;
+                    uint256 cancelOrderId = currentOrderId;
+                    address cancelTrader = sellOrder.trader;
+                    uint256 cancelPrice = sellOrder.price;
+                    uint256 cancelAmount = sellOrder.amount;
+                    bool cancelIsMargin = sellOrder.isMarginOrder;
+                    bool cancelIsBuy = sellOrder.isBuy;
+                    if (level.totalAmount > cancelAmount) { level.totalAmount -= cancelAmount; } else { level.totalAmount = 0; }
+                    if (cancelIsMargin) {
+                        bytes32 rid = _reservationId(s, cancelTrader, cancelOrderId);
+                        s.vault.unreserveMargin(cancelTrader, rid);
+                        s.vault.unreserveMargin(cancelTrader, bytes32(cancelOrderId));
+                    }
+                    _removeOrderFromLevel(s, cancelOrderId, currentPrice, false);
+                    s.removeOrderFromUserList(cancelTrader, cancelOrderId);
+                    emit OrderCancelled(cancelOrderId, cancelTrader, cancelPrice, cancelAmount, cancelIsBuy);
+                    delete s.orders[cancelOrderId];
+                    delete s.cumulativeMarginUsed[cancelOrderId];
+                    currentOrderId = nextSellOrderId;
+                    continue;
                 }
-                
+
+                uint256 matchAmount = remaining < sellOrder.amount ? remaining : sellOrder.amount;
+
+                pendingMatches[matchCount] = OrderBookStorage.PendingMatch({
+                    counterparty: sellOrder.trader,
+                    price: currentPrice,
+                    amount: matchAmount,
+                    counterpartyIsMargin: sellOrder.isMarginOrder,
+                    restingOrderId: currentOrderId
+                });
+                matchCount++;
+
                 unchecked { remaining -= matchAmount; }
                 if (sellOrder.amount > matchAmount) { sellOrder.amount -= matchAmount; } else { sellOrder.amount = 0; }
                 if (level.totalAmount > matchAmount) { level.totalAmount -= matchAmount; } else { level.totalAmount = 0; }
@@ -464,20 +489,45 @@ contract OBOrderPlacementFacet {
             while (remaining > 0 && currentOrderId != 0 && matchCount < MAX_MATCHES_PER_ORDER) {
                 OrderBookStorage.Order storage buyOrder = s.orders[currentOrderId];
                 uint256 nextBuyOrderId = buyOrder.nextOrderId;
-                uint256 matchAmount = remaining < buyOrder.amount ? remaining : buyOrder.amount;
-                
+
+                // Self-trade prevention: never match a trader against their own resting order.
+                // Cancel the resting maker in-place so the off-chain order book stays consistent
+                // (emits OrderCancelled), but do NOT consume the taker's remaining amount and do
+                // NOT call the trade-execution facet (no TradeRecorded, no position update, no
+                // phantom tick into ClickHouse). The taker continues scanning for real liquidity.
                 if (buyOrder.trader == sellOrder.trader) {
-                } else {
-                    pendingMatches[matchCount] = OrderBookStorage.PendingMatch({
-                        counterparty: buyOrder.trader,
-                        price: currentPrice,
-                        amount: matchAmount,
-                        counterpartyIsMargin: buyOrder.isMarginOrder,
-                        restingOrderId: currentOrderId
-                    });
-                    matchCount++;
+                    uint256 cancelOrderId = currentOrderId;
+                    address cancelTrader = buyOrder.trader;
+                    uint256 cancelPrice = buyOrder.price;
+                    uint256 cancelAmount = buyOrder.amount;
+                    bool cancelIsMargin = buyOrder.isMarginOrder;
+                    bool cancelIsBuy = buyOrder.isBuy;
+                    if (level.totalAmount > cancelAmount) { level.totalAmount -= cancelAmount; } else { level.totalAmount = 0; }
+                    if (cancelIsMargin) {
+                        bytes32 rid = _reservationId(s, cancelTrader, cancelOrderId);
+                        s.vault.unreserveMargin(cancelTrader, rid);
+                        s.vault.unreserveMargin(cancelTrader, bytes32(cancelOrderId));
+                    }
+                    _removeOrderFromLevel(s, cancelOrderId, currentPrice, true);
+                    s.removeOrderFromUserList(cancelTrader, cancelOrderId);
+                    emit OrderCancelled(cancelOrderId, cancelTrader, cancelPrice, cancelAmount, cancelIsBuy);
+                    delete s.orders[cancelOrderId];
+                    delete s.cumulativeMarginUsed[cancelOrderId];
+                    currentOrderId = nextBuyOrderId;
+                    continue;
                 }
-                
+
+                uint256 matchAmount = remaining < buyOrder.amount ? remaining : buyOrder.amount;
+
+                pendingMatches[matchCount] = OrderBookStorage.PendingMatch({
+                    counterparty: buyOrder.trader,
+                    price: currentPrice,
+                    amount: matchAmount,
+                    counterpartyIsMargin: buyOrder.isMarginOrder,
+                    restingOrderId: currentOrderId
+                });
+                matchCount++;
+
                 unchecked { remaining -= matchAmount; }
                 if (buyOrder.amount > matchAmount) { buyOrder.amount -= matchAmount; } else { buyOrder.amount = 0; }
                 if (level.totalAmount > matchAmount) { level.totalAmount -= matchAmount; } else { level.totalAmount = 0; }

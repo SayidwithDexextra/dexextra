@@ -83,7 +83,7 @@
   );
   filter: blur(0.5px);
   transform: translateX(-120%) skewX(-18deg);
-  animation: metric-ai-shine 2.4s cubic-bezier(0.4, 0.0, 0.2, 1) infinite;
+  animation: metric-ai-shine 2.4s cubic-bezier(0.4, 0.0, 0.2, 1) 2 forwards;
 }
 
 /* Metric AI success: one-shot border + dot glow when a fresh value lands */

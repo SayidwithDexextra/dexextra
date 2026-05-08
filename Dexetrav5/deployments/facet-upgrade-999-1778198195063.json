@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-05-07T23:56:35.063Z",
+  "network": "hyperliquid",
+  "chainId": 999,
+  "facetAddress": "0x6fC2B78fB8527e8D42Ef1dC1B7966663195725B7",
+  "summary": {
+    "success": 0,
+    "skipped": 7,
+    "failed": 0
+  },
+  "results": [
+    {
+      "market": "500",
+      "address": "0x4ed38ce0d4F3E58E778f2D6ceaB9f9aA2A97196f",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "NASDAQ",
+      "address": "0x8a40FFbcb2bFD6D002476DcB758F568386660182",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "SILVER",
+      "address": "0x5EA47BF5158ad6aFf09B57BA80ED0FD89916f8b9",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "GOLD",
+      "address": "0x8EE56FFD945684DF8268AF5a25B4CC74024887F9",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "CRUDE-OIL",
+      "address": "0xa45e1d2a42D2CAEBeF29FB45CfBDA829b4a89cfe",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "BITCOIN",
+      "address": "0x8EB26feA88B5eaEb10fC407317D77198506994D1",
+      "status": "skipped",
+      "reason": "no matching admin"
+    },
+    {
+      "market": "ETHEREUM",
+      "address": "0xfbfeBad8c29F17578081964664d1C05Fdf56EEc1",
+      "status": "skipped",
+      "reason": "no matching admin"
+    }
+  ]
+}

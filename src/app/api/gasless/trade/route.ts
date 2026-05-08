@@ -962,24 +962,38 @@ export async function POST(req: Request) {
                 }
               }
 
-              // Position-aware margin check
+              // Position-aware margin check.
+              // Mirrors `_marginRequiredForMarketOrder` in OBOrderPlacementFacet: a trade that
+              // reduces an existing position consumes 0 fresh margin up to the current size,
+              // and only the residual portion (if the trade flips sides) opens new exposure.
               let effectiveAmount = amount < 1_000_000_000_000n ? 1_000_000_000_000n : amount;
+              let isReducing = false;
               try {
                 const [posSize] = await vault.getPositionSummary.staticCall(params.trader, marketId);
                 const currentNet = BigInt(posSize as any);
-                const isReducing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
+                isReducing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
                 if (isReducing) {
                   const absCurrentSize = currentNet >= 0n ? currentNet : -currentNet;
                   effectiveAmount = effectiveAmount <= absCurrentSize ? 0n : effectiveAmount - absCurrentSize;
                 }
               } catch (_posErr) {}
 
+              // For reducing trades there's no resting/limit reservation on this path
+              // (sessionPlaceMarginLimit handles its own reservation on-chain), so we treat
+              // a fully-reducing market trade as a close. The on-chain trade-execution facet
+              // wraps `deductFees` in try/catch precisely so closes can succeed even when the
+              // trader has no free collateral to pre-pay fees with — the released margin and
+              // realized PnL from the close itself cover the fee.
+              const isFullClose = isReducing && effectiveAmount === 0n;
               const fullNotional6 = (amount * price) / 1_000_000_000_000_000_000n;
               const estimatedFee6 = estimatedFeeBps > 0n ? (fullNotional6 * estimatedFeeBps) / 10000n : 0n;
               const notional6 = (effectiveAmount * price) / 1_000_000_000_000_000_000n;
               const marginBps = isBuy ? BigInt(marginReq) : 15000n;
               const marginRequired6 = (notional6 * marginBps) / 10000n;
-              const totalRequired6 = marginRequired6 + estimatedFee6;
+              // Only require fee coverage for trades that open new exposure. Closes are
+              // gas-best-effort on-chain and must not be gated by fee headroom here, or
+              // users with profitable positions but $0 free collateral can never exit.
+              const totalRequired6 = isFullClose ? marginRequired6 : marginRequired6 + estimatedFee6;
               const available6 = BigInt(available6Raw);
 
               if (available6 < totalRequired6) {
@@ -991,6 +1005,8 @@ export async function POST(req: Request) {
                   estimatedFee6: estimatedFee6.toString(),
                   notional6: notional6.toString(),
                   marginBps: marginBps.toString(),
+                  isReducing,
+                  isFullClose,
                 });
               }
             } catch (preErr: any) {

@@ -1600,14 +1600,43 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const available: bigint = await vaultReadOnly.getAvailableCollateral.staticCall(userAddr);
         console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
-        const notional6: bigint = (sizeWei * referencePrice) / 10n ** 18n;
+
+        // Position-aware netting (mirrors `_marginRequiredForMarketOrder` in
+        // OBOrderPlacementFacet). A trade that reduces an existing position consumes
+        // 0 fresh margin up to the current size; only the residual portion that flips
+        // sides opens new exposure. Without this, a profitable long with no free
+        // collateral can never sell to close because the preflight quotes a fresh
+        // short's worth of margin against $0 available.
+        const isBuy = selectedOption === 'long';
+        let effectiveSizeWei = sizeWei;
+        let isReducing = false;
+        try {
+          const mktIdForNetting = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
+          if (mktIdForNetting && (vaultReadOnly as any).getPositionSummary) {
+            const posRes = await (vaultReadOnly as any).getPositionSummary.staticCall(userAddr, mktIdForNetting);
+            const currentNet: bigint = BigInt(posRes?.[0] ?? posRes?.size ?? 0);
+            isReducing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
+            if (isReducing) {
+              const absCurrentSize = currentNet >= 0n ? currentNet : -currentNet;
+              effectiveSizeWei = sizeWei <= absCurrentSize ? 0n : sizeWei - absCurrentSize;
+            }
+          }
+        } catch (posErr: any) {
+          console.warn('⚠️ [RPC] Position lookup for netting failed (non-fatal):', posErr?.message || posErr);
+        }
+
+        const notional6: bigint = (effectiveSizeWei * referencePrice) / 10n ** 18n;
         let marginReqBps: bigint = BigInt(marketParams.marginReqBps || 10000);
+        // Residual exposure (after netting) opens new exposure on the trade side, so
+        // its sign matches `selectedOption`: long uses marginReqBps, short uses 15000bps.
         const effectiveBps = (selectedOption === 'short') ? (marginReqBps < 15000n ? 15000n : marginReqBps) : marginReqBps;
         const requiredMargin6: bigint = (notional6 * effectiveBps) / 10000n;
         console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
           available: ethers.formatUnits(available, 6),
           required: ethers.formatUnits(requiredMargin6, 6),
-          bps: effectiveBps.toString()
+          bps: effectiveBps.toString(),
+          isReducing,
+          isFullClose: isReducing && effectiveSizeWei === 0n,
         });
 
         if (available < requiredMargin6) {
