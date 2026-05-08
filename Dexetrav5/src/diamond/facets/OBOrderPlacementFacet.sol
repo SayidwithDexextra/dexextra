@@ -62,6 +62,35 @@ contract OBOrderPlacementFacet {
         return keccak256(abi.encodePacked(s.marketId, trader, orderId));
     }
 
+    // Self-heal a stale best-ask/best-bid scalar by snapping it to the linked-list head when the
+    // scalar reads 0 but the linked list still has live liquidity. Historically the scalars could
+    // become desynced from the linked list (e.g. via settlement-side unconditional `s.bestAsk = 0`
+    // writes, or edge cases in `getNextSellPrice` returning 0 mid-walk), bricking the market-order
+    // hot path even though resting takers were available. Self-healing keeps the contract robust
+    // to any future invariant break without changing observable behavior in the healthy case.
+    //
+    // Storage is per-market diamond, but this facet is shared by every DiamondRegistry market via
+    // FacetRegistry — registering the new facet address there once activates the heal globally.
+    function _refreshBestAsk(OrderBookStorage.State storage s) private {
+        if (s.bestAsk != 0) return;
+        uint256 head = s.sellPriceHead;
+        if (head == 0) return;
+        OrderBookStorage.PriceLevel storage lvl = s.sellLevels[head];
+        if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
+            s.bestAsk = head;
+        }
+    }
+
+    function _refreshBestBid(OrderBookStorage.State storage s) private {
+        if (s.bestBid != 0) return;
+        uint256 head = s.buyPriceHead;
+        if (head == 0) return;
+        OrderBookStorage.PriceLevel storage lvl = s.buyLevels[head];
+        if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
+            s.bestBid = head;
+        }
+    }
+
     function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy)
         external
         validOrder(price, amount)
@@ -79,6 +108,7 @@ contract OBOrderPlacementFacet {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         require(s.leverageEnabled || s.marginRequirementBps == 10000, "lv");
         require(amount > 0, "a0");
+        if (isBuy) { _refreshBestAsk(s); } else { _refreshBestBid(s); }
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice2 != 0, "nl");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
@@ -100,6 +130,7 @@ contract OBOrderPlacementFacet {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         require(s.leverageEnabled || s.marginRequirementBps == 10000, "lv");
         require(amount > 0, "a0");
+        if (isBuy) { _refreshBestAsk(s); } else { _refreshBestBid(s); }
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice != 0, "nl");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice, 10000 + slippageBps, 10000) : refPrice;
@@ -144,6 +175,7 @@ contract OBOrderPlacementFacet {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         require(s.leverageEnabled || s.marginRequirementBps == 10000, "lv");
         require(amount > 0, "a0");
+        if (isBuy) { _refreshBestAsk(s); } else { _refreshBestBid(s); }
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice2 != 0, "nl");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
@@ -372,6 +404,7 @@ contract OBOrderPlacementFacet {
         private
         returns (uint256)
     {
+        _refreshBestAsk(s);
         uint256 currentPrice = s.bestAsk;
         if (currentPrice == 0 || currentPrice > buyOrder.price) {
             return remaining;
@@ -477,6 +510,7 @@ contract OBOrderPlacementFacet {
         private
         returns (uint256)
     {
+        _refreshBestBid(s);
         uint256 currentPrice = s.bestBid;
         
         OrderBookStorage.PendingMatch[] memory pendingMatches = new OrderBookStorage.PendingMatch[](MAX_MATCHES_PER_ORDER);

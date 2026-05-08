@@ -63,6 +63,10 @@ contract OBViewFacet {
     // Compatibility getters (mirror public variables in original)
     function bestBid() external view returns (uint256) { return OrderBookStorage.state().bestBid; }
     function bestAsk() external view returns (uint256) { return OrderBookStorage.state().bestAsk; }
+    // Linked-list heads. Useful for off-chain self-healing when the cached
+    // bestBid/bestAsk scalar is desynced from the actual sorted price-level list.
+    function buyPriceHead() external view returns (uint256) { return OrderBookStorage.state().buyPriceHead; }
+    function sellPriceHead() external view returns (uint256) { return OrderBookStorage.state().sellPriceHead; }
     function lastTradePrice() external view returns (uint256) { return OrderBookStorage.state().lastTradePrice; }
     function maxSlippageBps() external view returns (uint256) { return OrderBookStorage.state().maxSlippageBps; }
     function getMaxSlippageBps() external view returns (uint256) { return OrderBookStorage.state().maxSlippageBps; }

@@ -1,0 +1,104 @@
+---
+description: Facet upgrades go through FacetRegistry, never per-market diamondCut
+globs: ["scripts/**/*.ts", "Dexetrav5/src/**/*.sol", "src/app/api/**/*.ts", "src/lib/**/*.ts"]
+alwaysApply: true
+---
+
+# Facet upgrades MUST go through `FacetRegistry`
+
+This protocol uses two coexisting proxy patterns. **All current and future
+markets** are `DiamondRegistry` proxies that look up facets from a central
+`FacetRegistry`. **Never** propose, write, or run a per-market `diamondCut`
+upgrade for a `DiamondRegistry` market — it has no `diamondCut` function and
+no local selector storage. Updating one entry in `FacetRegistry` upgrades
+**every** market atomically in a single transaction.
+
+## How to know which proxy you're looking at
+
+```ts
+// If this returns non-zero, it's a DiamondRegistry → FacetRegistry-only upgrades.
+// If it reverts, it's the legacy `Diamond` contract (V1 markets only).
+const facetRegistry = await new ethers.Contract(
+  marketAddress,
+  ['function facetRegistry() view returns (address)'],
+  provider
+).facetRegistry();
+```
+
+The legacy `Dexetrav5/src/diamond/Diamond.sol` proxy is only used by old V1
+markets created via `createFuturesMarketDiamond` /
+`metaCreateFuturesMarketDiamond` on `FuturesMarketFactory`. Do not assume
+new markets behave that way.
+
+## Canonical upgrade flow (the ONLY supported flow for `DiamondRegistry`)
+
+1. **Edit the facet** under `Dexetrav5/src/diamond/facets/`.
+2. **Compile**: `cd Dexetrav5 && npx hardhat compile`. Verify the artifact
+   lands at `Dexetrav5/artifacts/src/diamond/facets/<Facet>.sol/<Facet>.json`.
+3. **Deploy the facet bytecode** and write the new address to the matching
+   env var in `.env.local` (e.g. `OB_ORDER_PLACEMENT_FACET=0x…` and the
+   `NEXT_PUBLIC_…` mirror). Either reuse an existing focused deploy script
+   or write a new one — the deploy step is just `ContractFactory.deploy()`.
+4. **Promote** by syncing the registry from `.env.local`:
+
+   ```bash
+   PRIVATE_KEY=0x... npx tsx scripts/update-facet-registry.ts --execute
+   ```
+
+   That script reads every `*_FACET` env var, derives selectors from the
+   compiled ABIs, and sends a single `FacetRegistry.updateFacets` tx. Every
+   `DiamondRegistry` market starts using the new bytecode on the next call.
+   Run without `--execute` first to preview the diff.
+5. **Verify** by reading `FacetRegistry.getFacet(selector)` for one or two
+   selectors and by exercising the new behaviour against any market.
+
+### Single-purpose deploy scripts
+
+For one-off bug fixes it's fine to write a focused script that hard-codes
+the affected facets and does deploy + promote in one shot — e.g.
+`scripts/deploy-best-ask-self-heal.ts` for the `bestAsk`/`bestBid`
+self-heal fix. These scripts MUST still flow through `FacetRegistry` (no
+per-market `diamondCut`) and SHOULD update `.env.local` so a subsequent
+`update-facet-registry.ts` run stays consistent.
+
+## What "per-market" still legitimately means
+
+Diamond storage is *namespaced per market* (each market diamond has its own
+`OrderBookStorage.state()`). So per-market state repairs (cancel a stuck
+order, recompute `bestBid`/`bestAsk`, prune dead price levels) ARE per
+market — but the **facet that performs the repair** is registered globally
+in `FacetRegistry` exactly once. Don't confuse:
+
+- **Code upgrade** → `FacetRegistry`, one tx, every market.
+- **State repair** → call the (globally-registered) repair function on the
+  specific market diamond whose storage is corrupted.
+
+If the repair function isn't reachable on a market, the answer is **never**
+"diamondCut a facet onto that market" — the answer is "deploy the facet (if
+new) and register its selectors in `FacetRegistry`", and then call the
+repair on the affected market.
+
+## Verbiage to avoid
+
+When writing comments, scripts, console output, or PR summaries, do NOT say:
+- "upgrade the diamond"
+- "upgrade this market"
+- "older diamonds without view X" (all `DiamondRegistry` markets share the
+  same view facet via the registry — they upgrade simultaneously)
+- "deploy the facet to a market"
+- "diamondCut on the orderbook"
+
+Instead say:
+- "register the new facet address in `FacetRegistry`"
+- "promote the facet via `update-facet-registry.ts`"
+- "repair per-market state on `<marketAddress>` (the repair facet is already
+  registered globally)"
+
+## Legacy V1 scripts have been removed
+
+Per-market `diamondCut` scripts that targeted the legacy `Diamond` proxy
+(silver, V1 markets, etc.) have been deleted from this repo. If you ever
+need to repair a pre-V2 `Diamond` market, retrieve the script from git
+history rather than reintroducing the per-market pattern in `main`. For all
+current markets the only supported upgrade path is the FacetRegistry flow
+above.

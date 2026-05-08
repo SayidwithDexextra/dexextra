@@ -816,6 +816,8 @@ export async function POST(req: Request) {
                   'function marketStatic() view returns (address vault,bytes32 marketId,bool useVWAP,uint256 vwapWindow)',
                   'function bestBid() view returns (uint256)',
                   'function bestAsk() view returns (uint256)',
+                  'function buyPriceHead() view returns (uint256)',
+                  'function sellPriceHead() view returns (uint256)',
                   'function buyLevels(uint256 price) view returns (tuple(uint256 totalAmount,uint256 firstOrderId,uint256 lastOrderId,bool exists))',
                   'function sellLevels(uint256 price) view returns (tuple(uint256 totalAmount,uint256 firstOrderId,uint256 lastOrderId,bool exists))',
                   'function getOrder(uint256 orderId) view returns (tuple(uint256 orderId,address trader,uint256 price,uint256 amount,bool isBuy,uint256 timestamp,uint256 nextOrderId,uint256 marginRequired,bool isMarginOrder))',
@@ -835,8 +837,59 @@ export async function POST(req: Request) {
               const [enabled, maxLev, marginReq] = leverageResult;
               const [takerFeeBps, makerFeeBps, , , legacyTradingFee] = feeResult;
               const [vaultAddr, marketId] = marketResult;
-              const bestBid = BigInt(bestBidResult);
-              const bestAsk = BigInt(bestAskResult);
+              let bestBid = BigInt(bestBidResult);
+              let bestAsk = BigInt(bestAskResult);
+
+              // Self-heal stale `bestBid` / `bestAsk` scalars before gating the request.
+              // The cached top-of-book scalars can drift from the sorted price-level linked
+              // list (historical settlement bug — see _refreshBestAsk in
+              // OBOrderPlacementFacet). When that happens the scalar reads 0 even though
+              // resting takers exist at the head of the linked list, and a strict equality
+              // check would reject a request that the on-chain market-order path would
+              // happily fill.
+              //
+              // The on-chain placement facet now self-heals on every market-order entry, so
+              // any actual trade tx would fix the scalar before reverting. This preflight
+              // mirrors that fallback so we don't 400 the request before it ever reaches the
+              // contract. Both fixes ship together and apply to every DiamondRegistry market
+              // simultaneously via FacetRegistry — there are no "old vs new" markets to
+              // accommodate here.
+              if (bestBid === 0n || bestAsk === 0n) {
+                try {
+                  const [buyHeadRaw, sellHeadRaw] = await Promise.all([
+                    bestBid === 0n ? view.buyPriceHead() : Promise.resolve(0n),
+                    bestAsk === 0n ? view.sellPriceHead() : Promise.resolve(0n),
+                  ]);
+                  if (bestBid === 0n) {
+                    const buyHead = BigInt(buyHeadRaw || 0);
+                    if (buyHead > 0n) {
+                      const lvl: any = await view.buyLevels(buyHead);
+                      if (Boolean(lvl?.exists) && BigInt(lvl?.totalAmount ?? 0) > 0n && BigInt(lvl?.firstOrderId ?? 0) > 0n) {
+                        bestBid = buyHead;
+                      }
+                    }
+                  }
+                  if (bestAsk === 0n) {
+                    const sellHead = BigInt(sellHeadRaw || 0);
+                    if (sellHead > 0n) {
+                      const lvl: any = await view.sellLevels(sellHead);
+                      if (Boolean(lvl?.exists) && BigInt(lvl?.totalAmount ?? 0) > 0n && BigInt(lvl?.firstOrderId ?? 0) > 0n) {
+                        bestAsk = sellHead;
+                      }
+                    }
+                  }
+                } catch (headErr: any) {
+                  // The buyPriceHead / sellPriceHead views are added in the same
+                  // OBViewFacet release as the on-chain self-healing. If the registry
+                  // hasn't been updated yet (i.e. selectors not yet routed to the new
+                  // facet bytecode), the call reverts here and the original 0-scalar
+                  // check still applies. After running update-facet-registry.ts every
+                  // market routes to the new view in the same block.
+                  console.warn('[gasless/trade] price-head fallback unavailable', {
+                    error: headErr?.shortMessage || headErr?.message || String(headErr),
+                  });
+                }
+              }
               
               let estimatedFeeBps = 0n;
               try {
