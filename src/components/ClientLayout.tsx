@@ -12,6 +12,7 @@ import { EnableTradingPrompt } from "./EnableTrading";
 import { ActiveMarketsProvider } from "@/contexts/ActiveMarketsContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
+import WalkthroughAutoStart from "@/components/walkthrough/WalkthroughAutoStart";
 import { OnchainOrdersProvider } from "@/contexts/OnchainOrdersContextV2";
 import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
 import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
@@ -71,6 +72,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                 <PortfolioSnapshotProvider>
                   <ExternalAppOpenGuard />
                   <GeoBlockWarningModal />
+                  <WalkthroughAutoStart />
                   <div className="relative">
                     <Header />
                     <PortfolioSidebar isOpen={isPortfolioSidebarOpen} onClose={() => setIsPortfolioSidebarOpen(false)} />
