@@ -166,6 +166,11 @@ const envSchema = z.object({
   DEBUG_MODE: z.string().transform((val) => val === 'true').default('false'),
   
   // Coming Soon Overlay (production gate)
+  // Server-side check now lives in /api/site-settings/coming-soon, so the
+  // canonical secret is COMING_SOON_PASSWORD (no NEXT_PUBLIC prefix). The
+  // public var is still accepted as a legacy fallback so existing envs keep
+  // working until they're migrated.
+  COMING_SOON_PASSWORD: z.string().optional(),
   NEXT_PUBLIC_COMING_SOON_PASSWORD: z.string().optional(),
 })
 
@@ -296,6 +301,9 @@ const processEnv = {
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
   
   // Coming Soon Overlay
+  COMING_SOON_PASSWORD: isClientSide
+    ? undefined
+    : (process.env.COMING_SOON_PASSWORD || process.env.NEXT_PUBLIC_COMING_SOON_PASSWORD),
   NEXT_PUBLIC_COMING_SOON_PASSWORD: process.env.NEXT_PUBLIC_COMING_SOON_PASSWORD,
 }
 
