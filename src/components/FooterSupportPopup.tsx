@@ -37,12 +37,18 @@ export function FooterSupportPopup({ isOpen, onClose }: FooterSupportPopupProps)
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
+  const isDisabledByRegion = walkthrough.isDisabledByRegion;
+
   const startTour = useCallback(
     (def: any) => {
+      // Belt-and-braces: the provider already no-ops `start()` in
+      // restricted regions, but bailing here avoids the popup-close
+      // animation flashing for users who'll never see the tour.
+      if (isDisabledByRegion) return;
       onClose();
       walkthrough.start(def, { force: true });
     },
-    [onClose, walkthrough]
+    [isDisabledByRegion, onClose, walkthrough]
   );
 
   const startTokenPageTour = useCallback(() => {
@@ -98,6 +104,21 @@ export function FooterSupportPopup({ isOpen, onClose }: FooterSupportPopupProps)
           </div>
         </div>
 
+        {/* Region notice — shown when tours are disabled. We keep the list
+            visible (greyed out) so the user still understands what they're
+            missing instead of just seeing an empty popup. */}
+        {isDisabledByRegion && (
+          <div className="px-2.5 py-2 border-b border-[#1A1A1A] bg-[#1A1A1A]/40">
+            <div className="flex items-start gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0 mt-1" />
+              <div className="text-[10px] text-[#9CA3AF] leading-snug">
+                Product tours are unavailable in your region. Connect via a
+                supported region and refresh the page.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         <div className="p-1.5">
           <div className="space-y-0.5">
@@ -106,17 +127,24 @@ export function FooterSupportPopup({ isOpen, onClose }: FooterSupportPopupProps)
                 <button
                   key={t.id}
                   onClick={() => t.onStart()}
-                  title={t.description}
+                  disabled={isDisabledByRegion}
+                  title={
+                    isDisabledByRegion
+                      ? 'Product tours are unavailable in your region.'
+                      : t.description
+                  }
                   className={[
                     'group w-full rounded-md transition-all duration-200 text-left',
-                    'bg-[#0F0F0F] hover:bg-[#1A1A1A]',
+                    isDisabledByRegion
+                      ? 'bg-[#0F0F0F] opacity-50 cursor-not-allowed'
+                      : 'bg-[#0F0F0F] hover:bg-[#1A1A1A]',
                   ].join(' ')}
                 >
                   <div className="flex items-start gap-2 p-2.5">
                     <div
                       className={[
                         'w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5',
-                        'bg-green-400',
+                        isDisabledByRegion ? 'bg-[#404040]' : 'bg-green-400',
                       ].join(' ')}
                     />
                     <div className="flex-1 min-w-0">

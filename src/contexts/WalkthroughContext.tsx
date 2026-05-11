@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import WalkthroughLayer from '@/components/walkthrough/WalkthroughLayer';
+import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 
 export type WalkthroughPlacement = 'auto' | 'top' | 'right' | 'bottom' | 'left';
 
@@ -137,6 +138,14 @@ type WalkthroughContextValue = {
   prev: () => void;
   goTo: (indexOrId: number | string) => void;
   isCompleted: (walkthroughId: string, storageKeyOverride?: string) => boolean;
+  /**
+   * True when the platform has decided this user is in a region where
+   * product tours are disabled (currently driven by the same `geo-blocked`
+   * cookie used for deposit blocking). Surface this in any UI that exposes
+   * tour controls so users understand why the option is hidden / disabled
+   * rather than guessing.
+   */
+  isDisabledByRegion: boolean;
 };
 
 const WalkthroughContext = createContext<WalkthroughContextValue | null>(null);
@@ -215,6 +224,14 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
 
+  // Geo-restricted users see the dedicated "Deposits restricted in your
+  // region" modal as soon as they land. Auto-starting a walkthrough on top
+  // of that produces stacked overlays where the spotlight darkens the
+  // restriction modal and the tour bubble blocks its dismiss button.
+  // Treating restriction as a hard "tours off" switch keeps the page
+  // readable and avoids the overlap entirely.
+  const { isRestricted: isDisabledByRegion } = useGeoRestriction();
+
   const [state, setState] = useState<WalkthroughState>({
     active: false,
     definition: null,
@@ -280,8 +297,22 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     visibleStepsRef.current = visibleSteps;
   }, [visibleSteps]);
 
+  // `start()` reads the latest restriction flag through a ref so we don't
+  // have to recreate the callback every time the cookie poll runs. A stale
+  // closure here would let auto-start fire a tour during the same render
+  // pass that the geo cookie flips on.
+  const isDisabledByRegionRef = useRef<boolean>(isDisabledByRegion);
+  useEffect(() => {
+    isDisabledByRegionRef.current = isDisabledByRegion;
+  }, [isDisabledByRegion]);
+
   const start = useCallback(
     (definition: WalkthroughDefinition, opts?: { startAt?: number | string; force?: boolean }) => {
+      // Hard gate: never start a tour while the user is geo-restricted —
+      // the restriction modal owns the screen and a tour overlay on top of
+      // it stacks two competing modals.
+      if (isDisabledByRegionRef.current) return;
+
       const storageKey = resolveStorageKey(definition);
       const completed = safeReadCompleted(storageKey);
       if (completed && !opts?.force) return;
@@ -302,6 +333,18 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     },
     []
   );
+
+  // If the user becomes geo-restricted mid-tour (cookie flips on after a
+  // VPN drop or a fresh middleware decision), stop the active tour so the
+  // restriction modal isn't fighting the walkthrough overlay for the
+  // viewport. We don't mark completed because the user didn't actually
+  // finish — they should see the tour again once they're back in a
+  // supported region.
+  useEffect(() => {
+    if (isDisabledByRegion && state.active) {
+      setState({ active: false, definition: null, index: 0 });
+    }
+  }, [isDisabledByRegion, state.active]);
 
   const next = useCallback(() => {
     setState((prev) => {
@@ -383,8 +426,9 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
       prev,
       goTo,
       isCompleted,
+      isDisabledByRegion,
     }),
-    [currentStep, goTo, isCompleted, next, prev, progress, start, state, stop]
+    [currentStep, goTo, isCompleted, isDisabledByRegion, next, prev, progress, start, state, stop]
   );
 
   return (

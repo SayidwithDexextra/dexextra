@@ -34,10 +34,18 @@ export default function WalkthroughAutoStart() {
   const attemptedRef = useRef<Set<string>>(new Set());
 
   const isConnected = walletData.isConnected;
+  const isDisabledByRegion = walkthrough.isDisabledByRegion;
 
   useEffect(() => {
     if (!pathname) return;
     if (typeof window === 'undefined') return;
+
+    // Restricted regions get the geo-block modal on landing — skip the
+    // tour timer entirely so we don't queue an overlay that races the
+    // restriction modal. The provider would no-op `start()` anyway, but
+    // bailing here also prevents the 1.2s timer from firing in the
+    // background.
+    if (isDisabledByRegion) return;
 
     const isHome = pathname === '/';
     const isTokenPage = pathname.startsWith('/token/') && pathname !== '/token';
@@ -65,12 +73,13 @@ export default function WalkthroughAutoStart() {
     const timer = window.setTimeout(() => {
       const latest = walkthroughRef.current;
       if (latest.state.active) return;
+      if (latest.isDisabledByRegion) return;
       if (latest.isCompleted(definition.id, definition.storageKey)) return;
       latest.start(definition);
     }, AUTO_START_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [pathname, isConnected]);
+  }, [pathname, isConnected, isDisabledByRegion]);
 
   return null;
 }
