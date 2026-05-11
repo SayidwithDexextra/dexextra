@@ -7,7 +7,11 @@
  * Env (from .env.local preferred):
  *   - RPC_URL (or RPC_URL_HYPEREVM)
  *   - CORE_VAULT_ADDRESS
- *   - PRIVATE_KEY_USERD (private key of an address that already has DEFAULT_ADMIN_ROLE)
+ *   - Signer key (first non-empty wins):
+ *       - SIGNER_PRIVATE_KEY      (explicit override)
+ *       - ADMIN_PRIVATE_KEY       (canonical post-rotation admin)
+ *       - PRIVATE_KEY_USERD       (legacy admin var)
+ *     Whichever is used must already hold DEFAULT_ADMIN_ROLE on CoreVault.
  *   - RELAYER_ADDRESS (optional; default target if set)
  *   - DIAMOND_OWNER_ADDRESS (optional fallback target if RELAYER_ADDRESS is not set)
  *
@@ -99,8 +103,21 @@ async function main() {
   const to = getArg("--to") || process.env.RELAYER_ADDRESS || process.env.DIAMOND_OWNER_ADDRESS;
   if (!to) throw new Error("RELAYER_ADDRESS (or DIAMOND_OWNER_ADDRESS) is required (or pass --to)");
 
-  const pk = process.env.PRIVATE_KEY_USERD;
-  if (!pk) throw new Error("PRIVATE_KEY_USERD is required (private key with DEFAULT_ADMIN_ROLE on CoreVault)");
+  // Signer with DEFAULT_ADMIN_ROLE on CoreVault. Post-rotation the canonical
+  // var is ADMIN_PRIVATE_KEY; PRIVATE_KEY_USERD is kept as a legacy fallback
+  // so older `.env.local` files still work. SIGNER_PRIVATE_KEY is an explicit
+  // override for one-off invocations.
+  const pkSource =
+    (process.env.SIGNER_PRIVATE_KEY && "SIGNER_PRIVATE_KEY") ||
+    (process.env.ADMIN_PRIVATE_KEY && "ADMIN_PRIVATE_KEY") ||
+    (process.env.PRIVATE_KEY_USERD && "PRIVATE_KEY_USERD") ||
+    null;
+  if (!pkSource) {
+    throw new Error(
+      "Missing signer private key. Set ADMIN_PRIVATE_KEY (preferred), or PRIVATE_KEY_USERD, or SIGNER_PRIVATE_KEY. Whichever you use must already hold DEFAULT_ADMIN_ROLE on CoreVault."
+    );
+  }
+  const pk = process.env[pkSource]!;
 
   const rolesInput = getArg("--roles") || process.env.GRANT_ROLES || "DEFAULT_ADMIN_ROLE";
   const roles = parseRoles(rolesInput);
@@ -121,7 +138,7 @@ async function main() {
 
   console.log("[grant-corevault-roles] coreVault", coreVaultAddress);
   console.log("[grant-corevault-roles] to", to);
-  console.log("[grant-corevault-roles] signer", wallet.address);
+  console.log("[grant-corevault-roles] signer", wallet.address, `(from ${pkSource})`);
   console.log("[grant-corevault-roles] roles", roles.map((r) => r.label).join(", "));
 
   // Preflight: ensure signer is admin for the requested roles (best-effort check).

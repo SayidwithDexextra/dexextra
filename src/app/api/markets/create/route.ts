@@ -1437,10 +1437,16 @@ export async function POST(req: Request) {
   //     setAllowedOrderbook, grantRole(ORDERBOOK), grantRole(SETTLEMENT)
   // =========================================================================
 
-  // Setup secondary signer for vault/registry ops
-  const secondaryPk =
-    process.env.ROLE_GRANTER_PRIVATE_KEY ||
-    process.env.RELAYER_PRIVATE_KEY;
+  // Setup secondary signer for vault/registry ops.
+  // NOTE: We deliberately do NOT fall back to RELAYER_PRIVATE_KEY here.
+  // RELAYER_PRIVATE_KEY (legacy) refers to the deposit/withdrawal relayer
+  // (see `_relayers_note` in relayers.generated.v2.json) — it is intentionally
+  // walled off from trade/admin signing to avoid nonce contention with bridge
+  // operations and to keep its on-chain role surface minimal. If you want
+  // genuine parallel lanes, provision a dedicated wallet, grant it
+  // DEFAULT_ADMIN_ROLE on CoreVault, and set ROLE_GRANTER_PRIVATE_KEY to it.
+  // When unset, both lanes share the admin wallet and execute serially below.
+  const secondaryPk = process.env.ROLE_GRANTER_PRIVATE_KEY;
   const normalizedSecondaryPk = secondaryPk ? normalizePk(secondaryPk) : null;
   const normalizedPrimaryPk = normalizePk(pk);
   const useParallelSigners =
@@ -1764,8 +1770,28 @@ export async function POST(req: Request) {
     logS('grant_roles', 'success');
   };
 
-  // Run both lanes in parallel
-  const [laneAResult, laneBCreateResult] = await Promise.allSettled([laneA(), laneBCreate()]);
+  // When `useParallelSigners` is false, Lane A and Lane B share the same wallet
+  // (and therefore the same nonce manager). Running them concurrently causes a
+  // nonce race: Lane B's `vaultNonceMgr.resync()` (inside `sendRoleWithRetry`
+  // and the `setAllowedOrderbook` retry loop) re-reads `getTransactionCount(addr,
+  // 'pending')`, which can be lower than Lane A's pre-allocated `next` while
+  // Lane A's txs are mid-broadcast. That clobbers the shared allocator and
+  // surfaces as `nonce has already been used` after retries are exhausted.
+  // Serialize in that case; only parallelize when the lanes have independent wallets.
+  let laneAResult: PromiseSettledResult<void>;
+  let laneBCreateResult: PromiseSettledResult<void>;
+  if (useParallelSigners) {
+    [laneAResult, laneBCreateResult] = await Promise.allSettled([laneA(), laneBCreate()]);
+  } else {
+    laneAResult = await laneA().then(
+      (value) => ({ status: 'fulfilled' as const, value }),
+      (reason) => ({ status: 'rejected' as const, reason }),
+    );
+    laneBCreateResult = await laneBCreate().then(
+      (value) => ({ status: 'fulfilled' as const, value }),
+      (reason) => ({ status: 'rejected' as const, reason }),
+    );
+  }
 
   if (laneBCreateResult.status === 'rejected') {
     logS('grant_roles', 'error', { error: extractError(laneBCreateResult.reason) });

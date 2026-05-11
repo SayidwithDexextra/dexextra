@@ -177,9 +177,15 @@ export async function POST(req: Request) {
     const ownerAddress = await wallet.getAddress();
 
     // ── Secondary signer for CoreVault role grants (parallel lane) ──
-    const secondaryPk =
-      process.env.ROLE_GRANTER_PRIVATE_KEY ||
-      process.env.RELAYER_PRIVATE_KEY;
+    // NOTE: We deliberately do NOT fall back to RELAYER_PRIVATE_KEY here.
+    // RELAYER_PRIVATE_KEY (legacy) refers to the deposit/withdrawal relayer
+    // (see `_relayers_note` in relayers.generated.v2.json) — it is intentionally
+    // walled off from trade/admin signing to avoid nonce contention with bridge
+    // operations and to keep its on-chain role surface minimal. If you want
+    // genuine parallel lanes, provision a dedicated wallet, grant it
+    // DEFAULT_ADMIN_ROLE on CoreVault, and set ROLE_GRANTER_PRIVATE_KEY to it.
+    // When unset, both lanes share the admin wallet and execute serially below.
+    const secondaryPk = process.env.ROLE_GRANTER_PRIVATE_KEY;
     const normalizedSecondaryPk = secondaryPk ? normalizePk(secondaryPk) : null;
     const normalizedPrimaryPk = normalizePk(pk);
     const useParallelSigners =
@@ -672,8 +678,27 @@ export async function POST(req: Request) {
       laneLog('B', 'Lane complete', 'success');
     };
 
-    // Run both lanes in parallel
-    const [laneAResult, laneBResult] = await Promise.allSettled([laneA(), laneB()]);
+    // When Lane A and Lane B share a wallet (and therefore a nonce manager),
+    // they CANNOT run concurrently — Lane B's `resync()` inside `sendRoleWithRetry`
+    // queries `getTransactionCount(addr, 'pending')`, which can be lower than
+    // Lane A's pre-allocated `next` while Lane A's txs are mid-broadcast. That
+    // clobbers the shared allocator and causes "nonce has already been used"
+    // collisions. Serialize in that case; only parallelize when the lanes have
+    // independent wallets.
+    let laneAResult: PromiseSettledResult<void>;
+    let laneBResult: PromiseSettledResult<void>;
+    if (laneBUsesSameWallet) {
+      laneAResult = await laneA().then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      );
+      laneBResult = await laneB().then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      );
+    } else {
+      [laneAResult, laneBResult] = await Promise.allSettled([laneA(), laneB()]);
+    }
 
     phaseSummary(laneAResult, laneBResult, Date.now() - configureStart);
 
