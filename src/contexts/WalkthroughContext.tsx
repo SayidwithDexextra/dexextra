@@ -139,6 +139,13 @@ type WalkthroughContextValue = {
   goTo: (indexOrId: number | string) => void;
   isCompleted: (walkthroughId: string, storageKeyOverride?: string) => boolean;
   /**
+   * Persist the same "completed" cookie the tour itself writes, but
+   * without ever opening the overlay. Use when the user has explicitly
+   * declined to start a tour (e.g. dismissing the auto-start prompt) so
+   * we don't re-prompt on every page load.
+   */
+  markCompleted: (definition: WalkthroughDefinition) => void;
+  /**
    * True when the platform has decided this user is in a region where
    * product tours are disabled (currently driven by the same `geo-blocked`
    * cookie used for deposit blocking). Surface this in any UI that exposes
@@ -276,6 +283,10 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
   const isCompleted = useCallback((walkthroughId: string, storageKeyOverride?: string) => {
     const key = storageKeyOverride || `dexextra:walkthrough:${walkthroughId}:completed`;
     return safeReadCompleted(key);
+  }, []);
+
+  const markCompleted = useCallback((definition: WalkthroughDefinition) => {
+    safeWriteCompleted(resolveStorageKey(definition));
   }, []);
 
   const stop = useCallback((opts?: { markCompleted?: boolean }) => {
@@ -426,9 +437,22 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
       prev,
       goTo,
       isCompleted,
+      markCompleted,
       isDisabledByRegion,
     }),
-    [currentStep, goTo, isCompleted, isDisabledByRegion, next, prev, progress, start, state, stop]
+    [
+      currentStep,
+      goTo,
+      isCompleted,
+      isDisabledByRegion,
+      markCompleted,
+      next,
+      prev,
+      progress,
+      start,
+      state,
+      stop,
+    ]
   );
 
   return (
