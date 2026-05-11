@@ -1577,7 +1577,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       <CryptoMarketTicker className="border-b border-t-stroke-sub flex-shrink-0" />
       {/* Mobile: compact tappable market bar */}
       {marketInfoHeaderProps && (
-        <div className="flex md:hidden items-center gap-2 w-full px-3 py-1.5 border-b border-t-stroke-sub bg-t-page flex-shrink-0">
+        <div
+          className="flex md:hidden items-center gap-2 w-full px-3 py-1.5 border-b border-t-stroke-sub bg-t-page flex-shrink-0"
+          data-walkthrough="token-market-header-mobile"
+        >
           <div
             className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
             onClick={() => setMobileSheet('info')}
@@ -1606,6 +1609,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               className="w-7 h-7 flex items-center justify-center rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 flex-shrink-0"
               title={marketInfoHeaderProps.waybackSnapshot.source_url ? `Archived: ${marketInfoHeaderProps.waybackSnapshot.source_url}` : 'Wayback Archive'}
               onClick={(e) => e.stopPropagation()}
+              data-walkthrough="token-wayback"
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 8v8" />
@@ -1737,13 +1741,17 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 }
               />
               {/* Compact action bar: Activity | Long | Short | Chat */}
-              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 pt-2 pb-4 border-t border-t-stroke-sub bg-t-page">
+              <div
+                className="flex-shrink-0 flex items-center gap-1.5 px-2 pt-2 pb-4 border-t border-t-stroke-sub bg-t-page"
+                data-walkthrough="token-mobile-action-bar"
+              >
                 <button
                   onClick={() => setMobileSheet('activity')}
                   className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors ${
                     mobileSheet === 'activity' ? 'text-t-fg border-t-stroke-hover' : 'text-t-fg-muted border-t-stroke active:text-t-fg'
                   }`}
                   aria-label="Activity"
+                  data-walkthrough="token-activity-mobile"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
@@ -1789,6 +1797,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     mobileSheet === 'comments' ? 'text-t-fg border-t-stroke-hover' : 'text-t-fg-muted border-t-stroke active:text-t-fg'
                   }`}
                   aria-label="Comments"
+                  data-walkthrough="token-comments-mobile"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />

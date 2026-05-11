@@ -32,6 +32,36 @@ export type WalkthroughStep = {
   allowDocumentScroll?: boolean;
   scrollIntoView?: boolean;
   nextLabel?: string;
+
+  /**
+   * Mobile-specific overrides. When the walkthrough renders on a mobile
+   * viewport (matches `(max-width: 767px)`), these values replace the
+   * desktop-only versions. Anything left undefined falls back to the
+   * desktop value, so it's safe to override only what changes on mobile.
+   *
+   * - `mobileSelector` is useful when the desktop element is hidden on
+   *   mobile and a different node carries the equivalent semantic meaning.
+   * - `mobilePlacement` lets you dodge tight spaces (left/right rarely fit
+   *   on phones — `top`/`bottom`/`auto` are usually safer).
+   * - `mobileEnterEvents` runs *instead of* `enterEvents` on mobile so a
+   *   step can drive different UI context (e.g. open the mobile menu
+   *   instead of just changing focus).
+   * - `mobileTitle`/`mobileDescription` shorten copy for small screens.
+   * - `skipOnMobile` removes the step entirely on mobile when there's no
+   *   sensible mobile equivalent.
+   * - `mobilePaddingPx`/`mobileRadiusPx`/`mobileGapPx` tweak the spotlight
+   *   to play nicely with denser mobile layouts.
+   */
+  mobileSelector?: string;
+  mobilePlacement?: WalkthroughPlacement;
+  mobileEnterEvents?: Array<{ name: string; detail?: any }>;
+  mobileTitle?: string;
+  mobileDescription?: string;
+  mobileNextLabel?: string;
+  mobilePaddingPx?: number;
+  mobileRadiusPx?: number;
+  mobileGapPx?: number;
+  skipOnMobile?: boolean;
 };
 
 export type WalkthroughDefinition = {
@@ -49,6 +79,53 @@ type WalkthroughState = {
   definition: WalkthroughDefinition | null;
   index: number;
 };
+
+export const WALKTHROUGH_MOBILE_MEDIA_QUERY = '(max-width: 767px)';
+
+export function isWalkthroughMobileViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try {
+    return window.matchMedia(WALKTHROUGH_MOBILE_MEDIA_QUERY).matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns the steps that should actually be presented for the current
+ * viewport. Steps marked `skipOnMobile: true` are filtered out on mobile
+ * so users don't get stranded on a target that isn't rendered on phones.
+ *
+ * The shape is preserved (we still return `WalkthroughStep[]`); the
+ * step-level mobile field merging is performed by `resolveStepForViewport`
+ * in the layer at render time so the underlying definitions stay readable.
+ */
+function visibleStepsForViewport(definition: WalkthroughDefinition, mobile: boolean): WalkthroughStep[] {
+  if (!mobile) return definition.steps;
+  return definition.steps.filter((s) => !s.skipOnMobile);
+}
+
+/**
+ * Apply any `mobile*` overrides to a step when rendered on a mobile
+ * viewport. Returns the step unchanged on desktop. The result is the
+ * shape the rendering layer should consume — desktop callers can keep
+ * reading the original fields without branching.
+ */
+export function resolveWalkthroughStepForViewport(step: WalkthroughStep, mobile: boolean): WalkthroughStep {
+  if (!mobile) return step;
+  return {
+    ...step,
+    selector: step.mobileSelector ?? step.selector,
+    placement: step.mobilePlacement ?? step.placement,
+    enterEvents: step.mobileEnterEvents ?? step.enterEvents,
+    title: step.mobileTitle ?? step.title,
+    description: step.mobileDescription ?? step.description,
+    nextLabel: step.mobileNextLabel ?? step.nextLabel,
+    paddingPx: step.mobilePaddingPx ?? step.paddingPx,
+    radiusPx: step.mobileRadiusPx ?? step.radiusPx,
+    gapPx: step.mobileGapPx ?? step.gapPx,
+  };
+}
 
 type WalkthroughContextValue = {
   state: WalkthroughState;
@@ -121,12 +198,14 @@ function safeWriteCompleted(storageKey: string) {
   } catch {}
 }
 
-function normalizeStartAt(definition: WalkthroughDefinition, startAt?: number | string): number {
+function normalizeStartAtAgainst(steps: WalkthroughStep[], startAt?: number | string): number {
+  const total = steps.length;
+  if (total <= 0) return 0;
   if (typeof startAt === 'number' && Number.isFinite(startAt)) {
-    return Math.max(0, Math.min(definition.steps.length - 1, Math.floor(startAt)));
+    return Math.max(0, Math.min(total - 1, Math.floor(startAt)));
   }
   if (typeof startAt === 'string' && startAt.trim()) {
-    const idx = definition.steps.findIndex((s) => s.id === startAt);
+    const idx = steps.findIndex((s) => s.id === startAt);
     return idx >= 0 ? idx : 0;
   }
   return 0;
@@ -142,18 +221,40 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     index: 0,
   });
 
+  // Mobile flag is reactive so the steps list (which can drop entries via
+  // `skipOnMobile`) stays in sync if the viewport changes mid-tour.
+  const [isMobile, setIsMobile] = useState<boolean>(() => isWalkthroughMobileViewport());
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(WALKTHROUGH_MOBILE_MEDIA_QUERY);
+    const update = () => setIsMobile(mq.matches);
+    update();
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', update);
+      return () => mq.removeEventListener('change', update);
+    }
+    // Safari < 14 fallback
+    mq.addListener(update);
+    return () => mq.removeListener(update);
+  }, []);
+
   const lastPushedRouteRef = useRef<string | null>(null);
+
+  const visibleSteps = useMemo<WalkthroughStep[]>(() => {
+    if (!state.active || !state.definition) return [];
+    return visibleStepsForViewport(state.definition, isMobile);
+  }, [isMobile, state.active, state.definition]);
 
   const currentStep = useMemo(() => {
     if (!state.active || !state.definition) return null;
-    return state.definition.steps[state.index] || null;
-  }, [state.active, state.definition, state.index]);
+    return visibleSteps[state.index] || null;
+  }, [state.active, state.definition, state.index, visibleSteps]);
 
   const progress = useMemo(() => {
     if (!state.active || !state.definition) return null;
-    const total = state.definition.steps.length;
+    const total = visibleSteps.length;
     return { index: Math.max(0, state.index), total: Math.max(0, total) };
-  }, [state.active, state.definition, state.index]);
+  }, [state.active, state.definition, state.index, visibleSteps]);
 
   const isCompleted = useCallback((walkthroughId: string, storageKeyOverride?: string) => {
     const key = storageKeyOverride || `dexextra:walkthrough:${walkthroughId}:completed`;
@@ -171,6 +272,14 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
+  // Keep a ref of the latest visible-steps list so the imperative callbacks
+  // (`next`, `prev`, `goTo`, `start`) can clamp/look up against it without
+  // having to be recreated on every step change.
+  const visibleStepsRef = useRef<WalkthroughStep[]>(visibleSteps);
+  useEffect(() => {
+    visibleStepsRef.current = visibleSteps;
+  }, [visibleSteps]);
+
   const start = useCallback(
     (definition: WalkthroughDefinition, opts?: { startAt?: number | string; force?: boolean }) => {
       const storageKey = resolveStorageKey(definition);
@@ -184,7 +293,11 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
       // bypasses the cookie check above, so this doesn't lock out re-runs.
       safeWriteCompleted(storageKey);
 
-      const idx = normalizeStartAt(definition, opts?.startAt);
+      // Resolve the start index against the *visible* steps so a `startAt`
+      // string id that targets a desktop-only step on mobile lands at 0
+      // instead of throwing the user into the wrong step.
+      const visible = visibleStepsForViewport(definition, isWalkthroughMobileViewport());
+      const idx = normalizeStartAtAgainst(visible, opts?.startAt);
       setState({ active: true, definition, index: idx });
     },
     []
@@ -193,8 +306,9 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
   const next = useCallback(() => {
     setState((prev) => {
       if (!prev.active || !prev.definition) return prev;
+      const total = visibleStepsRef.current.length;
       const nextIndex = prev.index + 1;
-      if (nextIndex >= prev.definition.steps.length) {
+      if (nextIndex >= total) {
         safeWriteCompleted(resolveStorageKey(prev.definition));
         return { active: false, definition: null, index: 0 };
       }
@@ -212,14 +326,15 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
   const goTo = useCallback((indexOrId: number | string) => {
     setState((prev) => {
       if (!prev.active || !prev.definition) return prev;
-      const total = prev.definition.steps.length;
+      const visible = visibleStepsRef.current;
+      const total = visible.length;
 
       if (typeof indexOrId === 'number') {
         const idx = Math.max(0, Math.min(total - 1, Math.floor(indexOrId)));
         return { ...prev, index: idx };
       }
 
-      const idx = prev.definition.steps.findIndex((s) => s.id === indexOrId);
+      const idx = visible.findIndex((s) => s.id === indexOrId);
       if (idx < 0) return prev;
       return { ...prev, index: idx };
     });
@@ -228,7 +343,7 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
   // Route sync: if a step belongs to another route, push that route.
   useEffect(() => {
     if (!state.active || !state.definition) return;
-    const step = state.definition.steps[state.index];
+    const step = visibleSteps[state.index];
     const route = step?.route ? String(step.route) : '';
     if (!route) {
       lastPushedRouteRef.current = null;
@@ -241,7 +356,21 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     if (lastPushedRouteRef.current === route) return;
     lastPushedRouteRef.current = route;
     router.push(route);
-  }, [pathname, router, state.active, state.definition, state.index]);
+  }, [pathname, router, state.active, state.definition, state.index, visibleSteps]);
+
+  // If the viewport flips mid-tour and the new visible list is shorter,
+  // clamp the active index so we don't end up past the end (which would
+  // leave `currentStep` null and the tour stuck).
+  useEffect(() => {
+    if (!state.active) return;
+    if (visibleSteps.length === 0) {
+      setState({ active: false, definition: null, index: 0 });
+      return;
+    }
+    if (state.index >= visibleSteps.length) {
+      setState((prev) => ({ ...prev, index: visibleSteps.length - 1 }));
+    }
+  }, [state.active, state.index, visibleSteps]);
 
   const value = useMemo<WalkthroughContextValue>(
     () => ({

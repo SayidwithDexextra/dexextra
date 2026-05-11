@@ -15,6 +15,12 @@ export const depositWalkthrough: WalkthroughDefinition = {
       radiusPx: 12,
       gapPx: 22,
       nextLabel: 'Open deposits',
+      // The header Deposit CTA is desktop-only (`hidden md:flex`). On mobile
+      // there's no equivalent always-visible button — the deposit modal is
+      // launched from the portfolio sidebar — so this intro step doesn't
+      // make sense on phones. We skip it and let the next step open the
+      // modal directly via `walkthrough:deposit:open`.
+      skipOnMobile: true,
     },
     {
       id: 'chain-arbitrum',
@@ -31,6 +37,10 @@ export const depositWalkthrough: WalkthroughDefinition = {
         { name: 'walkthrough:deposit:openChain', detail: { chain: 'Arbitrum' } },
       ],
       nextLabel: 'Choose USDC',
+      // Same enter events on mobile — the deposit modal centers itself
+      // and stays inside the viewport regardless of width, so the
+      // selectors below resolve fine on phones too.
+      mobilePlacement: 'auto',
     },
     {
       id: 'token-usdc',
@@ -47,6 +57,7 @@ export const depositWalkthrough: WalkthroughDefinition = {
         { name: 'walkthrough:deposit:setToken', detail: { chain: 'Arbitrum', symbol: 'USDC' } },
       ],
       nextLabel: 'Continue',
+      mobilePlacement: 'auto',
     },
     {
       id: 'continue',
@@ -59,6 +70,7 @@ export const depositWalkthrough: WalkthroughDefinition = {
       radiusPx: 14,
       gapPx: 22,
       nextLabel: 'Deposit action',
+      mobilePlacement: 'auto',
     },
     {
       id: 'function-cta',
@@ -74,6 +86,7 @@ export const depositWalkthrough: WalkthroughDefinition = {
         { name: 'walkthrough:deposit:setStep', detail: { step: 'external' } },
       ],
       nextLabel: 'Enter amount',
+      mobilePlacement: 'auto',
     },
     {
       id: 'spoke',
@@ -89,7 +102,9 @@ export const depositWalkthrough: WalkthroughDefinition = {
         { name: 'walkthrough:deposit:openSpoke', detail: { amount: '1' } },
       ],
       nextLabel: 'Finish',
+      // The spoke deposit modal is fairly tall — let the dock-fallback
+      // pin the bubble to a viewport edge so it never covers the form.
+      mobilePlacement: 'auto',
     },
   ],
 };
-

@@ -3,6 +3,18 @@ import type { WalkthroughDefinition, WalkthroughStep } from '@/contexts/Walkthro
 const GET_STARTED_ID = 'get-started';
 const GET_STARTED_STORAGE_KEY = 'dexextra:walkthrough:get-started:completed';
 
+// Events used to drive the mobile chrome from a walkthrough step.
+//
+// - `mobileMenu:toggle` is what the mobile header button dispatches when the
+//   user taps the hamburger; sending it from a step is the equivalent of
+//   "open the menu for them" so the next selector (a nav item rendered
+//   inside that drawer) can resolve.
+// - `mobileMenu:close` is dispatched by the in-drawer close button and mirrors
+//   `setIsMobileMenuOpen(false)` on the header — we use it to put the chrome
+//   back into its default state when leaving a nav-item step.
+const OPEN_MOBILE_MENU = { name: 'mobileMenu:toggle', detail: { isOpen: true } };
+const CLOSE_MOBILE_MENU = { name: 'mobileMenu:close' };
+
 const walletConnectSteps: WalkthroughStep[] = [
   {
     id: 'wallet-connect-cta',
@@ -13,8 +25,12 @@ const walletConnectSteps: WalkthroughStep[] = [
     placement: 'bottom',
     paddingPx: 10,
     radiusPx: 12,
-    enterEvents: [{ name: 'walkthrough:wallet:close', detail: { source: 'walkthrough:get-started' } }],
+    enterEvents: [
+      { name: 'walkthrough:wallet:close', detail: { source: 'walkthrough:get-started' } },
+      CLOSE_MOBILE_MENU,
+    ],
     nextLabel: 'Show wallets',
+    mobileDescription: 'Tap the Connect button in the top right to link a wallet.',
   },
   {
     id: 'wallet-connect-metamask',
@@ -27,6 +43,10 @@ const walletConnectSteps: WalkthroughStep[] = [
     radiusPx: 14,
     enterEvents: [{ name: 'walkthrough:wallet:open', detail: { source: 'walkthrough:get-started' } }],
     nextLabel: 'Continue',
+    // The wallet modal is centered and full-width on mobile, so anchoring the
+    // tooltip to the side never fits. Auto + the new mobile dock fallback in
+    // WalkthroughLayer pins the bubble to the bottom of the viewport.
+    mobilePlacement: 'auto',
   },
 ];
 
@@ -40,7 +60,11 @@ const baseSteps: WalkthroughStep[] = [
     placement: 'bottom',
     paddingPx: 10,
     radiusPx: 12,
-    enterEvents: [{ name: 'walkthrough:wallet:close', detail: { source: 'walkthrough:get-started' } }],
+    enterEvents: [
+      { name: 'walkthrough:wallet:close', detail: { source: 'walkthrough:get-started' } },
+      CLOSE_MOBILE_MENU,
+    ],
+    mobileDescription: 'Tap the magnifying-glass to search any active market by symbol, category, or creator.',
   },
   {
     id: 'header-cash-pnl',
@@ -54,6 +78,18 @@ const baseSteps: WalkthroughStep[] = [
     radiusPx: 12,
     enterEvents: [{ name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } }],
     nextLabel: 'Open portfolio sidebar',
+    // The desktop block (`hidden md:flex`) isn't rendered at all on mobile.
+    // The mobile header has a single Portfolio icon button that opens the
+    // same sidebar — surface that as the equivalent target.
+    mobileSelector: '[data-walkthrough="header-portfolio-mobile"]',
+    mobileTitle: 'Open your portfolio',
+    mobileDescription:
+      'Tap the wallet icon to see your portfolio value, available cash, and live P&L on open positions.',
+    mobileNextLabel: 'Open portfolio',
+    mobileEnterEvents: [
+      { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
+      CLOSE_MOBILE_MENU,
+    ],
   },
   {
     id: 'portfolio-sidebar',
@@ -67,6 +103,11 @@ const baseSteps: WalkthroughStep[] = [
     radiusPx: 16,
     enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
     nextLabel: 'Next',
+    // On mobile the sidebar slides in full-screen; left/right placements
+    // never fit. Auto picks bottom-dock via the layer's mobile fallback.
+    mobilePlacement: 'auto',
+    mobileDescription:
+      'Your portfolio drawer covers the whole screen on mobile. Swipe through the tabs to see assets, positions, and orders.',
   },
   {
     id: 'portfolio-sidebar-overview',
@@ -78,6 +119,7 @@ const baseSteps: WalkthroughStep[] = [
     paddingPx: 12,
     radiusPx: 16,
     enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
+    mobilePlacement: 'auto',
   },
   {
     id: 'portfolio-sidebar-body',
@@ -89,6 +131,7 @@ const baseSteps: WalkthroughStep[] = [
     paddingPx: 12,
     radiusPx: 16,
     enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
+    mobilePlacement: 'auto',
   },
   {
     id: 'nav-settings',
@@ -101,6 +144,15 @@ const baseSteps: WalkthroughStep[] = [
     radiusPx: 12,
     enterEvents: [{ name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } }],
     nextLabel: 'Open settings',
+    // Nav items aren't in the DOM on mobile until the hamburger menu opens.
+    // Open it as part of the step so the selector resolves; close the
+    // portfolio sidebar first in case it was left open.
+    mobileEnterEvents: [
+      { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
+      OPEN_MOBILE_MENU,
+    ],
+    mobilePlacement: 'auto',
+    mobileDescription: 'Open the side menu and tap Settings to update your profile and account preferences.',
   },
   {
     id: 'settings-overview',
@@ -113,6 +165,8 @@ const baseSteps: WalkthroughStep[] = [
     paddingPx: 10,
     radiusPx: 12,
     nextLabel: 'Continue',
+    // Mobile menu auto-closes on navigation, so no explicit close needed.
+    mobileEnterEvents: [CLOSE_MOBILE_MENU],
   },
   {
     id: 'nav-watchlist',
@@ -123,6 +177,9 @@ const baseSteps: WalkthroughStep[] = [
     placement: 'right',
     paddingPx: 10,
     radiusPx: 12,
+    mobileEnterEvents: [OPEN_MOBILE_MENU],
+    mobilePlacement: 'auto',
+    mobileDescription: 'Open the menu and tap Watchlist to keep markets you care about a tap away.',
   },
   {
     id: 'home-active-markets',
@@ -143,6 +200,17 @@ const baseSteps: WalkthroughStep[] = [
       },
     ],
     nextLabel: 'Create a market',
+    // On mobile the active-markets grid is tall and reaches both edges, so
+    // there's no room above OR below for the bubble — let the layer dock it.
+    mobilePlacement: 'auto',
+    mobileEnterEvents: [
+      { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
+      CLOSE_MOBILE_MENU,
+      {
+        name: 'walkthrough:scrollToSelector',
+        detail: { selector: '[data-walkthrough="home-active-markets"]', behavior: 'smooth', block: 'center' },
+      },
+    ],
   },
   {
     id: 'create-market',
@@ -154,6 +222,12 @@ const baseSteps: WalkthroughStep[] = [
     paddingPx: 12,
     radiusPx: 12,
     nextLabel: 'Go to creator',
+    // The "+ New Market" CTA only renders inside the mobile drawer. Open
+    // the drawer so the button is visible, then let the user follow the
+    // call to the creator.
+    mobileEnterEvents: [OPEN_MOBILE_MENU],
+    mobilePlacement: 'auto',
+    mobileDescription: 'Open the menu and tap New Market to launch the creation flow.',
   },
   {
     id: 'creator',
@@ -165,6 +239,8 @@ const baseSteps: WalkthroughStep[] = [
     paddingPx: 12,
     radiusPx: 16,
     nextLabel: 'Finish',
+    mobilePlacement: 'auto',
+    mobileEnterEvents: [CLOSE_MOBILE_MENU],
   },
 ];
 
@@ -178,4 +254,3 @@ export function makeGetStartedWalkthrough(opts?: { includeWalletConnectSteps?: b
 }
 
 export const getStartedWalkthrough: WalkthroughDefinition = makeGetStartedWalkthrough();
-

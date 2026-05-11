@@ -4,10 +4,23 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { usePathname } from 'next/navigation';
-import { useWalkthrough, type WalkthroughPlacement, type WalkthroughStep } from '@/contexts/WalkthroughContext';
+import {
+  useWalkthrough,
+  resolveWalkthroughStepForViewport,
+  isWalkthroughMobileViewport,
+  WALKTHROUGH_MOBILE_MEDIA_QUERY,
+  type WalkthroughPlacement,
+  type WalkthroughStep,
+} from '@/contexts/WalkthroughContext';
 
 type TargetStatus = 'idle' | 'navigating' | 'searching' | 'ready' | 'timeout';
 type ResolvedPlacement = Exclude<WalkthroughPlacement, 'auto'>;
+// 'docked' isn't a placement that points at the target — it's a fallback used
+// on phones when the target is so large (or the viewport so small) that no
+// side has comfortable room. The tooltip pins to the bottom (or top) of the
+// viewport with the spotlight still highlighting the target above/below.
+type DockedPosition = 'docked-bottom' | 'docked-top';
+type AppliedPlacement = ResolvedPlacement | DockedPosition;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -57,10 +70,18 @@ function isWellCentered(r: DOMRect): boolean {
   return r.top >= -4 && r.bottom <= vh + 4 && centerY >= marginY && centerY <= vh - marginY;
 }
 
-function pickPlacementTowardCenter(target: DOMRect, tipW: number, tipH: number, gap: number): ResolvedPlacement {
+function pickPlacementTowardCenter(
+  target: DOMRect,
+  tipW: number,
+  tipH: number,
+  gap: number,
+  opts?: { mobile?: boolean; safeAreaTop?: number; safeAreaBottom?: number }
+): ResolvedPlacement {
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
   const margin = 12;
+  const safeTop = opts?.safeAreaTop ?? 0;
+  const safeBottom = opts?.safeAreaBottom ?? 0;
 
   const viewportCenterX = vw / 2;
   const viewportCenterY = vh / 2;
@@ -76,15 +97,20 @@ function pickPlacementTowardCenter(target: DOMRect, tipW: number, tipH: number, 
   const primaryV: ResolvedPlacement = dy >= 0 ? 'bottom' : 'top';
   const secondaryV: ResolvedPlacement = dy >= 0 ? 'top' : 'bottom';
 
-  const candidates: ResolvedPlacement[] = preferHorizontal
-    ? [primaryH, primaryV, secondaryH, secondaryV]
-    : [primaryV, primaryH, secondaryV, secondaryH];
+  // On phones, side placements almost never have room (viewports are
+  // ~360-430px wide and our target spans most of that). Try vertical
+  // first so the tooltip lands above/below where users actually expect it.
+  const candidates: ResolvedPlacement[] = opts?.mobile
+    ? [primaryV, secondaryV, primaryH, secondaryH]
+    : preferHorizontal
+      ? [primaryH, primaryV, secondaryH, secondaryV]
+      : [primaryV, primaryH, secondaryV, secondaryH];
 
   const fits = (p: ResolvedPlacement) => {
     const spaceRight = vw - target.right;
     const spaceLeft = target.left;
-    const spaceBottom = vh - target.bottom;
-    const spaceTop = target.top;
+    const spaceBottom = vh - target.bottom - safeBottom;
+    const spaceTop = target.top - safeTop;
     if (p === 'right') return spaceRight >= tipW + gap + margin;
     if (p === 'left') return spaceLeft >= tipW + gap + margin;
     if (p === 'bottom') return spaceBottom >= tipH + gap + margin;
@@ -97,6 +123,43 @@ function pickPlacementTowardCenter(target: DOMRect, tipW: number, tipH: number, 
   return candidates[0] || 'bottom';
 }
 
+/**
+ * On mobile, when a target is too large or too close to the edges to leave
+ * room for a tooltip on any side, dock the tooltip to the bottom (or top)
+ * of the viewport. This is the same pattern used by Intercom/Stripe tours.
+ *
+ * Returns null if a normal placement fits — caller falls back to the
+ * standard side-anchored layout.
+ */
+function shouldDockOnMobile(
+  target: DOMRect,
+  tipW: number,
+  tipH: number,
+  gap: number,
+  opts: { safeAreaTop: number; safeAreaBottom: number }
+): DockedPosition | null {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const margin = 12;
+
+  const spaceTop = target.top - opts.safeAreaTop;
+  const spaceBottom = vh - target.bottom - opts.safeAreaBottom;
+  const spaceLeft = target.left;
+  const spaceRight = vw - target.right;
+
+  const fitsTop = spaceTop >= tipH + gap + margin;
+  const fitsBottom = spaceBottom >= tipH + gap + margin;
+  const fitsLeft = spaceLeft >= tipW + gap + margin;
+  const fitsRight = spaceRight >= tipW + gap + margin;
+  if (fitsTop || fitsBottom || fitsLeft || fitsRight) return null;
+
+  // Pick the side with more room so the spotlight isn't hidden behind the
+  // docked card. Add a small bias toward bottom-docking since that matches
+  // the position of the OS keyboard / toolbars users are used to.
+  if (spaceBottom >= spaceTop - 24) return 'docked-bottom';
+  return 'docked-top';
+}
+
 function computeTooltipPosition(params: {
   placement: WalkthroughPlacement;
   target: DOMRect;
@@ -104,15 +167,58 @@ function computeTooltipPosition(params: {
   gap: number;
   tooltipW: number;
   tooltipH: number;
-}): { left: number; top: number; transformOrigin: string; placement: ResolvedPlacement; arrowX: number; arrowY: number } {
-  const { target, tooltipW, tooltipH } = params;
+  mobile?: boolean;
+  safeAreaTop?: number;
+  safeAreaBottom?: number;
+}): {
+  left: number;
+  top: number;
+  transformOrigin: string;
+  placement: AppliedPlacement;
+  arrowX: number;
+  arrowY: number;
+  showArrow: boolean;
+} {
+  const { target, tooltipW, tooltipH, mobile } = params;
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-  const margin = 12;
+  const margin = mobile ? 8 : 12;
   const gap = Math.max(0, params.gap);
+  const safeAreaTop = params.safeAreaTop ?? 0;
+  const safeAreaBottom = params.safeAreaBottom ?? 0;
+
+  // Mobile fallback: when nothing fits, pin the card to the bottom (or top).
+  if (mobile && params.placement === 'auto') {
+    const docked = shouldDockOnMobile(target, tooltipW, tooltipH, gap, {
+      safeAreaTop,
+      safeAreaBottom,
+    });
+    if (docked) {
+      const left = clamp(vw / 2 - tooltipW / 2, margin, Math.max(margin, vw - tooltipW - margin));
+      const top =
+        docked === 'docked-bottom'
+          ? Math.max(margin + safeAreaTop, vh - safeAreaBottom - margin - tooltipH)
+          : safeAreaTop + margin;
+      return {
+        left,
+        top,
+        transformOrigin: docked === 'docked-bottom' ? 'center bottom' : 'center top',
+        placement: docked,
+        arrowX: 0,
+        arrowY: 0,
+        showArrow: false,
+      };
+    }
+  }
 
   const placement: ResolvedPlacement =
-    params.placement === 'auto' ? pickPlacementTowardCenter(target, tooltipW, tooltipH, gap) : params.placement;
+    params.placement === 'auto'
+      ? pickPlacementTowardCenter(target, tooltipW, tooltipH, gap, {
+          mobile,
+          safeAreaTop,
+          safeAreaBottom,
+        })
+      : params.placement;
 
   // Arrow should point to the actual explained element center,
   // even if we expand the target rect for positioning.
@@ -142,13 +248,46 @@ function computeTooltipPosition(params: {
   }
 
   left = clamp(left, margin, Math.max(margin, vw - tooltipW - margin));
-  top = clamp(top, margin, Math.max(margin, vh - tooltipH - margin));
+  top = clamp(
+    top,
+    Math.max(margin, safeAreaTop + margin),
+    Math.max(margin, vh - safeAreaBottom - tooltipH - margin)
+  );
 
   const arrowInset = 16;
   const arrowX = clamp(centerX - left, arrowInset, Math.max(arrowInset, tooltipW - arrowInset));
   const arrowY = clamp(centerY - top, arrowInset, Math.max(arrowInset, tooltipH - arrowInset));
 
-  return { left, top, transformOrigin: origin, placement, arrowX, arrowY };
+  return { left, top, transformOrigin: origin, placement, arrowX, arrowY, showArrow: true };
+}
+
+/**
+ * Reads the CSS `env(safe-area-inset-*)` values via a hidden probe so we
+ * can avoid drawing the docked tooltip behind iOS Safari's bottom toolbar
+ * or notch. Falls back to 0 when the API isn't available.
+ */
+function readSafeAreaInsets(): { top: number; bottom: number } {
+  if (typeof document === 'undefined') return { top: 0, bottom: 0 };
+  try {
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.visibility = 'hidden';
+    probe.style.pointerEvents = 'none';
+    probe.style.top = '0';
+    probe.style.left = '0';
+    probe.style.height = '0';
+    probe.style.width = '0';
+    probe.style.paddingTop = 'env(safe-area-inset-top, 0px)';
+    probe.style.paddingBottom = 'env(safe-area-inset-bottom, 0px)';
+    document.body.appendChild(probe);
+    const styles = getComputedStyle(probe);
+    const top = parseFloat(styles.paddingTop || '0') || 0;
+    const bottom = parseFloat(styles.paddingBottom || '0') || 0;
+    document.body.removeChild(probe);
+    return { top, bottom };
+  } catch {
+    return { top: 0, bottom: 0 };
+  }
 }
 
 function useTargetRect(step: WalkthroughStep | null, enabled: boolean, status: TargetStatus) {
@@ -281,8 +420,44 @@ export default function WalkthroughLayer() {
   const { state, currentStep, progress, next, prev, stop } = useWalkthrough();
   const pathname = usePathname();
 
+  // Track viewport so we can swap in mobile-specific copy / selectors and
+  // adapt the tooltip layout (smaller width, vertical-first placement,
+  // bottom-dock fallback when nothing fits).
+  const [isMobile, setIsMobile] = useState<boolean>(() => isWalkthroughMobileViewport());
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(WALKTHROUGH_MOBILE_MEDIA_QUERY);
+    const update = () => setIsMobile(mq.matches);
+    update();
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', update);
+      return () => mq.removeEventListener('change', update);
+    }
+    mq.addListener(update);
+    return () => mq.removeListener(update);
+  }, []);
+
+  const [safeArea, setSafeArea] = useState<{ top: number; bottom: number }>({ top: 0, bottom: 0 });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const measure = () => setSafeArea(readSafeAreaInsets());
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('orientationchange', measure);
+    };
+  }, []);
+
   const enabled = state.active && Boolean(currentStep);
-  const step = currentStep;
+  // Apply any `mobile*` overrides BEFORE the rest of the layer reads the
+  // step. From here on, `step.selector`, `step.placement`, etc. are already
+  // the right values for the current viewport.
+  const step = useMemo<WalkthroughStep | null>(
+    () => (currentStep ? resolveWalkthroughStepForViewport(currentStep, isMobile) : null),
+    [currentStep, isMobile]
+  );
 
   // Dispatch step enter events (e.g. open a modal) exactly once per step.
   const lastEnteredStepIdRef = useRef<string | null>(null);
@@ -445,14 +620,22 @@ export default function WalkthroughLayer() {
     left: number;
     top: number;
     transformOrigin: string;
-    placement: ResolvedPlacement;
+    placement: AppliedPlacement;
     arrowX: number;
     arrowY: number;
+    showArrow: boolean;
   } | null>(null);
 
-  const paddingPx = step?.paddingPx ?? 10;
+  // Spotlight inset / bubble gap defaults are tighter on mobile so the
+  // tooltip card fits without crowding the highlighted element.
+  const paddingPx = step?.paddingPx ?? (isMobile ? 6 : 10);
   const radiusPx = step?.radiusPx ?? 12;
-  const gapPx = typeof step?.gapPx === 'number' && Number.isFinite(step.gapPx) ? Math.max(0, step.gapPx) : 18;
+  const gapPx =
+    typeof step?.gapPx === 'number' && Number.isFinite(step.gapPx)
+      ? Math.max(0, step.gapPx)
+      : isMobile
+        ? 12
+        : 18;
 
   const spotlightRect = useMemo(() => {
     if (!enabled || !rect) return null;
@@ -501,9 +684,24 @@ export default function WalkthroughLayer() {
         gap: gapPx,
         tooltipW: tip.width,
         tooltipH: tip.height,
+        mobile: isMobile,
+        safeAreaTop: safeArea.top,
+        safeAreaBottom: safeArea.bottom,
       })
     );
-  }, [enabled, gapPx, paddingPx, rect, step?.id, step?.placement, step?.title, step?.description]);
+  }, [
+    enabled,
+    gapPx,
+    isMobile,
+    paddingPx,
+    rect,
+    safeArea.bottom,
+    safeArea.top,
+    step?.id,
+    step?.placement,
+    step?.title,
+    step?.description,
+  ]);
 
   const isLast = Boolean(progress && progress.total > 0 && progress.index >= progress.total - 1);
   const nextLabel = step?.nextLabel || (isLast ? 'Finish' : 'Next');
@@ -551,7 +749,11 @@ export default function WalkthroughLayer() {
         {/* Tooltip card */}
         <motion.div
           ref={tooltipRef}
-          className="fixed w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-[#222222] bg-[#0F0F0F] shadow-2xl"
+          className={`fixed rounded-xl border border-[#222222] bg-[#0F0F0F] shadow-2xl ${
+            isMobile
+              ? 'w-[min(340px,calc(100vw-16px))]'
+              : 'w-[360px] max-w-[calc(100vw-24px)]'
+          }`}
           style={{
             left: tooltipStyle?.left ?? '50%',
             top: tooltipStyle?.top ?? '50%',
@@ -563,8 +765,11 @@ export default function WalkthroughLayer() {
           exit={{ opacity: 0, y: 8, scale: 0.98 }}
           transition={{ duration: 0.18 }}
         >
-          {/* Arrow (always points inward / toward viewport center via placement logic) */}
-          {tooltipStyle ? (
+          {/* Arrow (always points inward / toward viewport center via placement logic).
+              Skipped when the bubble is docked to a viewport edge — the
+              arrow would just hang off into the dimmed area without a
+              meaningful target. */}
+          {tooltipStyle && tooltipStyle.showArrow ? (
             <>
               {/* Border layer */}
               <div
@@ -674,17 +879,19 @@ export default function WalkthroughLayer() {
               />
             </>
           ) : null}
-          <div className="p-3">
+          <div className={isMobile ? 'p-2.5' : 'p-3'}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
                   {progress ? `Step ${progress.index + 1} of ${progress.total}` : 'Walkthrough'}
                 </div>
-                <div className="mt-1 text-sm font-semibold text-white leading-snug">{step.title}</div>
+                <div className={`mt-1 font-semibold text-white leading-snug ${isMobile ? 'text-[13px]' : 'text-sm'}`}>
+                  {step.title}
+                </div>
               </div>
               <button
                 onClick={() => stop()}
-                className="h-7 w-7 rounded-md border border-[#222222] bg-[#111111] text-[#9CA3AF] hover:text-white hover:border-[#333333] transition-all duration-200 flex items-center justify-center"
+                className="h-7 w-7 flex-shrink-0 rounded-md border border-[#222222] bg-[#111111] text-[#9CA3AF] hover:text-white hover:border-[#333333] transition-all duration-200 flex items-center justify-center"
                 aria-label="Close walkthrough"
                 title="Close"
               >
@@ -694,7 +901,9 @@ export default function WalkthroughLayer() {
               </button>
             </div>
 
-            <div className="mt-2 text-[12px] text-[#b3b3b3] leading-relaxed">
+            <div
+              className={`mt-2 text-[#b3b3b3] leading-relaxed ${isMobile ? 'text-[11.5px]' : 'text-[12px]'}`}
+            >
               {resolvedStatus === 'navigating'
                 ? 'Navigating to the next section…'
                 : resolvedStatus === 'searching'
@@ -702,18 +911,22 @@ export default function WalkthroughLayer() {
                   : step.description}
             </div>
 
-            <div className="mt-3 flex items-center justify-between">
+            <div className={`flex items-center justify-between ${isMobile ? 'mt-2.5' : 'mt-3'}`}>
               <button
                 onClick={() => prev()}
                 disabled={!progress || progress.index <= 0}
-                className="text-[12px] text-white bg-transparent border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded px-3 py-2 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`text-white bg-transparent border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isMobile ? 'text-[12px] px-3 py-1.5' : 'text-[12px] px-3 py-2'
+                }`}
               >
                 Back
               </button>
 
               <button
                 onClick={() => next()}
-                className="text-[12px] font-medium text-black bg-[#4a9eff] hover:bg-[#3d8ae6] rounded px-3 py-2 transition-all duration-200"
+                className={`font-medium text-black bg-[#4a9eff] hover:bg-[#3d8ae6] rounded transition-all duration-200 ${
+                  isMobile ? 'text-[12px] px-3 py-1.5' : 'text-[12px] px-3 py-2'
+                }`}
               >
                 {nextLabel}
               </button>
