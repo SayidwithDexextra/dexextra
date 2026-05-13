@@ -19,6 +19,7 @@ import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
 import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
 import ComingSoonGate from "@/components/ComingSoonOverlay";
 import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -70,6 +71,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
             <ActiveMarketsProvider>
               <WalkthroughProvider>
                 <PortfolioSnapshotProvider>
+                  <NotificationProvider>
                   <ExternalAppOpenGuard />
                   <GeoBlockWarningModal />
                   <WalkthroughAutoStart />
@@ -110,6 +112,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                     <EnableTradingPrompt />
                     {!isMobile && <Footer />}
                   </div>
+                  </NotificationProvider>
                 </PortfolioSnapshotProvider>
               </WalkthroughProvider>
             </ActiveMarketsProvider>

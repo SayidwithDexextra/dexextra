@@ -16,7 +16,7 @@
  * - Integration with HyperLiquid deployment
  */
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
@@ -24,6 +24,8 @@ import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
 import WalletModal from '../WalletModal'
+import NotificationsPanel from '../NotificationsPanel'
+import { useNotifications } from '@/contexts/NotificationContext'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 // Removed direct contract reads; align with useCoreVault hook outputs
@@ -89,6 +91,40 @@ export default function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const { walletData, portfolio } = useWallet()
+  const {
+    unreadCount: notificationsUnread,
+    isOpen: isNotificationsOpen,
+    open: openNotifications,
+    close: closeNotifications,
+    toggle: toggleNotifications,
+  } = useNotifications()
+
+  // Hover-with-grace-period open/close — matches the FooterSupportPopup
+  // and FooterWatchlistPopup pattern so the dropdown doesn't snap shut
+  // while the user is sliding the cursor toward it. Mobile (no real
+  // hover) just relies on the click toggle plus the outside-tap effect
+  // below.
+  const notificationsCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const notificationsMobileWrapperRef = useRef<HTMLDivElement | null>(null)
+  const handleNotificationsMouseEnter = useCallback(() => {
+    if (notificationsCloseTimerRef.current) {
+      clearTimeout(notificationsCloseTimerRef.current)
+      notificationsCloseTimerRef.current = null
+    }
+    openNotifications()
+  }, [openNotifications])
+  const handleNotificationsMouseLeave = useCallback(() => {
+    notificationsCloseTimerRef.current = setTimeout(() => {
+      closeNotifications()
+    }, 200)
+  }, [closeNotifications])
+  useEffect(() => {
+    return () => {
+      if (notificationsCloseTimerRef.current) {
+        clearTimeout(notificationsCloseTimerRef.current)
+      }
+    }
+  }, [])
   const router = useRouter()
   const pathname = usePathname()
   const { isRestricted: isGeoRestricted } = useGeoRestriction()
@@ -183,6 +219,20 @@ export default function Header() {
     mediaQuery.addEventListener('change', updateMobileState)
     return () => mediaQuery.removeEventListener('change', updateMobileState)
   }, [])
+
+  // Outside-tap close on mobile only (desktop uses hover-out). Touch users
+  // have no way to dismiss a hover-style dropdown otherwise.
+  useEffect(() => {
+    if (!isMobile || !isNotificationsOpen) return
+    const handler = (event: PointerEvent | MouseEvent) => {
+      const wrapper = notificationsMobileWrapperRef.current
+      if (!wrapper) return
+      if (wrapper.contains(event.target as Node)) return
+      closeNotifications()
+    }
+    document.addEventListener('pointerdown', handler as any, true)
+    return () => document.removeEventListener('pointerdown', handler as any, true)
+  }, [isMobile, isNotificationsOpen, closeNotifications])
 
   // Walkthrough hooks: allow global tours to open/close the deposit modal.
   useEffect(() => {
@@ -506,6 +556,64 @@ export default function Header() {
             >
               <SearchIcon />
             </button>
+
+            {/* Notifications — tap-toggle dropdown on mobile. The panel is
+                rendered inside this relatively-positioned wrapper so it
+                drops down underneath the bell, same as the footer pattern. */}
+            <div
+              ref={notificationsMobileWrapperRef}
+              className="relative"
+              data-walkthrough="header-notifications-mobile"
+            >
+              <button
+                type="button"
+                onClick={toggleNotifications}
+                className="relative flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
+                style={{
+                  color: 'var(--t-chrome-fg)',
+                  backgroundColor: isNotificationsOpen ? 'var(--t-chrome-hover)' : 'transparent',
+                }}
+                aria-haspopup="dialog"
+                aria-expanded={isNotificationsOpen}
+                aria-label={
+                  notificationsUnread > 0
+                    ? `Notifications (${notificationsUnread} unread)`
+                    : 'Notifications'
+                }
+                onMouseEnter={(e) => {
+                  (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
+                }}
+                onMouseLeave={(e) => {
+                  if (isNotificationsOpen) return
+                  ;(e.currentTarget as any).style.backgroundColor = 'transparent'
+                }}
+              >
+                <NotificationIcon />
+                {notificationsUnread > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute flex items-center justify-center"
+                    style={{
+                      top: '6px',
+                      right: '6px',
+                      minWidth: '14px',
+                      height: '14px',
+                      padding: '0 4px',
+                      borderRadius: '999px',
+                      backgroundColor: '#ff6b6b',
+                      color: '#ffffff',
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      boxShadow: '0 0 0 2px var(--t-chrome)',
+                    }}
+                  >
+                    {notificationsUnread > 99 ? '99+' : notificationsUnread}
+                  </span>
+                )}
+              </button>
+              <NotificationsPanel variant="mobile" />
+            </div>
 
             {/* Portfolio Button */}
             <button
@@ -889,21 +997,64 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Notification Icon */}
-          <button 
-            className="p-1.5 rounded-md transition-all duration-200"
-            style={{ color: 'var(--t-chrome-fg)' }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)';
-              (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)';
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as any).style.color = 'var(--t-chrome-fg)';
-              (e.currentTarget as any).style.backgroundColor = 'transparent';
-            }}
+          {/* Notifications — hover-with-grace-period dropdown (footer pattern). */}
+          <div
+            className="relative"
+            onMouseEnter={handleNotificationsMouseEnter}
+            onMouseLeave={handleNotificationsMouseLeave}
+            data-walkthrough="header-notifications"
           >
-            <NotificationIcon />
-          </button>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={isNotificationsOpen}
+              aria-label={
+                notificationsUnread > 0
+                  ? `Notifications (${notificationsUnread} unread)`
+                  : 'Notifications'
+              }
+              onClick={toggleNotifications}
+              className="relative p-1.5 rounded-md transition-all duration-200"
+              style={{
+                color: isNotificationsOpen ? 'var(--t-chrome-fg-sub)' : 'var(--t-chrome-fg)',
+                backgroundColor: isNotificationsOpen ? 'var(--t-chrome-hover)' : 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)'
+                ;(e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
+              }}
+              onMouseLeave={(e) => {
+                if (isNotificationsOpen) return
+                ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg)'
+                ;(e.currentTarget as any).style.backgroundColor = 'transparent'
+              }}
+            >
+              <NotificationIcon />
+              {notificationsUnread > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute flex items-center justify-center"
+                  style={{
+                    top: '2px',
+                    right: '2px',
+                    minWidth: '14px',
+                    height: '14px',
+                    padding: '0 4px',
+                    borderRadius: '999px',
+                    backgroundColor: '#ff6b6b',
+                    color: '#ffffff',
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    boxShadow: '0 0 0 2px var(--t-chrome)',
+                  }}
+                >
+                  {notificationsUnread > 99 ? '99+' : notificationsUnread}
+                </span>
+              )}
+            </button>
+            <NotificationsPanel variant="desktop" />
+          </div>
 
           {/* User Profile Section */}
           <button
