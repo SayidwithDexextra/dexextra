@@ -420,6 +420,28 @@ export default function WalkthroughLayer() {
   const { state, currentStep, progress, next, prev, stop } = useWalkthrough();
   const pathname = usePathname();
 
+  // Reset any auxiliary chrome the tour may have opened (mobile drawer,
+  // portfolio sidebar, wallet/deposit modals) whenever a tour ends. The
+  // mobile drawer is the painful one — without this, dismissing the tour
+  // on a `nav:*` step leaves the full-screen drawer covering the page.
+  const wasActiveRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = state.active;
+    if (wasActive && !state.active) {
+      try {
+        // The drawer (Navbar) listens on `mobileMenu:toggle` only; a bare
+        // `mobileMenu:close` would update the header icon but leave the
+        // drawer visible.
+        window.dispatchEvent(new CustomEvent('mobileMenu:toggle', { detail: { isOpen: false } }));
+        window.dispatchEvent(new CustomEvent('portfolioSidebar:close', { detail: { source: 'walkthrough:cleanup' } }));
+        window.dispatchEvent(new CustomEvent('walkthrough:wallet:close'));
+        window.dispatchEvent(new CustomEvent('walkthrough:deposit:close'));
+      } catch {}
+    }
+  }, [state.active]);
+
   // Track viewport so we can swap in mobile-specific copy / selectors and
   // adapt the tooltip layout (smaller width, vertical-first placement,
   // bottom-dock fallback when nothing fits).

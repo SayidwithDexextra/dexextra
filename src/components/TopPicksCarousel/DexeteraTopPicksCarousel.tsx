@@ -100,9 +100,15 @@ export default function DexeteraTopPicksCarousel({
       setIsMobile(mobile);
 
       if (mobile) {
-        const mobileCardW = Math.floor(w * 0.82);
+        // Sized to match OpenSea's mobile carousel cards (measured at 280x187
+        // on a 390px viewport => ~72% of viewport width, 1.5:1 landscape).
+        // Our scroll container sits inside `px-4` page padding, so 0.78 of the
+        // container width hits roughly the same 280px on a typical phone while
+        // leaving a clean peek of the next card.
+        const mobileCardW = Math.floor(w * 0.78);
         setCardWidth(mobileCardW);
-        setCardHeight(Math.min(280, Math.max(220, Math.floor(mobileCardW * 0.8))));
+        // 1.5:1 landscape aspect — wider than tall, matches OpenSea proportions.
+        setCardHeight(Math.round(mobileCardW / 1.5));
       } else {
         setCardWidth(Math.floor((w - 64) / 4.25));
         setCardHeight(200);
@@ -145,7 +151,7 @@ export default function DexeteraTopPicksCarousel({
   if (!items || items.length === 0) return null;
 
   const fadeWidth = isMobile
-    ? cardWidth ? Math.round(cardWidth * 0.25) : 0
+    ? cardWidth ? Math.round(cardWidth * 0.16) : 0
     : cardWidth ? Math.round(cardWidth * 0.55) : 0;
 
   return (
@@ -226,42 +232,38 @@ export default function DexeteraTopPicksCarousel({
                     src={item.imageUrl || '/template.png'}
                     alt={item.imageAlt || item.title}
                     fill
-                    sizes={isMobile ? '82vw' : '22vw'}
+                    sizes={isMobile ? '78vw' : '22vw'}
                     className="object-cover transition duration-300 group-hover:scale-[1.02]"
                   />
                   <div className="absolute inset-0 bg-black/20 transition group-hover:bg-black/10" />
                 </div>
 
                 <div className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/40 to-transparent text-left ${
-                  isMobile ? 'p-5' : 'p-4'
+                  isMobile ? 'p-3' : 'p-4'
                 }`}>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <h3
-                          className={`truncate font-medium text-white ${
-                            isMobile ? 'text-base' : 'text-sm'
-                          }`}
+                          className="truncate text-sm font-medium text-white"
                           title={item.title}
                         >
                           {item.title}
                         </h3>
                         {item.isVerified ? (
-                          <VerifiedBadge className={`shrink-0 ${isMobile ? 'h-5 w-5' : 'h-4 w-4'}`} />
+                          <VerifiedBadge className="h-4 w-4 shrink-0" />
                         ) : null}
                       </div>
                     </div>
                   </div>
 
                   {(item.statLabel || statValue || changeText) && (
-                    <div className={`mt-2 flex items-center gap-2 ${
-                      isMobile ? 'text-sm' : 'text-[13px]'
-                    }`}>
+                    <div className="mt-1.5 flex items-center gap-2 text-[13px]">
                       {item.statLabel ? (
                         <span className="text-white/70">{item.statLabel}:</span>
                       ) : null}
                       {statValue ? (
-                        <span className={`font-semibold text-white ${isMobile ? 'font-mono' : ''}`}>
+                        <span className="font-semibold text-white">
                           {statValue}
                         </span>
                       ) : null}

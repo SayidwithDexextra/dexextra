@@ -378,12 +378,26 @@ export default function Header() {
     }
   }
 
-  // Listen for navbar close events
+  // Keep the hamburger icon in sync with the actual drawer state. We
+  // listen to BOTH events so any close path is handled:
+  //   - `mobileMenu:close` is dispatched by the in-drawer X button.
+  //   - `mobileMenu:toggle { isOpen }` is the canonical channel the
+  //     Navbar drawer listens to (and what walkthroughs / programmatic
+  //     callers use). Without this listener, closing the drawer via the
+  //     toggle event would leave the header icon stuck on the X.
   useEffect(() => {
     if (typeof window === 'undefined') return
     const handleNavbarClose = () => setIsMobileMenuOpen(false)
+    const handleToggle = (e: Event) => {
+      const detail = (e as CustomEvent<{ isOpen?: boolean }>).detail
+      if (typeof detail?.isOpen === 'boolean') setIsMobileMenuOpen(detail.isOpen)
+    }
     window.addEventListener('mobileMenu:close', handleNavbarClose)
-    return () => window.removeEventListener('mobileMenu:close', handleNavbarClose)
+    window.addEventListener('mobileMenu:toggle', handleToggle as EventListener)
+    return () => {
+      window.removeEventListener('mobileMenu:close', handleNavbarClose)
+      window.removeEventListener('mobileMenu:toggle', handleToggle as EventListener)
+    }
   }, [])
 
   return (

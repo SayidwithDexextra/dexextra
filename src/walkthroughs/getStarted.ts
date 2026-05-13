@@ -5,15 +5,14 @@ const GET_STARTED_STORAGE_KEY = 'dexextra:walkthrough:get-started:completed';
 
 // Events used to drive the mobile chrome from a walkthrough step.
 //
-// - `mobileMenu:toggle` is what the mobile header button dispatches when the
-//   user taps the hamburger; sending it from a step is the equivalent of
-//   "open the menu for them" so the next selector (a nav item rendered
-//   inside that drawer) can resolve.
-// - `mobileMenu:close` is dispatched by the in-drawer close button and mirrors
-//   `setIsMobileMenuOpen(false)` on the header — we use it to put the chrome
-//   back into its default state when leaving a nav-item step.
+// `mobileMenu:toggle` with `{ isOpen }` is the canonical channel — the
+// mobile drawer (Navbar) listens on it, and the header's hamburger icon
+// stays in sync via the same event. The standalone `mobileMenu:close`
+// event the header used to dispatch is NOT received by the drawer, so we
+// must always go through the toggle event to actually open/close the
+// drawer from a walkthrough step.
 const OPEN_MOBILE_MENU = { name: 'mobileMenu:toggle', detail: { isOpen: true } };
-const CLOSE_MOBILE_MENU = { name: 'mobileMenu:close' };
+const CLOSE_MOBILE_MENU = { name: 'mobileMenu:toggle', detail: { isOpen: false } };
 
 const walletConnectSteps: WalkthroughStep[] = [
   {

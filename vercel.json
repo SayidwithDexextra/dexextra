@@ -68,12 +68,20 @@
     },
     "src/app/api/gasless/challenge/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/rebalance-relayers/auto/route.ts": {
+      "maxDuration": 120
     }
   },
   "env": {
     "NODE_ENV": "production"
   },
-  "crons": [],
+  "crons": [
+    {
+      "path": "/api/cron/rebalance-relayers/auto",
+      "schedule": "*/1 * * * *"
+    }
+  ],
   "regions": ["iad1"],
   "github": {
     "silent": true

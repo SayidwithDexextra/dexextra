@@ -121,6 +121,13 @@ export default function WalkthroughAutoStart() {
       if (latest.state.active) return;
       if (latest.isDisabledByRegion) return;
       if (latest.isCompleted(definition.id, definition.storageKey)) return;
+      // If the user happened to open the mobile drawer themselves before
+      // we got here, close it so the prompt renders over a clean page.
+      // The prompt is a centered card and would otherwise visually stack
+      // on top of the full-screen drawer.
+      try {
+        window.dispatchEvent(new CustomEvent('mobileMenu:toggle', { detail: { isOpen: false } }));
+      } catch {}
       setPendingTour({ tourId, definition, ...promptCopy });
     }, PROMPT_DELAY_MS);
 
