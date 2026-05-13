@@ -2,14 +2,26 @@ import { parseUnits } from 'viem';
 import { verifyTypedData } from 'ethers';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from './contractConfig';
 import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
+import { isMagicSelectedWallet, switchMagicChainWithRetry, getMagicProvider } from '@/lib/magic';
 
 const GASLESS_TOPUP_ENDPOINT = '/api/gasless/topup';
 
 type TopUpResult = { success: boolean; txHash?: string; error?: string };
 type ChainCheckResult = { ok: true } | { ok: false; error: string };
 
+// IMPORTANT: keep this consistent with `getWalletProvider` in src/lib/gasless.ts.
+// If the user is logged in via Magic (email/Google/Apple), we MUST sign with
+// the Magic provider — otherwise we end up asking whatever injected wallet
+// happens to be active to sign as a different account, producing a signature
+// that recovers to the wrong address and reverting with InvalidAddress() in
+// CoreVault.metaTopUpPositionMargin.
 function getWalletProvider(): EthereumProvider | null {
   if (typeof window === 'undefined') return null;
+  if (isMagicSelectedWallet()) {
+    try {
+      return getMagicProvider() as unknown as EthereumProvider;
+    } catch {}
+  }
   return (getActiveEthereumProvider() ?? (window as any)?.ethereum ?? null) as any;
 }
 
@@ -48,6 +60,15 @@ async function switchToTargetChain(targetChainId: number): Promise<ChainCheckRes
   const ethereum = getWalletProvider();
   if (!ethereum) {
     return { ok: false, error: 'No wallet provider detected.' };
+  }
+  // Magic ignores wallet_switchEthereumChain; it needs its own RPC path.
+  if (typeof window !== 'undefined' && isMagicSelectedWallet()) {
+    try {
+      await switchMagicChainWithRetry(targetChainId, { retries: 2 });
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Failed to switch Magic wallet to the trading network.' };
+    }
   }
   const chainHex = `0x${targetChainId.toString(16)}`;
   try {
@@ -228,6 +249,25 @@ export async function gaslessTopUpPosition(params: {
     nonce: nonce.toString(),
   };
 
+  // Cross-check that the selected provider account matches the trader address
+  // BEFORE asking for a signature. If a Magic user has an injected wallet
+  // active in their browser, the active EIP-6963 provider could otherwise
+  // silently sign as a different address.
+  try {
+    const accounts = await ethereum.request({ method: 'eth_accounts' });
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      const selected = String(accounts[0] || '');
+      if (selected && selected.toLowerCase() !== effectiveTraderLower) {
+        return {
+          success: false,
+          error: `Wallet account mismatch. Connected wallet ${selected.slice(0, 10)}… cannot sign for trader ${effectiveTrader.slice(0, 10)}…. Reconnect with the trader account or re-enable gasless trading.`,
+        };
+      }
+    }
+  } catch {
+    // If we can't read accounts we'll catch the mismatch in the local verify below.
+  }
+
   let signature: string;
   try {
     signature = await ethereum.request({
@@ -238,19 +278,24 @@ export async function gaslessTopUpPosition(params: {
     return { success: false, error: normalizeProviderError(err) };
   }
 
-  // Optional local verification to aid debugging; do not block relay on mismatch
+  // HARD-fail before relaying if the local signature recovery doesn't match
+  // the trader. If we relay an unmatched signature, CoreVault.metaTopUpPositionMargin
+  // reverts with InvalidAddress() — wasting a relayer tx and surfacing an
+  // opaque revert to the user.
   try {
     const recovered = verifyTypedData(domain as any, types as any, message as any, signature);
     if (!recovered || recovered.toLowerCase() !== effectiveTraderLower) {
-      console.warn('[gaslessTopUpPosition] signature mismatch (non-blocking)', {
-        recovered,
-        expected: effectiveTrader,
-        domain,
-        message,
+      console.error('[gaslessTopUpPosition] signature mismatch — aborting before relay', {
+        recovered, expected: effectiveTrader, domain, message,
       });
+      return {
+        success: false,
+        error: `Signature was made by ${recovered ?? 'unknown'} but the topup is for ${effectiveTrader.slice(0, 10)}…. Check that your wallet's selected account matches your trading address, then retry.`,
+      };
     }
   } catch (e: any) {
-    console.warn('[gaslessTopUpPosition] signature verify failed (non-blocking)', e);
+    console.error('[gaslessTopUpPosition] signature verify failed — aborting', e);
+    return { success: false, error: 'Could not verify your top-up signature locally. Reconnect your wallet and retry.' };
   }
 
   try {

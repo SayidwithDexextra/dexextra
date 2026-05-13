@@ -249,6 +249,13 @@ function normalizeRelayErrorBody(body: string, context?: string): string {
   }
   
   const lower = (text || '').toLowerCase();
+  // Server-side allowlist misconfiguration: the OrderBook / CoreVault contract
+  // calling `chargeSession` is not in the GlobalSessionRegistry's allowedOrderbook
+  // map. The user's session is fine — re-enabling won't help. Surface a clear
+  // operator-facing message and DO NOT route this through the "re-enable" path.
+  if (lower.includes('caller not allowed')) {
+    return 'This market is not yet allowlisted on the session registry. Ask an operator to add the contract via setAllowedOrderbook on the GlobalSessionRegistry.';
+  }
   if (lower.includes('session: bad relayer') || lower.includes('missing proof') || lower.includes('session: unknown')) {
     return 'Gasless session is out of date. Please re-enable gasless trading and retry.';
   }
@@ -286,9 +293,17 @@ function normalizeRelayErrorBody(body: string, context?: string): string {
 }
 
 // Lightweight classifiers so callers can adjust UX without re-parsing all errors.
+//
+// IMPORTANT: only return true for errors that actually mean "the user's session
+// is invalid and they need a new one". Server-side configuration problems like
+// `session: caller not allowed` (the CoreVault / OrderBook isn't allowlisted in
+// the GlobalSessionRegistry yet) MUST NOT match here — otherwise the top-up /
+// trade flow will wipe a perfectly valid local session and force the user to
+// re-sign, even though signing again won't help.
 export function isSessionErrorMessage(message: string | undefined | null): boolean {
   if (!message) return false;
   const lower = message.toLowerCase();
+  if (lower.includes('caller not allowed')) return false; // registry misconfig, not a user-session problem
   return (
     lower.includes('session') ||
     lower.includes('relayer') ||
