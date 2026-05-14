@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   useNotifications,
   type NotificationItem,
   type NotificationSeverity,
 } from '@/contexts/NotificationContext'
+import { NotificationIcon } from '@/components/NotificationIcon'
 
 type FilterId = 'all' | 'unread' | NotificationSeverity
 
@@ -83,16 +84,27 @@ function isExternalHref(href: string): boolean {
 interface RowProps {
   item: NotificationItem
   onMarkRead: (id: string) => void
+  /**
+   * True when this row just arrived via realtime/Pusher after the page
+   * was already mounted. Triggers the one-shot slide-in animation defined
+   * in globals.css (`dex-notification-row-enter`).
+   */
+  isFresh?: boolean
 }
 
-function NotificationCard({ item, onMarkRead }: RowProps) {
+function NotificationCard({ item, onMarkRead, isFresh = false }: RowProps) {
   const theme = SEVERITY_THEME[item.severity] ?? SEVERITY_THEME.info
   const hasCta = Boolean(item.cta_href)
   const ctaLabel = item.cta_label || (hasCta ? 'Open' : null)
 
   return (
     <article
-      className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden flex"
+      className={[
+        'group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden flex',
+        isFresh ? 'dex-notification-row-enter' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
       {/* Severity stripe — 2px accent on the left edge. Stays full when
           unread, dims to 20% once read. The stripe is the only place we
@@ -107,7 +119,14 @@ function NotificationCard({ item, onMarkRead }: RowProps) {
         aria-hidden="true"
       />
 
-      <div className="flex-1 min-w-0 p-4">
+      <div className="flex-1 min-w-0 p-4 flex items-start gap-3.5">
+        {/* Flavor icon — content-aware glyph (candlestick for markets,
+            wallet for deposits, sparkles for welcomes, etc.). Sits to
+            the right of the severity stripe so the row reads:
+            [severity stripe] [icon tile] [meta + title + body + CTA]. */}
+        <NotificationIcon item={item} size="md" isRead={item.is_read} />
+
+        <div className="flex-1 min-w-0">
         {/* Meta row */}
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <span
@@ -224,6 +243,7 @@ function NotificationCard({ item, onMarkRead }: RowProps) {
             )}
           </div>
         )}
+        </div>
       </div>
     </article>
   )
@@ -313,6 +333,58 @@ export default function NotificationsPage() {
       // Provider already logs + degrades gracefully on its own.
     })
   }, [refresh])
+
+  // Live arrivals — track which notification ids should slide in.
+  //
+  // `seenIdsRef` is `null` until the first non-empty render so the initial
+  // page load never animates a backlog of existing items; once it has been
+  // seeded, any id we haven't seen before is treated as a fresh realtime
+  // arrival, added to `freshIds`, and cleared ~1.5s later (long enough for
+  // the 1.2s CSS animation to finish). Each batch captures its own ids in
+  // a closure, so rapid successive arrivals each get the full animation.
+  const seenIdsRef = useRef<Set<string> | null>(null)
+  const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    if (seenIdsRef.current === null) {
+      // First render with items in hand — seed the seen set without
+      // marking anything as fresh. Empty initial arrays also pass through
+      // here harmlessly (the set just starts empty).
+      seenIdsRef.current = new Set(items.map((n) => n.id))
+      return
+    }
+
+    const seen = seenIdsRef.current
+    const newIds: string[] = []
+    for (const n of items) {
+      if (!seen.has(n.id)) {
+        newIds.push(n.id)
+        seen.add(n.id)
+      }
+    }
+    if (newIds.length === 0) return
+
+    setFreshIds((prev) => {
+      const next = new Set(prev)
+      for (const id of newIds) next.add(id)
+      return next
+    })
+
+    // 1.2s animation + 300ms buffer so the resting state is fully restored
+    // before we strip the class. We intentionally don't clear this timer
+    // on re-run: each batch's ids live in this closure, so letting every
+    // timer fire independently keeps overlapping arrivals from cancelling
+    // each other's cleanup. setState on an unmounted component is a no-op
+    // in modern React, so no cleanup is needed for the unmount case either.
+    window.setTimeout(() => {
+      setFreshIds((prev) => {
+        if (prev.size === 0) return prev
+        const next = new Set(prev)
+        for (const id of newIds) next.delete(id)
+        return next
+      })
+    }, 1500)
+  }, [items])
 
   const filtered = useMemo<NotificationItem[]>(() => {
     if (filter === 'all') return items
@@ -436,6 +508,7 @@ export default function NotificationsPage() {
                 key={item.id}
                 item={item}
                 onMarkRead={markRead}
+                isFresh={freshIds.has(item.id)}
               />
             ))}
           </div>

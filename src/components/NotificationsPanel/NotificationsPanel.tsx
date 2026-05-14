@@ -7,6 +7,7 @@ import {
   type NotificationItem,
   type NotificationSeverity,
 } from '@/contexts/NotificationContext'
+import { NotificationIcon } from '@/components/NotificationIcon'
 
 interface NotificationsPanelProps {
   /**
@@ -80,16 +81,12 @@ function NotificationRow({ item, onClose, onMarkRead }: NotificationRowProps) {
   }
 
   const inner = (
-    <div className="flex items-start gap-2 p-2.5">
-      {/* Unread severity dot — mirrors the footer popup status-dot pattern. */}
-      <div
-        className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 transition-opacity duration-150"
-        style={{
-          backgroundColor: style.dot,
-          opacity: item.is_read ? 0.3 : 1,
-        }}
-        aria-hidden="true"
-      />
+    <div className="flex items-start gap-2.5 p-2.5">
+      {/* Flavor icon — content-aware glyph (candlestick for markets,
+          wallet for deposits, sparkles for welcomes, etc.). Replaces the
+          old severity dot; severity is still conveyed via the badge label
+          inside the meta row below. */}
+      <NotificationIcon item={item} size="sm" isRead={item.is_read} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
           <span
@@ -183,8 +180,13 @@ function NotificationRow({ item, onClose, onMarkRead }: NotificationRowProps) {
 export default function NotificationsPanel({
   isOpen,
   onClose,
-  newLimit = 3,
-  oldLimit = 4,
+  // Bumped from 3/4 once the scrollable middle was introduced — there's
+  // now somewhere to scroll, so we can show more before deferring to the
+  // full archive at /notifications. The viewport cap below
+  // (max-height: min(80vh, 540px)) keeps the panel inside the screen
+  // regardless of how many rows render.
+  newLimit = 5,
+  oldLimit = 8,
 }: NotificationsPanelProps) {
   const { items, unreadCount, markRead, isLoading } = useNotifications()
 
@@ -217,14 +219,19 @@ export default function NotificationsPanel({
       aria-label="Notifications"
     >
       <div
-        className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden shadow-xl"
+        // Vertical flex layout: pinned header → scrollable middle →
+        // pinned footer. `maxHeight: min(80vh, 540px)` keeps the panel
+        // inside the viewport on short screens (laptops) while still
+        // letting the dropdown breathe on tall ones.
+        className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden shadow-xl flex flex-col"
         style={{
           animation: 'notifications-panel-expand 160ms ease-out',
           transformOrigin: 'top right',
+          maxHeight: 'min(80vh, 540px)',
         }}
       >
-        {/* Header — same shape as FooterSupportPopup */}
-        <div className="flex items-center justify-between p-2.5 border-b border-[#1A1A1A]">
+        {/* Header — pinned (does not scroll). Same shape as FooterSupportPopup. */}
+        <div className="flex items-center justify-between p-2.5 border-b border-[#1A1A1A] flex-shrink-0">
           <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
             Notifications
           </h4>
@@ -246,80 +253,86 @@ export default function NotificationsPanel({
           )}
         </div>
 
-        {/* NEW section */}
-        <div className="p-1.5">
-          <div className="px-1.5 pb-1">
-            <span className="text-[9px] font-medium uppercase tracking-wider text-[#606060]">
-              New
-            </span>
-          </div>
-          {isLoading && items.length === 0 ? (
-            <div className="px-2.5 py-6 text-center">
-              <div className="inline-block w-4 h-4 border-2 border-[#222222] border-t-[#808080] rounded-full animate-spin" />
+        {/* Scrollable middle — wraps both NEW and EARLIER. `min-h-0` is
+            required for `flex-1 overflow-y-auto` to actually engage when
+            the parent is `flex flex-col` with a finite maxHeight. The
+            `dex-panel-scroll` class adds a thin on-platform scrollbar
+            (see globals.css). */}
+        <div className="dex-panel-scroll flex-1 min-h-0 overflow-y-auto">
+          {/* NEW section */}
+          <div className="p-1.5">
+            <div className="px-1.5 pb-1">
+              <span className="text-[9px] font-medium uppercase tracking-wider text-[#606060]">
+                New
+              </span>
             </div>
-          ) : newItems.length === 0 ? (
-            <div className="flex items-start gap-2 px-2.5 py-2.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-[#404040] flex-shrink-0 mt-1.5" />
-              <div className="flex-1 min-w-0">
-                <span className="text-[11px] font-medium text-[#808080]">
-                  No new messages at this time
-                </span>
-                <div className="text-[10px] text-[#606060] leading-snug mt-0.5">
-                  You&apos;re all caught up. New platform updates appear here
-                  in real time.
+            {isLoading && items.length === 0 ? (
+              <div className="px-2.5 py-6 text-center">
+                <div className="inline-block w-4 h-4 border-2 border-[#222222] border-t-[#808080] rounded-full animate-spin" />
+              </div>
+            ) : newItems.length === 0 ? (
+              <div className="flex items-start gap-2 px-2.5 py-2.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#404040] flex-shrink-0 mt-1.5" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-[11px] font-medium text-[#808080]">
+                    No new messages at this time
+                  </span>
+                  <div className="text-[10px] text-[#606060] leading-snug mt-0.5">
+                    You&apos;re all caught up. New platform updates appear here
+                    in real time.
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {newItems.map((item) => (
-                <NotificationRow
-                  key={item.id}
-                  item={item}
-                  onClose={onClose}
-                  onMarkRead={markRead}
-                />
-              ))}
-            </div>
+            ) : (
+              <div className="space-y-0.5">
+                {newItems.map((item) => (
+                  <NotificationRow
+                    key={item.id}
+                    item={item}
+                    onClose={onClose}
+                    onMarkRead={markRead}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* EARLIER section — bottom dissolves into the popover background
+              via a CSS mask. Inside the scroll container, that fade now
+              also reads as "you've reached the end of the preview — see
+              /notifications for the full archive". */}
+          {oldItems.length > 0 && (
+            <>
+              <div className="px-3 pt-2 pb-1 border-t border-[#1A1A1A]">
+                <span className="text-[9px] font-medium uppercase tracking-wider text-[#606060]">
+                  Earlier
+                </span>
+              </div>
+              <div
+                className="p-1.5 space-y-0.5"
+                style={{
+                  WebkitMaskImage:
+                    'linear-gradient(to bottom, black 45%, rgba(0,0,0,0.4) 80%, transparent 100%)',
+                  maskImage:
+                    'linear-gradient(to bottom, black 45%, rgba(0,0,0,0.4) 80%, transparent 100%)',
+                }}
+              >
+                {oldItems.map((item) => (
+                  <NotificationRow
+                    key={item.id}
+                    item={item}
+                    onClose={onClose}
+                    onMarkRead={markRead}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </div>
 
-        {/* EARLIER section — bottom of the list dissolves into the
-            popover background via a CSS mask, giving "older messages
-            slipping away" the affordance the user described. Only
-            rendered when there are read items to show. */}
-        {oldItems.length > 0 && (
-          <>
-            <div className="px-3 pt-2 pb-1 border-t border-[#1A1A1A]">
-              <span className="text-[9px] font-medium uppercase tracking-wider text-[#606060]">
-                Earlier
-              </span>
-            </div>
-            <div
-              className="p-1.5 space-y-0.5"
-              style={{
-                WebkitMaskImage:
-                  'linear-gradient(to bottom, black 45%, rgba(0,0,0,0.4) 80%, transparent 100%)',
-                maskImage:
-                  'linear-gradient(to bottom, black 45%, rgba(0,0,0,0.4) 80%, transparent 100%)',
-              }}
-            >
-              {oldItems.map((item) => (
-                <NotificationRow
-                  key={item.id}
-                  item={item}
-                  onClose={onClose}
-                  onMarkRead={markRead}
-                />
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Footer — same shape as FooterSupportPopup's "Support center →".
-            Drops the user onto the standalone /notifications page where
-            they can read full bodies, mark all read, and filter. */}
-        <div className="p-1.5 border-t border-[#1A1A1A]">
+        {/* Footer — pinned (does not scroll). Drops the user onto the
+            standalone /notifications page for the full archive. */}
+        <div className="p-1.5 border-t border-[#1A1A1A] flex-shrink-0">
           <Link
             href="/notifications"
             onClick={onClose}
