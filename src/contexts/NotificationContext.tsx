@@ -36,10 +36,6 @@ export interface NotificationItem {
 interface NotificationContextValue {
   items: NotificationItem[]
   unreadCount: number
-  isOpen: boolean
-  open: () => void
-  close: () => void
-  toggle: () => void
   markRead: (id: string) => Promise<void>
   markAllRead: () => Promise<void>
   refresh: () => Promise<void>
@@ -86,7 +82,6 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   const wallet = (walletData.address || '').toLowerCase()
 
   const [items, setItems] = useState<NotificationItem[]>([])
-  const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   // Keep latest items in a ref so realtime handlers added once at mount don't
   // close over stale state.
@@ -260,24 +255,16 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     }
   }, [wallet])
 
-  const open = useCallback(() => setIsOpen(true), [])
-  const close = useCallback(() => setIsOpen(false), [])
-  const toggle = useCallback(() => setIsOpen((v) => !v), [])
-
   const value = useMemo<NotificationContextValue>(
     () => ({
       items,
       unreadCount,
-      isOpen,
-      open,
-      close,
-      toggle,
       markRead,
       markAllRead,
       refresh,
       isLoading,
     }),
-    [items, unreadCount, isOpen, open, close, toggle, markRead, markAllRead, refresh, isLoading],
+    [items, unreadCount, markRead, markAllRead, refresh, isLoading],
   )
 
   return (
@@ -291,14 +278,10 @@ export function useNotifications(): NotificationContextValue {
   const ctx = useContext(NotificationContext)
   if (!ctx) {
     // Soft fallback so a missing provider doesn't crash the header — just
-    // disables the bell quietly.
+    // shows zero unread quietly.
     return {
       items: [],
       unreadCount: 0,
-      isOpen: false,
-      open: () => {},
-      close: () => {},
-      toggle: () => {},
       markRead: async () => {},
       markAllRead: async () => {},
       refresh: async () => {},
