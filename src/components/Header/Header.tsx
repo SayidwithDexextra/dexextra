@@ -24,7 +24,7 @@ import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
 import WalletModal from '../WalletModal'
-import { NotificationsPopover } from '../NotificationsPopover'
+import NotificationsPanel from '../NotificationsPanel'
 import { useNotifications } from '@/contexts/NotificationContext'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
@@ -106,22 +106,29 @@ export default function Header() {
     prevUnreadRef.current = notificationsUnread
   }, [notificationsUnread])
 
-  // Notification bell hover-popover — desktop only. 200ms grace-period
-  // close timer matches the FooterSupportPopup pattern so the dropdown
-  // doesn't snap shut while the cursor crosses the 8px gap to it.
-  const [isNotificationsPopoverOpen, setIsNotificationsPopoverOpen] = useState(false)
+  // Notifications hover panel — desktop only. 200ms grace-period close
+  // timer matches FooterSupportPopup so the dropdown doesn't snap shut
+  // while the cursor crosses the 8px gap to it.
+  const [isNotificationsPanelOpen, setIsNotificationsPanelOpen] = useState(false)
   const notificationsCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleNotificationsMouseEnter = useCallback(() => {
     if (notificationsCloseTimeoutRef.current) {
       clearTimeout(notificationsCloseTimeoutRef.current)
       notificationsCloseTimeoutRef.current = null
     }
-    setIsNotificationsPopoverOpen(true)
+    setIsNotificationsPanelOpen(true)
   }, [])
   const handleNotificationsMouseLeave = useCallback(() => {
     notificationsCloseTimeoutRef.current = setTimeout(() => {
-      setIsNotificationsPopoverOpen(false)
+      setIsNotificationsPanelOpen(false)
     }, 200)
+  }, [])
+  const handleNotificationsPanelClose = useCallback(() => {
+    if (notificationsCloseTimeoutRef.current) {
+      clearTimeout(notificationsCloseTimeoutRef.current)
+      notificationsCloseTimeoutRef.current = null
+    }
+    setIsNotificationsPanelOpen(false)
   }, [])
   useEffect(() => {
     return () => {
@@ -979,8 +986,17 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Notification bell — navigates to /notifications (standalone page). */}
-          <div className="relative group">
+          {/* Notification bell — navigates to /notifications on click,
+              shows hover panel preview on desktop. The wrapper handles
+              the hover + 200ms grace-period close (FooterSupportPopup
+              pattern); the panel is rendered inside the wrapper so the
+              mouse moving between bell and panel never leaves the
+              shared mouseEnter/mouseLeave region. */}
+          <div
+            className="relative"
+            onMouseEnter={handleNotificationsMouseEnter}
+            onMouseLeave={handleNotificationsMouseLeave}
+          >
             <Link
               href="/notifications"
               aria-label={
@@ -992,20 +1008,13 @@ export default function Header() {
               className="relative p-1.5 rounded-md transition-all duration-200 inline-flex"
               style={{
                 color:
-                  pathname === '/notifications'
+                  pathname === '/notifications' || isNotificationsPanelOpen
                     ? 'var(--t-chrome-fg-sub)'
                     : 'var(--t-chrome-fg)',
                 backgroundColor:
-                  pathname === '/notifications' ? 'var(--t-chrome-hover)' : 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)'
-                ;(e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
-              }}
-              onMouseLeave={(e) => {
-                if (pathname === '/notifications') return
-                ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg)'
-                ;(e.currentTarget as any).style.backgroundColor = 'transparent'
+                  pathname === '/notifications' || isNotificationsPanelOpen
+                    ? 'var(--t-chrome-hover)'
+                    : 'transparent',
               }}
             >
               <NotificationIcon />
@@ -1033,22 +1042,10 @@ export default function Header() {
                 </span>
               )}
             </Link>
-            {/* Hover tooltip — only shown on desktop hover when the inbox
-                is empty. Mirrors the geo-restriction tooltip style above
-                for platform consistency. */}
-            {notificationsUnread === 0 && (
-              <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50">
-                <div className="bg-[#0F0F0F] border border-[#333333] rounded-md px-3 py-2 shadow-lg whitespace-nowrap">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#404040] flex-shrink-0" />
-                    <span className="text-[11px] text-[#9CA3AF]">
-                      No new messages at this time
-                    </span>
-                  </div>
-                </div>
-                <div className="absolute left-1/2 -translate-x-1/2 -top-1 w-2 h-2 bg-[#0F0F0F] border-l border-t border-[#333333] rotate-45" />
-              </div>
-            )}
+            <NotificationsPanel
+              isOpen={isNotificationsPanelOpen}
+              onClose={handleNotificationsPanelClose}
+            />
           </div>
 
           {/* User Profile Section */}
