@@ -56,6 +56,7 @@
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.3",
     "@upstash/vector": "^1.2.2",
+    "@walletconnect/ethereum-provider": "^2.23.9",
     "alchemy-sdk": "^3.6.1",
     "animate.css": "^4.1.1",
     "autoprefixer": "^10.4.21",
