@@ -16,7 +16,7 @@
  * - Integration with HyperLiquid deployment
  */
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
@@ -24,6 +24,7 @@ import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
 import WalletModal from '../WalletModal'
+import { NotificationsPopover } from '../NotificationsPopover'
 import { useNotifications } from '@/contexts/NotificationContext'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
@@ -104,6 +105,31 @@ export default function Header() {
     }
     prevUnreadRef.current = notificationsUnread
   }, [notificationsUnread])
+
+  // Notification bell hover-popover — desktop only. 200ms grace-period
+  // close timer matches the FooterSupportPopup pattern so the dropdown
+  // doesn't snap shut while the cursor crosses the 8px gap to it.
+  const [isNotificationsPopoverOpen, setIsNotificationsPopoverOpen] = useState(false)
+  const notificationsCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleNotificationsMouseEnter = useCallback(() => {
+    if (notificationsCloseTimeoutRef.current) {
+      clearTimeout(notificationsCloseTimeoutRef.current)
+      notificationsCloseTimeoutRef.current = null
+    }
+    setIsNotificationsPopoverOpen(true)
+  }, [])
+  const handleNotificationsMouseLeave = useCallback(() => {
+    notificationsCloseTimeoutRef.current = setTimeout(() => {
+      setIsNotificationsPopoverOpen(false)
+    }, 200)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (notificationsCloseTimeoutRef.current) {
+        clearTimeout(notificationsCloseTimeoutRef.current)
+      }
+    }
+  }, [])
   const router = useRouter()
   const pathname = usePathname()
   const { isRestricted: isGeoRestricted } = useGeoRestriction()
@@ -954,58 +980,76 @@ export default function Header() {
           </div>
 
           {/* Notification bell — navigates to /notifications (standalone page). */}
-          <Link
-            href="/notifications"
-            aria-label={
-              notificationsUnread > 0
-                ? `Notifications (${notificationsUnread} unread)`
-                : 'Notifications'
-            }
-            data-walkthrough="header-notifications"
-            className="relative p-1.5 rounded-md transition-all duration-200"
-            style={{
-              color:
-                pathname === '/notifications'
-                  ? 'var(--t-chrome-fg-sub)'
-                  : 'var(--t-chrome-fg)',
-              backgroundColor:
-                pathname === '/notifications' ? 'var(--t-chrome-hover)' : 'transparent',
-            }}
-            onMouseEnter={(e) => {
-              ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)'
-              ;(e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
-            }}
-            onMouseLeave={(e) => {
-              if (pathname === '/notifications') return
-              ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg)'
-              ;(e.currentTarget as any).style.backgroundColor = 'transparent'
-            }}
-          >
-            <NotificationIcon />
-            {notificationsUnread > 0 && (
-              <span
-                key={badgePulseKey}
-                aria-hidden="true"
-                className="absolute flex items-center justify-center dex-bell-badge-pop"
-                style={{
-                  top: '2px',
-                  right: '2px',
-                  minWidth: '14px',
-                  height: '14px',
-                  padding: '0 4px',
-                  borderRadius: '999px',
-                  backgroundColor: '#ff6b6b',
-                  color: '#ffffff',
-                  fontSize: '9px',
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  boxShadow: '0 0 0 2px var(--t-chrome)',
-                }}
-              >
-                {notificationsUnread > 99 ? '99+' : notificationsUnread}
-              </span>
+          <div className="relative group">
+            <Link
+              href="/notifications"
+              aria-label={
+                notificationsUnread > 0
+                  ? `Notifications (${notificationsUnread} unread)`
+                  : 'Notifications'
+              }
+              data-walkthrough="header-notifications"
+              className="relative p-1.5 rounded-md transition-all duration-200 inline-flex"
+              style={{
+                color:
+                  pathname === '/notifications'
+                    ? 'var(--t-chrome-fg-sub)'
+                    : 'var(--t-chrome-fg)',
+                backgroundColor:
+                  pathname === '/notifications' ? 'var(--t-chrome-hover)' : 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)'
+                ;(e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
+              }}
+              onMouseLeave={(e) => {
+                if (pathname === '/notifications') return
+                ;(e.currentTarget as any).style.color = 'var(--t-chrome-fg)'
+                ;(e.currentTarget as any).style.backgroundColor = 'transparent'
+              }}
+            >
+              <NotificationIcon />
+              {notificationsUnread > 0 && (
+                <span
+                  key={badgePulseKey}
+                  aria-hidden="true"
+                  className="absolute flex items-center justify-center dex-bell-badge-pop"
+                  style={{
+                    top: '2px',
+                    right: '2px',
+                    minWidth: '14px',
+                    height: '14px',
+                    padding: '0 4px',
+                    borderRadius: '999px',
+                    backgroundColor: '#ff6b6b',
+                    color: '#ffffff',
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    boxShadow: '0 0 0 2px var(--t-chrome)',
+                  }}
+                >
+                  {notificationsUnread > 99 ? '99+' : notificationsUnread}
+                </span>
+              )}
+            </Link>
+            {/* Hover tooltip — only shown on desktop hover when the inbox
+                is empty. Mirrors the geo-restriction tooltip style above
+                for platform consistency. */}
+            {notificationsUnread === 0 && (
+              <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50">
+                <div className="bg-[#0F0F0F] border border-[#333333] rounded-md px-3 py-2 shadow-lg whitespace-nowrap">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#404040] flex-shrink-0" />
+                    <span className="text-[11px] text-[#9CA3AF]">
+                      No new messages at this time
+                    </span>
+                  </div>
+                </div>
+                <div className="absolute left-1/2 -translate-x-1/2 -top-1 w-2 h-2 bg-[#0F0F0F] border-l border-t border-[#333333] rotate-45" />
+              </div>
             )}
-          </Link>
+          </div>
 
           {/* User Profile Section */}
           <button
