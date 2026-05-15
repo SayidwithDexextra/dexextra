@@ -8,6 +8,34 @@ function clamp01(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
+const ERROR_PRESETS = [
+  {
+    name: 'Insufficient Collateral',
+    headline: 'Insufficient Collateral',
+    detail: 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.',
+  },
+  {
+    name: 'Order Rejected',
+    headline: 'Order Rejected',
+    detail: 'Cannot execute a margin trade against spot-only liquidity at the top of the book.',
+  },
+  {
+    name: 'Session Expired',
+    headline: 'Session Error',
+    detail: 'Gasless session expired. Please re-enable gasless trading and retry.',
+  },
+  {
+    name: 'Market Order Failed',
+    headline: 'Market Order Failed',
+    detail: 'Failed to create market order. Please try again.',
+  },
+  {
+    name: 'Limit Order Failed',
+    headline: 'Limit Order Failed',
+    detail: 'Failed to create limit order. Please try again.',
+  },
+];
+
 export default function DebugOrderFillModalPage() {
   const debugEnabled =
     process.env.NODE_ENV !== 'production' ||
@@ -16,9 +44,11 @@ export default function DebugOrderFillModalPage() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<OrderFillStatus>('processing');
   const [progress, setProgress] = useState(0.22);
-  const [allowClose, setAllowClose] = useState(false);
-  const [autoCloseOnSuccess, setAutoCloseOnSuccess] = useState(true);
+  const [allowClose, setAllowClose] = useState(true);
+  const [autoCloseOnSuccess, setAutoCloseOnSuccess] = useState(false);
   const [durationMs, setDurationMs] = useState(5200);
+  const [headline, setHeadline] = useState('Submitting your order');
+  const [detail, setDetail] = useState('');
 
   const rafRef = useRef<number | null>(null);
 
@@ -115,7 +145,53 @@ export default function DebugOrderFillModalPage() {
         </div>
       </div>
 
+      {/* Error Presets Section */}
+      <div className="rounded-md border border-red-500/20 bg-red-500/5 p-4 space-y-3">
+        <div className="text-[12px] font-medium text-red-300">Error Modal Presets</div>
+        <div className="flex flex-wrap gap-2">
+          {ERROR_PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              onClick={() => {
+                stopSim();
+                setHeadline(preset.headline);
+                setDetail(preset.detail);
+                setStatus('error');
+                setProgress(1);
+                setOpen(true);
+              }}
+              className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] font-medium text-red-300 hover:bg-red-500/20 transition-colors"
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Controls Section */}
       <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4 space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Headline Text</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={headline}
+              onChange={(e) => setHeadline(e.target.value)}
+              placeholder="Submitting your order"
+            />
+          </label>
+
+          <label className="block">
+            <div className="text-[10px] text-[#808080] mb-1">Detail Text</div>
+            <input
+              className="w-full rounded border border-[#222222] bg-[#111111] px-3 py-2 text-[12px] text-white"
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
+              placeholder="Please wait..."
+            />
+          </label>
+        </div>
+
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block">
             <div className="text-[10px] text-[#808080] mb-1">Progress (0–100)</div>
@@ -151,12 +227,14 @@ export default function DebugOrderFillModalPage() {
           <button
             onClick={() => {
               stopSim();
-              setOpen(true);
+              setHeadline('Submitting your order');
+              setDetail('');
               setStatus('processing');
+              setOpen(true);
             }}
             className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-[12px] font-medium text-white hover:bg-[#1A1A1A]"
           >
-            Open modal
+            Open modal (processing)
           </button>
 
           <button
@@ -167,7 +245,11 @@ export default function DebugOrderFillModalPage() {
           </button>
 
           <button
-            onClick={() => startSim({ from: 0, to: 1, ms: durationMs })}
+            onClick={() => {
+              setHeadline('Submitting your order');
+              setDetail('');
+              startSim({ from: 0, to: 1, ms: durationMs });
+            }}
             className="rounded bg-white px-3 py-2 text-[12px] font-medium text-black hover:bg-white/90"
           >
             Simulate progress
@@ -176,24 +258,29 @@ export default function DebugOrderFillModalPage() {
           <button
             onClick={() => {
               stopSim();
-              setOpen(true);
+              setHeadline('Error');
+              setDetail('Something went wrong. Please try again.');
               setStatus('error');
+              setProgress(1);
+              setOpen(true);
             }}
             className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-300 hover:bg-red-500/15"
           >
-            Force error
+            Show error
           </button>
 
           <button
             onClick={() => {
               stopSim();
-              setOpen(true);
+              setHeadline('Order Placed');
+              setDetail('Your order has been submitted successfully.');
               setStatus('success');
               setProgress(1);
+              setOpen(true);
             }}
             className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] font-medium text-emerald-300 hover:bg-emerald-500/15"
           >
-            Force success
+            Show success
           </button>
         </div>
 
@@ -205,7 +292,7 @@ export default function DebugOrderFillModalPage() {
               onChange={(e) => setAllowClose(e.target.checked)}
               className="accent-white"
             />
-            Allow close (esc/backdrop/X)
+            Allow close (esc/backdrop/OK)
           </label>
 
           <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -218,14 +305,40 @@ export default function DebugOrderFillModalPage() {
             Auto-close on success
           </label>
         </div>
+
+        {/* Status selector */}
+        <div className="flex items-center gap-2">
+          <div className="text-[10px] text-[#808080]">Status:</div>
+          {(['submitting', 'processing', 'canceling', 'success', 'error'] as OrderFillStatus[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                stopSim();
+                setStatus(s);
+                if (!open) setOpen(true);
+              }}
+              className={`rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                status === s
+                  ? s === 'error'
+                    ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/30'
+                    : s === 'success'
+                    ? 'bg-green-500/20 text-green-300 ring-1 ring-green-500/30'
+                    : 'bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/30'
+                  : 'bg-[#1a1a1a] text-[#888] hover:bg-[#222]'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       <OrderFillLoadingModal
         isOpen={open}
-        onClose={() => setOpen(false)}
-        allowClose={allowClose}
-        safetyCloseButton={true}
-        showProgressLabel={true}
+        onClose={allowClose ? () => setOpen(false) : undefined}
+        headlineText={headline}
+        detailText={detail || undefined}
+        showProgressLabel={status !== 'error' && status !== 'success'}
         progress={progress}
         status={status}
       />

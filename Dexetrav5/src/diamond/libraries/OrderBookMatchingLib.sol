@@ -46,15 +46,36 @@ library OrderBookMatchingLib {
         return na;
     }
     
-    /// @dev O(1) get next sell price using linked list pointer. Falls back to O(n) if not initialized.
+    /// @dev Get the next live sell price strictly greater than `currentPrice`.
+    ///
+    /// Fast path: follow `sellPriceNext[currentPrice]` until we hit a live level.
+    ///
+    /// Head-walk fallback (ORPHAN FIX): when `currentPrice` was just pruned out
+    /// of the linked list, `removeSellPriceFromLinkedList` zeroed its forward
+    /// pointer. The fast path therefore returns 0 even when `sellPriceHead`
+    /// still anchors live higher asks. Walking the head and picking the lowest
+    /// live price > `currentPrice` recovers the next ask in that case.
+    ///
+    /// Legacy O(n) fallback over `sellPrices` is preserved for uninitialized
+    /// markets where both `sellPriceNext[currentPrice]` and `sellPriceHead`
+    /// are 0 (no linked-list state yet).
     function getNextSellPrice(OrderBookStorage.State storage s, uint256 currentPrice) internal view returns (uint256) {
         uint256 next = s.sellPriceNext[currentPrice];
-        if (next != 0 || s.sellPriceHead != 0) {
-            while (next != 0) {
-                if (s.sellLevels[next].exists) return next;
-                next = s.sellPriceNext[next];
+        while (next != 0) {
+            if (s.sellLevels[next].exists) return next;
+            next = s.sellPriceNext[next];
+        }
+        uint256 head = s.sellPriceHead;
+        if (head != 0) {
+            uint256 best = 0;
+            uint256 cursor = head;
+            while (cursor != 0) {
+                if (cursor > currentPrice && s.sellLevels[cursor].exists) {
+                    if (best == 0 || cursor < best) best = cursor;
+                }
+                cursor = s.sellPriceNext[cursor];
             }
-            return 0;
+            return best;
         }
         uint256 result = 0;
         for (uint256 i = 0; i < s.sellPrices.length; i++) {
@@ -65,15 +86,30 @@ library OrderBookMatchingLib {
         return result;
     }
     
-    /// @dev O(1) get previous buy price using linked list pointer. Falls back to O(n) if not initialized.
+    /// @dev Get the next live buy price strictly less than `currentPrice`
+    ///      (i.e. the next-best bid below the one we just walked past).
+    ///
+    /// Same shape as `getNextSellPrice` — fast pointer walk first, then a
+    /// head-walk fallback for the orphan case where `buyPriceNext[currentPrice]`
+    /// was just zeroed by a prune, then the legacy O(n) fallback for
+    /// uninitialized markets.
     function getPrevBuyPrice(OrderBookStorage.State storage s, uint256 currentPrice) internal view returns (uint256) {
         uint256 prev = s.buyPriceNext[currentPrice];
-        if (prev != 0 || s.buyPriceHead != 0) {
-            while (prev != 0) {
-                if (s.buyLevels[prev].exists) return prev;
-                prev = s.buyPriceNext[prev];
+        while (prev != 0) {
+            if (s.buyLevels[prev].exists) return prev;
+            prev = s.buyPriceNext[prev];
+        }
+        uint256 head = s.buyPriceHead;
+        if (head != 0) {
+            uint256 best = 0;
+            uint256 cursor = head;
+            while (cursor != 0) {
+                if (cursor < currentPrice && s.buyLevels[cursor].exists) {
+                    if (cursor > best) best = cursor;
+                }
+                cursor = s.buyPriceNext[cursor];
             }
-            return 0;
+            return best;
         }
         uint256 result = 0;
         for (uint256 i = 0; i < s.buyPrices.length; i++) {

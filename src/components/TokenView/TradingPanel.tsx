@@ -15,7 +15,7 @@ import { initializeContracts, OBOrderPlacementFacetABI } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
 import { ensureHyperliquidWallet, isOnCorrectChain, getReadProvider } from '@/lib/network';
 import type { Address } from 'viem';
-import { submitSessionTrade, isSessionErrorMessage, ensureGaslessChain } from '@/lib/gasless';
+import { submitSessionTrade, isSessionErrorMessage, isBusinessRuleErrorMessage, ensureGaslessChain } from '@/lib/gasless';
 import { useSession } from '@/contexts/SessionContext';
 import WalletModal from '@/components/WalletModal';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
@@ -23,6 +23,7 @@ import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 import { useOrderBook as useLightweightOrderBook } from '@/stores/lightweightOrderBookStore';
+import { CongestionBanner } from '@/components/ui/CongestionBanner';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -2013,8 +2014,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               console.warn('[GASLESS] session error during market submit; clearing session', msg);
               clearSession();
               showError(msg || 'Trading session expired. Click Enable Trading to re-enable gasless trading.', 'Session Error');
+            } else if (isBusinessRuleErrorMessage(msg)) {
+              const lower = msg.toLowerCase();
+              const title = lower.includes('insufficient') ? 'Insufficient Collateral' : 'Order Rejected';
+              showError(msg, title);
             } else {
-              showError(msg, 'Gasless Error');
+              showError(msg, 'Market Order Failed');
             }
             markOrderFillError();
             return;
@@ -2110,8 +2115,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           if (isSessionErrorMessage(msg)) {
             clearSession();
             showError(msg || 'Trading session expired. Click Enable Trading to re-enable gasless trading.', 'Session Error');
+          } else if (isBusinessRuleErrorMessage(msg)) {
+            const lower = msg.toLowerCase();
+            const title = lower.includes('insufficient') ? 'Insufficient Collateral' : 'Order Rejected';
+            showError(msg, title);
           } else {
-            showError(msg, 'Gasless Error');
+            showError(msg, 'Market Order Failed');
           }
           markOrderFillError();
           return;
@@ -2539,8 +2548,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               console.warn('[GASLESS] session error during limit submit; clearing session', msg);
               clearSession();
               showError(msg || 'Trading session expired. Click Enable Trading to re-enable gasless trading.', 'Session Error');
+            } else if (isBusinessRuleErrorMessage(msg)) {
+              const lower = msg.toLowerCase();
+              const title = lower.includes('insufficient') ? 'Insufficient Collateral' : 'Order Rejected';
+              showError(msg, title);
             } else {
-              showError(msg, 'Gasless Error');
+              showError(msg, 'Limit Order Failed');
             }
             markOrderFillError();
             return;
@@ -3041,6 +3054,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         isOpen={showWalletModal} 
         onClose={() => setShowWalletModal(false)} 
       />
+
+      {/*
+        Live HyperEVM congestion banner.
+        - Renders nothing when small-block base fee is at the floor (the 99% case).
+        - At `elevated` base fee (default >1 gwei) shows a soft "fees elevated" hint.
+        - At `severe` base fee (default >2 gwei) tells the user we're routing the
+          order through big blocks (~60s confirmation) instead of slow expensive
+          small-block confirmations. The same threshold drives `/api/gasless/trade`
+          server-side, so the badge and the actual routing decision can't drift.
+      */}
+      <div className="px-2 pt-2">
+        <CongestionBanner compact />
+      </div>
 
       {/* Slippage Config Modal (portaled to body for true screen-center, matching close/modify modals) */}
       {isSlippageModalOpen && createPortal(

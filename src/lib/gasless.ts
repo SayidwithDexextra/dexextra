@@ -247,6 +247,9 @@ function normalizeRelayErrorBody(body: string, context?: string): string {
   if (parsed?.error === 'missing payload') {
     return 'Invalid request sent to server. Please refresh the page and try again.';
   }
+  if (parsed?.error === 'insufficient_collateral') {
+    return 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
+  }
   
   const lower = (text || '').toLowerCase();
   // Server-side allowlist misconfiguration: the OrderBook / CoreVault contract
@@ -268,8 +271,8 @@ function normalizeRelayErrorBody(body: string, context?: string): string {
   if (lower.includes('closing_loss_exceeds_position_margin')) {
     return 'Closing this size at the current price would realize more loss than your position margin. Reduce the close size or add collateral, then try again.';
   }
-  if (lower.includes('insufficient collateral')) {
-    return 'Insufficient collateral for this order. Deposit more or reduce size.';
+  if (lower.includes('insufficient collateral') || lower.includes('insufficient_collateral')) {
+    return 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
   }
   if (lower.includes('nonce too low')) {
     return 'Trading session expired. Please refresh and try again.';

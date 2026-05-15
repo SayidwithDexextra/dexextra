@@ -528,6 +528,78 @@ export async function POST(req: Request) {
     let estimatedGasBuffered: bigint | null = null;
     let estimatedFromAddress: string | null = estimateFrom;
 
+    // ── Cost-driven routing (independent of gas-limit-driven routing below) ──
+    // HyperEVM ships two independent execution lanes with INDEPENDENT base
+    // fees. Empirically (2026-05-14 16:59 UTC) small-block base fee was
+    // 6.7 gwei while big-block base fee stayed at the 0.10 gwei floor.
+    // The same gasless trade routed through big blocks would have cost
+    // ~$0.007 instead of ~$0.45.
+    //
+    // Trade-off: big blocks confirm every ~60s instead of ~1s. We only
+    // re-route on cost when small-block base fee is materially elevated, so
+    // calm-period UX (sub-second confirmations) is untouched.
+    //
+    // SINGLE TUNABLE — same env var read by /api/gas-status so server routing
+    // and the user-facing banner can never disagree:
+    //   HYPEREVM_BIG_BLOCK_THRESHOLD_GWEI
+    //     Small-block base fee (in gwei) above which we promote the order
+    //     to big blocks. Default 2.0 gwei.
+    //     - Lower it (e.g. 0.05) to FORCE big-block routing for testing.
+    //     - Raise it (e.g. 9999) to disable congestion routing entirely.
+    const BIG_BLOCK_THRESHOLD_GWEI = (() => {
+      const raw = String(process.env.HYPEREVM_BIG_BLOCK_THRESHOLD_GWEI || '').trim();
+      if (!raw) return 2.0;
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : 2.0;
+    })();
+
+    let smallBaseFeeGwei: number | null = null;
+    let bigBaseFeeGwei: number | null = null;
+    let congestionRouted = false;
+
+    if (hasBig) {
+      try {
+        const latestNumber = await provider.getBlockNumber();
+        const latest = await provider.getBlock(latestNumber);
+        if (latest) {
+          const latestIsBig = Number(latest.gasLimit) > 5_000_000;
+          const latestGwei = latest.baseFeePerGas
+            ? Number(latest.baseFeePerGas) / 1e9
+            : 0.1;
+          if (latestIsBig) {
+            bigBaseFeeGwei = latestGwei;
+          } else {
+            smallBaseFeeGwei = latestGwei;
+          }
+          // Walk back up to ~60 blocks to find one of the opposite lane.
+          for (let off = 1; off <= 60 && (smallBaseFeeGwei === null || bigBaseFeeGwei === null); off++) {
+            const b = await provider.getBlock(latestNumber - off).catch(() => null);
+            if (!b) continue;
+            const isBig = Number(b.gasLimit) > 5_000_000;
+            const gwei = b.baseFeePerGas ? Number(b.baseFeePerGas) / 1e9 : 0.1;
+            if (isBig && bigBaseFeeGwei === null) bigBaseFeeGwei = gwei;
+            else if (!isBig && smallBaseFeeGwei === null) smallBaseFeeGwei = gwei;
+          }
+        }
+      } catch (feeErr: any) {
+        // Don't fail the trade because of a fee probe — just skip the heuristic.
+        console.warn('[UpGas][API][trade] base-fee probe failed; skipping congestion-route heuristic', {
+          error: feeErr?.shortMessage || feeErr?.message || String(feeErr),
+        });
+      }
+
+      if (smallBaseFeeGwei !== null && smallBaseFeeGwei > BIG_BLOCK_THRESHOLD_GWEI) {
+        routedPool = 'hub_trade_big';
+        congestionRouted = true;
+        console.log('[UpGas][API][trade] congestion-route engaged', {
+          smallBaseFeeGwei,
+          bigBaseFeeGwei,
+          thresholdGwei: BIG_BLOCK_THRESHOLD_GWEI,
+          routedPool,
+        });
+      }
+    }
+
     logTiming('before_gas_estimate');
     
     // Skip gas estimation in fast mode - use default gas limit
@@ -565,6 +637,11 @@ export async function POST(req: Request) {
           logTiming('gas_estimate_done');
           estimatedGasBuffered = (estimatedGas * ESTIMATE_BUFFER_BPS) / 10000n;
           if (estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT && hasBig) {
+            routedPool = 'hub_trade_big';
+          } else if (congestionRouted && hasBig) {
+            // Preserve the congestion override: even if the tx would fit in a
+            // small block, the small-block lane is currently 50-60× more
+            // expensive, so we keep the user on big blocks.
             routedPool = 'hub_trade_big';
           } else if (hasSmall) {
             routedPool = 'hub_trade_small';
@@ -1280,6 +1357,9 @@ export async function POST(req: Request) {
                 routedPool,
                 estimatedFromAddress,
                 reroutedToBig,
+                congestionRouted,
+                smallBaseFeeGwei,
+                bigBaseFeeGwei,
                 retryReason: 'revert_retry_big',
                 previousTxHash: tx.hash,
               });
@@ -1302,6 +1382,9 @@ export async function POST(req: Request) {
         routedPool,
         estimatedFromAddress,
         reroutedToBig,
+        congestionRouted,
+        smallBaseFeeGwei,
+        bigBaseFeeGwei,
       });
     }
 
@@ -1371,6 +1454,9 @@ export async function POST(req: Request) {
                   routedPool,
                   estimatedFromAddress,
                   reroutedToBig,
+                  congestionRouted,
+                  smallBaseFeeGwei,
+                  bigBaseFeeGwei,
                   retryReason: 'polled_revert_retry_big',
                   previousTxHash: tx.hash,
                 });
@@ -1393,6 +1479,9 @@ export async function POST(req: Request) {
           routedPool,
           estimatedFromAddress,
           reroutedToBig,
+          congestionRouted,
+          smallBaseFeeGwei,
+          bigBaseFeeGwei,
         });
       }
     }
@@ -1409,6 +1498,9 @@ export async function POST(req: Request) {
       routedPool,
       estimatedFromAddress,
       reroutedToBig,
+      congestionRouted,
+      smallBaseFeeGwei,
+      bigBaseFeeGwei,
       serverElapsedMs: totalElapsedMs,
       fastMode,
       timings,

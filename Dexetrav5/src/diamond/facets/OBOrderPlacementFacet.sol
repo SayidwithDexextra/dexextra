@@ -416,6 +416,13 @@ contract OBOrderPlacementFacet {
         while (remaining > 0 && currentPrice != 0 && currentPrice <= buyOrder.price) {
             OrderBookStorage.PriceLevel storage level = s.sellLevels[currentPrice];
             if (!level.exists) { currentPrice = s.getNextSellPrice(currentPrice); continue; }
+            // ORPHAN FIX: snapshot the forward pointer BEFORE the inner loop can
+            // prune `currentPrice` from the linked list. `removeSellPriceFromLinkedList`
+            // zeroes `sellPriceNext[currentPrice]` when the level is pruned, so
+            // calling `getNextSellPrice(currentPrice)` after the inner loop returns 0
+            // and silently orphans every higher ask. Caching here keeps both
+            // `s.bestAsk` and the outer-loop iterator pointed at the real next ask.
+            uint256 nextSellPriceCached = s.sellPriceNext[currentPrice];
             uint256 currentOrderId = level.firstOrderId;
             while (remaining > 0 && currentOrderId != 0 && matchCount < MAX_MATCHES_PER_ORDER) {
                 OrderBookStorage.Order storage sellOrder = s.orders[currentOrderId];
@@ -485,9 +492,12 @@ contract OBOrderPlacementFacet {
                 currentOrderId = nextSellOrderId;
             }
             if (!s.sellLevels[currentPrice].exists && currentPrice == s.bestAsk) {
-                s.bestAsk = s.getNextSellPrice(currentPrice);
+                // Prefer the cached pointer; only fall through to a head-walk
+                // (`getNextSellPrice`) when the cached pointer was already 0
+                // before this iteration began.
+                s.bestAsk = nextSellPriceCached != 0 ? nextSellPriceCached : s.getNextSellPrice(currentPrice);
             }
-            currentPrice = s.getNextSellPrice(currentPrice);
+            currentPrice = nextSellPriceCached != 0 ? nextSellPriceCached : s.getNextSellPrice(currentPrice);
         }
         
         if (matchCount > 0) {
@@ -519,6 +529,13 @@ contract OBOrderPlacementFacet {
         while (remaining > 0 && currentPrice != 0 && currentPrice >= sellOrder.price) {
             OrderBookStorage.PriceLevel storage level = s.buyLevels[currentPrice];
             if (!level.exists) { currentPrice = s.getPrevBuyPrice(currentPrice); continue; }
+            // ORPHAN FIX (bid mirror of _matchBuyOrder above): snapshot the
+            // descending-list forward pointer BEFORE the inner loop can prune
+            // `currentPrice`. Without this, `removeBuyPriceFromLinkedList`
+            // zeroes `buyPriceNext[currentPrice]`, `getPrevBuyPrice` returns 0,
+            // and every lower bid gets orphaned even though `buyPriceHead`
+            // still anchors them.
+            uint256 prevBuyPriceCached = s.buyPriceNext[currentPrice];
             uint256 currentOrderId = level.firstOrderId;
             while (remaining > 0 && currentOrderId != 0 && matchCount < MAX_MATCHES_PER_ORDER) {
                 OrderBookStorage.Order storage buyOrder = s.orders[currentOrderId];
@@ -588,9 +605,9 @@ contract OBOrderPlacementFacet {
                 currentOrderId = nextBuyOrderId;
             }
             if (!s.buyLevels[currentPrice].exists && currentPrice == s.bestBid) {
-                s.bestBid = s.getPrevBuyPrice(currentPrice);
+                s.bestBid = prevBuyPriceCached != 0 ? prevBuyPriceCached : s.getPrevBuyPrice(currentPrice);
             }
-            currentPrice = s.getPrevBuyPrice(currentPrice);
+            currentPrice = prevBuyPriceCached != 0 ? prevBuyPriceCached : s.getPrevBuyPrice(currentPrice);
         }
         
         if (matchCount > 0) {

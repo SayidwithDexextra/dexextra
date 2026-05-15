@@ -406,7 +406,7 @@ export default function NotificationsPage() {
   const showSkeletons = isLoading && items.length === 0
 
   return (
-    <main className="min-h-screen bg-black text-white px-5 py-10 sm:py-14">
+    <main className="dex-page-enter-up min-h-screen bg-black text-white px-5 py-10 sm:py-14">
       <div className="mx-auto max-w-[900px]">
         {/* Title — matches the /support page exactly: centered, small,
             uppercase, [#9CA3AF]. Nothing more, nothing less. */}
