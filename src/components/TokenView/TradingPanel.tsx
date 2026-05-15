@@ -2179,8 +2179,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const errorStr = error?.message || error?.toString() || '';
       const lower = (errorStr || '').toLowerCase();
       
-      if (lower.includes('insufficient') || lower.includes('!balance')) {
+      if (lower.includes('insufficient') || lower.includes('!balance') || lower.includes('insufficientavailable')) {
         errorMessage = 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
+        errorTitle = 'Insufficient Collateral';
+      } else if (lower.includes('tx_reverted') || lower.includes('reverted')) {
+        errorMessage = 'Transaction reverted. You may have insufficient collateral for this order.';
         errorTitle = 'Insufficient Collateral';
       } else if (lower.includes('cancelled') || lower.includes('denied') || lower.includes('user denied')) {
         errorMessage = 'Transaction was cancelled. Please try again if you want to proceed.';
@@ -2728,8 +2731,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       let errorTitle = 'Limit Order Failed';
       const errorStr = error?.message || error?.toString() || '';
       
-      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient') || errorStr.includes('!balance')) {
+      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient') || errorStr.includes('InsufficientAvailable') || errorStr.includes('!balance')) {
         errorMessage = 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
+        errorTitle = 'Insufficient Collateral';
+      } else if (errorStr.includes('tx_reverted') || errorStr.includes('reverted')) {
+        errorMessage = 'Transaction reverted. You may have insufficient collateral for this order.';
         errorTitle = 'Insufficient Collateral';
       } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {
         errorMessage = 'Transaction was cancelled. Please try again if you want to proceed.';

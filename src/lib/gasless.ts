@@ -250,6 +250,9 @@ function normalizeRelayErrorBody(body: string, context?: string): string {
   if (parsed?.error === 'insufficient_collateral') {
     return 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
   }
+  if (parsed?.error === 'tx_reverted') {
+    return 'Transaction reverted on-chain. You may have insufficient collateral for this order.';
+  }
   
   const lower = (text || '').toLowerCase();
   // Server-side allowlist misconfiguration: the OrderBook / CoreVault contract
@@ -323,7 +326,9 @@ export function isBusinessRuleErrorMessage(message: string | undefined | null): 
     lower.includes('closing_loss_exceeds_position_margin') ||
     lower.includes('closing loss exceeds position margin') ||
     lower.includes('insufficient collateral') ||
-    lower.includes('insufficient available collateral')
+    lower.includes('insufficient available collateral') ||
+    lower.includes('transaction reverted') ||
+    lower.includes('tx_reverted')
   );
 }
 
