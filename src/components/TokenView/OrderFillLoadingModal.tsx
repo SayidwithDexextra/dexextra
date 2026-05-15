@@ -220,6 +220,15 @@ export function OrderFillLoadingModal({
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [isOpen, canClose, isTerminalState, onClose]);
 
+  // Auto-dismiss after 2 seconds for terminal states
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!canClose) return;
+    if (!isTerminalState) return;
+    const timer = setTimeout(() => onClose?.(), 2000);
+    return () => clearTimeout(timer);
+  }, [isOpen, canClose, isTerminalState, onClose]);
+
   if (!isOpen) return null;
   if (!isMounted) return null;
 
