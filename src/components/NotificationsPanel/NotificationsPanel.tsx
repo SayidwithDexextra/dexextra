@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   useNotifications,
@@ -66,26 +67,27 @@ interface NotificationRowProps {
 }
 
 function NotificationRow({ item, onClose, onMarkRead }: NotificationRowProps) {
+  const router = useRouter()
   const style = SEVERITY_STYLE[item.severity] ?? SEVERITY_STYLE.info
   const hasCta = Boolean(item.cta_href)
   const external = hasCta && isExternalHref(item.cta_href!)
-  // CTA exists → deep-link to it. No CTA → route to /notifications so the
-  // user can read the full body. Either way the row marks the item read.
   const targetHref = hasCta ? item.cta_href! : '/notifications'
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
     if (!item.is_read) {
       Promise.resolve(onMarkRead(item.id)).catch(() => {})
     }
     onClose()
+    if (external) {
+      window.open(targetHref, '_blank', 'noopener,noreferrer')
+    } else {
+      router.push(targetHref)
+    }
   }
 
   const inner = (
     <div className="flex items-start gap-2.5 p-2.5">
-      {/* Flavor icon — content-aware glyph (candlestick for markets,
-          wallet for deposits, sparkles for welcomes, etc.). Replaces the
-          old severity dot; severity is still conveyed via the badge label
-          inside the meta row below. */}
       <NotificationIcon item={item} size="sm" isRead={item.is_read} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0 mb-0.5">
@@ -133,33 +135,18 @@ function NotificationRow({ item, onClose, onMarkRead }: NotificationRowProps) {
   )
 
   const commonClass =
-    'group block w-full rounded-md transition-all duration-200 text-left bg-[#0F0F0F] hover:bg-[#1A1A1A]'
+    'group block w-full rounded-md transition-all duration-200 text-left bg-[#0F0F0F] hover:bg-[#1A1A1A] cursor-pointer'
   const ariaLabel = `${item.title} — ${item.is_read ? 'read' : 'unread'}`
 
-  if (external) {
-    return (
-      <a
-        href={targetHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={handleClick}
-        className={commonClass}
-        aria-label={ariaLabel}
-      >
-        {inner}
-      </a>
-    )
-  }
-
   return (
-    <Link
-      href={targetHref}
+    <button
+      type="button"
       onClick={handleClick}
       className={commonClass}
       aria-label={ariaLabel}
     >
       {inner}
-    </Link>
+    </button>
   )
 }
 
