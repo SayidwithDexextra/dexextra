@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 
+// IP addresses that bypass geo-restrictions (comma-separated in env var)
+const IP_WHITELIST = process.env.GEO_BYPASS_IP_WHITELIST?.split(',').map(ip => ip.trim()).filter(Boolean) || []
+
 // Paths that should always be accessible regardless of geo location
 const GEO_EXEMPT_PATHS = [
   '/terms',
@@ -34,6 +37,20 @@ export async function middleware(request: NextRequest) {
   // Always allow exempt paths (legal pages, static assets, health checks)
   if (GEO_EXEMPT_PATHS.some(path => pathname.startsWith(path))) {
     return NextResponse.next()
+  }
+
+  // Check if IP is whitelisted to bypass geo-restrictions
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
+    || request.headers.get('x-real-ip') 
+    || request.ip 
+    || ''
+  
+  if (IP_WHITELIST.length > 0 && IP_WHITELIST.includes(clientIp)) {
+    // Whitelisted IP - bypass all geo-restrictions
+    const response = NextResponse.next()
+    response.cookies.delete('geo-blocked')
+    response.cookies.delete('geo-country')
+    return response
   }
 
   // Get country from Vercel's geo headers (available on Vercel Edge)
