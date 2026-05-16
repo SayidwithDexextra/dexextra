@@ -24,6 +24,8 @@ import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 import { useOrderBook as useLightweightOrderBook } from '@/stores/lightweightOrderBookStore';
 import { CongestionBanner } from '@/components/ui/CongestionBanner';
+import { NetworkSwitchOverlay } from '@/components/ui/NetworkSwitchOverlay';
+import { useNetworkGuard } from '@/hooks/useNetworkGuard';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -164,6 +166,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   // Geo-restriction check
   const { isRestricted: isGeoRestricted } = useGeoRestriction();
+  
+  // Network guard - blocks trading when on wrong network
+  const { 
+    isOnCorrectNetwork: isNetworkValid, 
+    switchNetwork, 
+    networkName: expectedNetworkName,
+    isSwitching: isNetworkSwitching 
+  } = useNetworkGuard();
   
   // Initialize OrderBook hook
   console.log('metricId OrderBook hook', metricId);
@@ -1320,14 +1330,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if ((marketRow as any)?.market_status === 'SETTLED') return 'Settled';
     if ((marketRow as any)?.market_status === 'SETTLEMENT_REQUESTED') return 'Settlement Pending';
     if (!isConnected) return 'Connect Wallet';
+    // Network guard: show switch network when on wrong chain (defense-in-depth, overlay should catch most cases)
+    if (isConnected && !isNetworkValid) {
+      return isNetworkSwitching ? 'Switching Network...' : `Switch to ${expectedNetworkName}`;
+    }
     if (orderBookLoading) return 'Loading...';
     if (isSubmittingOrder) return 'Submitting Order...';
     if (isCancelingOrder) return 'Canceling Order...';
     // Gasless session: prompt to enable trading when session is not active
     const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
     if (GASLESS_ENABLED && address && globalSessionActive === false) {
-      const activeChainId = (wallet?.walletData?.chainId ?? wallet?.chainId) as number | null | undefined;
-      if (activeChainId != null && !isOnCorrectChain(activeChainId)) return 'Switch Network';
       return 'Enable Trading';
     }
     if (!selectedOption) return 'Select Position Direction';
@@ -1498,10 +1510,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
       // Fetch reference price from orderbook (bestAsk for buy, bestBid for sell)
       // Use read provider to avoid wallet RPC issues with view functions
+      // IMPORTANT: Use marketRow.market_address directly, NOT contracts.obView.getAddress()
+      // The latter can fail if wallet is on wrong network since contracts was initialized with signer
       console.log(`📡 [RPC] Fetching reference prices from OrderBook`);
       let startTimePrices = Date.now();
       const obReadProvider = getReadProvider();
-      const obViewReadOnly = new ethers.Contract(await contracts.obView.getAddress(), contracts.obView.interface, obReadProvider);
+      const obAddressForRead = marketRow.market_address;
+      if (!obAddressForRead) {
+        throw new Error('Market address not available for price lookup');
+      }
+      const obViewReadOnly = new ethers.Contract(obAddressForRead, contracts.obView.interface, obReadProvider);
       let bestBid: bigint = await obViewReadOnly.bestBid();
       let bestAsk: bigint = await obViewReadOnly.bestAsk();
 
@@ -1516,7 +1534,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       if (bestBid === 0n || bestAsk === 0n) {
         try {
           const headView = new ethers.Contract(
-            await contracts.obView.getAddress(),
+            obAddressForRead,
             [
               'function buyPriceHead() view returns (uint256)',
               'function sellPriceHead() view returns (uint256)',
@@ -2894,6 +2912,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       return;
     }
 
+    // CRITICAL: Validate network before any trading operation
+    // This is a defense-in-depth check - the UI overlay should block most cases,
+    // but this ensures no trades can slip through on wrong network
+    if (!isNetworkValid) {
+      const switched = await switchNetwork();
+      if (!switched) {
+        showError(`Please switch to ${expectedNetworkName} to place orders.`, 'Wrong Network');
+        return;
+      }
+    }
+
     // If gasless is enabled and no active session, create it first instead of trading
     try {
       const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
@@ -3180,6 +3209,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         document.body
       )}
       
+      {/* Network Guard: blocks trading UI when wallet is on wrong network */}
+      <NetworkSwitchOverlay mode="overlay">
       <div className="rounded-md bg-t-page border border-t-stroke-hover p-3 flex-1 min-h-0 flex flex-col overflow-hidden">
 
 
@@ -3772,6 +3803,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           )}
         </div>
       </div>
+      </NetworkSwitchOverlay>
       
       {/* Custom slider styles (scrollbar uses default browser appearance) */}
       <style jsx>{`

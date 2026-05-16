@@ -977,11 +977,22 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   // Re-enable "on token view after downtime" metric ingestion:
   // - If ClickHouse metric-series is stale (or missing), resolve current metric via the Metric AI worker
-  // - POST the value into ClickHouse metric_series_raw via /api/charts/metric
+  // - Worker handles ClickHouse write directly
   useEffect(() => {
     const marketId = currentMarketId;
     const metricName = String(metricOverlay?.metricName || '').trim();
     if (!marketId || !metricName) return;
+
+    // Skip metric refresh for settled markets - no need to fetch fresh data
+    const marketStatus = (md?.market as any)?.market_status;
+    if (marketStatus === 'SETTLED' || marketStatus === 'SETTLEMENT_REQUESTED') {
+      console.log('[Metric-AI] ⏭️ Skipped: market is settled or in settlement', {
+        marketId,
+        metricName,
+        marketStatus,
+      });
+      return;
+    }
 
     // Ensure worker is configured; if not, silently skip.
     // NOTE: in local dev on localhost, getMetricAIWorkerBaseUrl() defaults to NEXT_PUBLIC_METRIC_AI_WORKER_URL_LOCAL
@@ -1221,51 +1232,19 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           return;
         }
 
-        // 3) Insert into ClickHouse metric_series_raw via our API
-        console.log('[Metric-AI] 💾 Inserting value into ClickHouse', {
+        // Worker now handles ClickHouse write directly - no need to POST from frontend
+        const totalDurationMs = Date.now() - runStartTime;
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        console.log('[Metric-AI] ✅ WORKER COMPLETED (ClickHouse write handled by worker)', {
           marketId,
           metricName,
           value,
+          totalDurationMs,
+          workerDurationMs,
+          timestamp: new Date().toISOString(),
         });
-        
-        const nowMs = Date.now();
-        const insertRes = await fetch('/api/charts/metric', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify({
-            marketId,
-            metricName,
-            source: 'metric_ai_worker',
-            version: nowMs % 2_147_483_647,
-            points: { ts: nowMs, value },
-          }),
-        });
-        
-        const totalDurationMs = Date.now() - runStartTime;
-        
-        if (!insertRes.ok) {
-          const t = await insertRes.text().catch(() => '');
-          console.error('[Metric-AI] ❌ ClickHouse insert failed', {
-            status: insertRes.status,
-            response: t?.slice(0, 200),
-            marketId,
-            metricName,
-          });
-          setMetricAIState('failed');
-        } else {
-          console.log('[Metric-AI] ═══════════════════════════════════════════════════');
-          console.log('[Metric-AI] ✅ METRIC INGESTION COMPLETE', {
-            marketId,
-            metricName,
-            value,
-            totalDurationMs,
-            workerDurationMs,
-            timestamp: new Date().toISOString(),
-          });
-          console.log('[Metric-AI] ═══════════════════════════════════════════════════');
-          setMetricAIState('success');
-        }
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        setMetricAIState('success');
       } catch (e) {
         const totalDurationMs = Date.now() - runStartTime;
         console.error('[Metric-AI] ❌ Metric ingestion failed', {

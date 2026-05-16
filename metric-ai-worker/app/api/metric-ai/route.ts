@@ -386,6 +386,101 @@ async function deliverCallback(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CLICKHOUSE METRIC SERIES - Post extracted values for charting
+// ═══════════════════════════════════════════════════════════════════════════
+const CLICKHOUSE_PREFIX = '📊 [CLICKHOUSE]';
+
+async function postToClickHouse(opts: {
+  marketId: string | null | undefined;
+  metricName: string;
+  value: number;
+  confidence: number;
+  source: 'fast_path' | 'full_pipeline';
+  jobId: string;
+}): Promise<boolean> {
+  const { marketId, metricName, value, confidence, source, jobId } = opts;
+  
+  // Require marketId for ClickHouse (we key by Supabase market UUID)
+  if (!marketId) {
+    console.log(`${CLICKHOUSE_PREFIX} ⏭️ Skipped: no marketId provided`, { jobId, metricName });
+    return false;
+  }
+  
+  // Validate numeric value
+  if (!Number.isFinite(value) || value <= 0) {
+    console.warn(`${CLICKHOUSE_PREFIX} ⏭️ Skipped: invalid value`, { jobId, metricName, value });
+    return false;
+  }
+  
+  // Get main app URL (metric-ai-worker runs separately from main app)
+  const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+  if (!appUrl) {
+    console.warn(`${CLICKHOUSE_PREFIX} ⏭️ Skipped: APP_URL not configured`, { jobId, metricName });
+    return false;
+  }
+  
+  const endpoint = `${appUrl}/api/charts/metric`;
+  const nowMs = Date.now();
+  
+  console.log(`${CLICKHOUSE_PREFIX} 📤 Posting metric value to ClickHouse`, {
+    jobId,
+    marketId,
+    metricName,
+    value,
+    confidence,
+    source,
+    endpoint,
+  });
+  
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        marketId,
+        metricName,
+        source: source === 'fast_path' ? 'ai_fast_path' : 'ai_full_pipeline',
+        version: nowMs % 2_147_483_647,
+        points: { ts: nowMs, value },
+        confidence,
+      }),
+    });
+    
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error(`${CLICKHOUSE_PREFIX} ❌ POST failed`, {
+        jobId,
+        marketId,
+        metricName,
+        status: res.status,
+        error: errText.slice(0, 200),
+      });
+      return false;
+    }
+    
+    const body = await res.json().catch(() => ({}));
+    console.log(`${CLICKHOUSE_PREFIX} ✅ Successfully posted to ClickHouse`, {
+      jobId,
+      marketId,
+      metricName,
+      value,
+      source,
+      inserted: body?.inserted || 1,
+      table: body?.meta?.table || 'metric_series_raw',
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`${CLICKHOUSE_PREFIX} ❌ POST exception`, {
+      jobId,
+      marketId,
+      metricName,
+      error: err?.message || String(err),
+    });
+    return false;
+  }
+}
+
 function corsHeaders(origin?: string) {
   const allowRaw = process.env.ALLOW_ORIGIN || '*';
   // Always vary on Origin so CDNs/CDN cache correctly
@@ -709,6 +804,16 @@ export async function POST(req: NextRequest) {
                 jobId, totalMs, value: fastResult.value, confidence: fastConfidence,
               });
 
+
+              // Post to ClickHouse for charting
+              await postToClickHouse({
+                marketId,
+                metricName: input.metric,
+                value: parseFloat(fastResult.value),
+                confidence: fastConfidence,
+                source: 'fast_path',
+                jobId,
+              });
               await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', fastResolution);
 
               return NextResponse.json({
@@ -1080,6 +1185,16 @@ If the extracted value looks wrong for this metric, set confidence < 0.5 and exp
                 nextFetchExpectation: finalConfidence >= 0.7 
                   ? 'Next fetch may use CSS SELECTOR FAST PATH (locators discovered)'
                   : 'Next fetch will try RAW_HTML_FAST_MODE again',
+              });
+
+              // Post to ClickHouse for charting
+              await postToClickHouse({
+                marketId,
+                metricName: input.metric,
+                value: parseFloat(String(finalValue)),
+                confidence: finalConfidence,
+                source: 'fast_path',
+                jobId,
               });
               
               await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', fastResolution);
@@ -2408,6 +2523,16 @@ EXTRACTED NUMERIC VALUE:`;
             : (!hadWorkingLocatorsBefore && discoveryEligible)
               ? 'Next fetch will use FAST PATH (locators discovered this run)'
               : 'Next fetch will use FULL PIPELINE (no locators discovered)',
+        });
+
+        // Post to ClickHouse for charting
+        await postToClickHouse({
+          marketId,
+          metricName: input.metric,
+          value: parseFloat(String(resolution.asset_price_suggestion ?? resolution.value)),
+          confidence: resolution.confidence,
+          source: 'full_pipeline',
+          jobId,
         });
 
         await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', resolution);

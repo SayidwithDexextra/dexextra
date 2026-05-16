@@ -12,9 +12,6 @@ node_modules/
 **/node_modules/
 
 
-# Entire separate worker project (open separately if needed)
-metric-ai-worker/
-
 # Vendor libraries (large bundled JS)
 public/charting_library/
 
