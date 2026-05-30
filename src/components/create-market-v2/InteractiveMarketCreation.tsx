@@ -17,6 +17,7 @@ import { createMarketOnChain, prefetchCutData, type PrefetchedCutData } from '@/
 import { uploadImageToSupabase } from '@/lib/imageUpload';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
+import { ErrorModal } from '@/components/StatusModals';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'clarify' | 'rejected' | 'error';
 export type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'complete';
@@ -1217,6 +1218,7 @@ export function InteractiveMarketCreation({
   const [discoveryState, setDiscoveryState] = React.useState<DiscoveryState>(initialState?.discoveryState ?? 'idle');
   const [discoveryResult, setDiscoveryResult] = React.useState<MetricDiscoveryResponse | null>(initialState?.discoveryResult ?? null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [deployErrorModal, setDeployErrorModal] = React.useState<{ isOpen: boolean; title: string; message: string }>({ isOpen: false, title: '', message: '' });
   const [sourcesFetchState, setSourcesFetchState] = React.useState<'idle' | 'loading' | 'success' | 'error'>(
     initialState?.discoveryResult && initialState?.discoveryState === 'success' ? 'success' : 'idle'
   );
@@ -2503,15 +2505,28 @@ export function InteractiveMarketCreation({
         msg.includes('rejected the request') ||
         msg.includes('transaction was rejected') ||
         msg.includes('request rejected') ||
-        msg.includes('action rejected');
+        msg.includes('action rejected') ||
+        msg.includes('user cancelled') ||
+        msg.includes('user canceled') ||
+        msg.includes('cancelled by user') ||
+        msg.includes('canceled by user') ||
+        msg.includes('user declined') ||
+        msg.includes('request was rejected') ||
+        (msg.includes('signature request') && msg.includes('rejected'));
       if (isUserRejected) {
         // Navigate back to create market page for user cancellation
-        router.replace('/markets/create');
+        router.replace('/new-market');
       } else {
-        // For other errors, redirect to home page with error message
-        const errorMessage = error instanceof Error ? error.message : 'Deployment failed';
-        console.error('Deployment error, redirecting to home:', errorMessage);
-        router.replace(`/?deploymentError=${encodeURIComponent(errorMessage)}`);
+        // Show error modal instead of redirecting to home
+        const errMsg = error instanceof Error ? error.message : 'Deployment failed';
+        console.error('Deployment error:', errMsg);
+        // Navigate back to new-market page and show error modal
+        router.replace('/new-market');
+        setDeployErrorModal({
+          isOpen: true,
+          title: 'Market Creation Failed',
+          message: errMsg,
+        });
       }
     } finally {
       setIsCreatingMarket(false);
@@ -3914,6 +3929,16 @@ export function InteractiveMarketCreation({
         </div>,
         document.body,
       )}
+
+      {/* Error modal for deployment failures */}
+      <ErrorModal
+        isOpen={deployErrorModal.isOpen}
+        onClose={() => setDeployErrorModal({ isOpen: false, title: '', message: '' })}
+        title={deployErrorModal.title}
+        message={deployErrorModal.message}
+        buttonText="Try Again"
+        autoClose={false}
+      />
     </div>
   );
 }

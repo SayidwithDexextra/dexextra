@@ -1,8 +1,27 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ShareModal.module.css';
+import { 
+  MarketShareData, 
+  getShareText, 
+  getShareSubject,
+  buildMarketShareData,
+  buildShareUrl 
+} from '@/lib/shareUtils';
+
+export interface ShareModalMarketData {
+  symbol?: string;
+  name?: string;
+  last_trade_price?: number;
+  mark_price?: number;
+  settlement_date?: string;
+  total_volume?: number;
+  category?: string;
+  icon_image_url?: string;
+  market_identifier?: string;
+}
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -10,6 +29,8 @@ interface ShareModalProps {
   url?: string;
   title?: string;
   text?: string;
+  marketData?: ShareModalMarketData;
+  referralCode?: string;
 }
 
 function CloseIcon() {
@@ -116,13 +137,28 @@ const SHARE_OPTIONS = [
   { id: 'more', label: 'More', Icon: MoreIcon, className: 'more' },
 ] as const;
 
-export default function ShareModal({ isOpen, onClose, url, title, text }: ShareModalProps) {
+export default function ShareModal({ 
+  isOpen, 
+  onClose, 
+  url, 
+  title, 
+  text, 
+  marketData,
+  referralCode 
+}: ShareModalProps) {
   const [isExiting, setIsExiting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
 
-  const shareUrl = url || (typeof window !== 'undefined' ? window.location.href : '');
-  const shareTitle = title || 'Check this out';
+  const baseUrl = url || (typeof window !== 'undefined' ? window.location.href : '');
+  const shareUrl = buildShareUrl(baseUrl, referralCode);
+  
+  const marketShareData: MarketShareData | null = useMemo(() => {
+    if (!marketData) return null;
+    return buildMarketShareData(marketData, typeof window !== 'undefined' ? window.location.origin : 'https://dexetera.org');
+  }, [marketData]);
+
+  const shareTitle = title || marketShareData?.name || 'Check this out';
   const shareText = text || '';
 
   useEffect(() => {
@@ -163,8 +199,22 @@ export default function ShareModal({ isOpen, onClose, url, title, text }: ShareM
 
   const handleShare = useCallback((platform: string) => {
     const encodedUrl = encodeURIComponent(shareUrl);
-    const encodedTitle = encodeURIComponent(shareTitle);
-    const encodedText = encodeURIComponent(shareText || shareTitle);
+    
+    const getPlatformText = () => {
+      if (marketShareData) {
+        const data = { ...marketShareData, url: shareUrl };
+        return getShareText(platform, data);
+      }
+      return shareText || shareTitle;
+    };
+    
+    const platformText = getPlatformText();
+    const encodedText = encodeURIComponent(platformText);
+    const encodedTitle = encodeURIComponent(
+      marketShareData 
+        ? getShareSubject(marketShareData) 
+        : shareTitle
+    );
 
     const shareUrls: Record<string, string> = {
       twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedText}`,
@@ -177,7 +227,10 @@ export default function ShareModal({ isOpen, onClose, url, title, text }: ShareM
     };
 
     if (platform === 'discord') {
-      navigator.clipboard.writeText(shareUrl);
+      const discordText = marketShareData 
+        ? `${getShareText('discord', { ...marketShareData, url: shareUrl })}\n${shareUrl}`
+        : shareUrl;
+      navigator.clipboard.writeText(discordText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       return;
@@ -187,7 +240,7 @@ export default function ShareModal({ isOpen, onClose, url, title, text }: ShareM
       if (navigator.share) {
         navigator.share({
           title: shareTitle,
-          text: shareText || shareTitle,
+          text: platformText,
           url: shareUrl,
         }).catch(() => {});
       }
@@ -198,7 +251,7 @@ export default function ShareModal({ isOpen, onClose, url, title, text }: ShareM
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer,width=600,height=400');
     }
-  }, [shareUrl, shareTitle, shareText]);
+  }, [shareUrl, shareTitle, shareText, marketShareData]);
 
   if (!isOpen || !mounted) return null;
 

@@ -178,7 +178,14 @@ export const CreateMarketPage = () => {
       msg.includes('rejected the request') ||
       msg.includes('transaction was rejected') ||
       msg.includes('request rejected') ||
-      msg.includes('action rejected')
+      msg.includes('action rejected') ||
+      msg.includes('user cancelled') ||
+      msg.includes('user canceled') ||
+      msg.includes('cancelled by user') ||
+      msg.includes('canceled by user') ||
+      msg.includes('user declined') ||
+      msg.includes('request was rejected') ||
+      (msg.includes('signature request') && msg.includes('rejected'))
     );
   };
 
@@ -529,10 +536,14 @@ export const CreateMarketPage = () => {
         router.replace('/markets/create');
         return;
       }
-      // For other errors, redirect to home page with error state
-      const errorMessage = error instanceof Error ? error.message : 'Deployment failed';
-      console.error('Deployment error, redirecting to home:', errorMessage);
-      router.replace(`/?deploymentError=${encodeURIComponent(errorMessage)}`);
+      // For other errors, show an error modal instead of redirecting to home
+      const errMessage = error instanceof Error ? error.message : 'Deployment failed';
+      console.error('Deployment error:', errMessage);
+      setErrorModal({
+        isOpen: true,
+        title: 'Market Creation Failed',
+        message: errMessage,
+      });
     } finally {
       setIsLoading(false);
       // Clean up real-time subscription

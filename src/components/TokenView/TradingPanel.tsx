@@ -23,7 +23,6 @@ import PositionCreatedModal from '@/components/StatusModals/PositionCreatedModal
 import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 import { useGeoRestriction } from '@/hooks/useGeoRestriction';
 import { useOrderBook as useLightweightOrderBook } from '@/stores/lightweightOrderBookStore';
-import { CongestionBanner } from '@/components/ui/CongestionBanner';
 import { NetworkSwitchOverlay } from '@/components/ui/NetworkSwitchOverlay';
 import { useNetworkGuard } from '@/hooks/useNetworkGuard';
 
@@ -1467,10 +1466,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     const approxPrice = execPriceEstimate > 0 ? execPriceEstimate : (resolveCurrentPrice() || 0);
     const approxSize = isUsdMode && approxPrice > 0 ? amount / approxPrice : amount;
 
+    // Captured once so we can target the matching pending-row when the relayer
+    // tells us this order was promoted to the big-block lane.
+    const pendingOrderId = `pending-${Date.now()}`;
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
         detail: {
-          id: `pending-${Date.now()}`,
+          id: pendingOrderId,
           symbol: String(metricId || '').toUpperCase(),
           side: selectedOption === 'long' ? 'BUY' : 'SELL',
           type: 'MARKET',
@@ -2051,6 +2054,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               estimatedFromAddress: (r as any)?.estimatedFromAddress,
             });
           } catch {}
+          // If the relayer promoted this order to the big-block lane (because
+          // small-block base fee is congested), flag the matching pending row
+          // in the Market Activity tab. This replaces the panel-wide banner
+          // with a per-order indicator that only shows on the affected order.
+          if (typeof window !== 'undefined' && (r as any)?.routedPool === 'hub_trade_big') {
+            window.dispatchEvent(new CustomEvent('pendingOrderRouted', {
+              detail: { id: pendingOrderId, congested: true },
+            }));
+          }
           const mined = Boolean((r as any)?.mined);
           const pending = Boolean((r as any)?.pending);
           const slow = markOrderAsSlowBackgroundable({ kind: 'market', routedPool: (r as any)?.routedPool, reroutedToBig: (r as any)?.reroutedToBig });
@@ -2272,10 +2284,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     // Calculate order details
     const approxSize = isUsdMode && triggerPrice > 0 ? amount / triggerPrice : amount;
 
+    // Captured once so we can target the matching pending-row when the relayer
+    // tells us this order was promoted to the big-block lane.
+    const pendingOrderId = `pending-${Date.now()}`;
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
         detail: {
-          id: `pending-${Date.now()}`,
+          id: pendingOrderId,
           symbol: String(metricId || '').toUpperCase(),
           side: selectedOption === 'long' ? 'BUY' : 'SELL',
           type: 'LIMIT',
@@ -2588,6 +2604,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               estimatedFromAddress: (r as any)?.estimatedFromAddress,
             });
           } catch {}
+          // If the relayer promoted this order to the big-block lane (because
+          // small-block base fee is congested), flag the matching pending row
+          // in the Market Activity tab so it can render a per-order indicator.
+          if (typeof window !== 'undefined' && (r as any)?.routedPool === 'hub_trade_big') {
+            window.dispatchEvent(new CustomEvent('pendingOrderRouted', {
+              detail: { id: pendingOrderId, congested: true },
+            }));
+          }
           const slow = markOrderAsSlowBackgroundable({
             kind: 'limit',
             routedPool: (r as any)?.routedPool,
@@ -3089,19 +3113,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         isOpen={showWalletModal} 
         onClose={() => setShowWalletModal(false)} 
       />
-
-      {/*
-        Live HyperEVM congestion banner.
-        - Renders nothing when small-block base fee is at the floor (the 99% case).
-        - At `elevated` base fee (default >1 gwei) shows a soft "fees elevated" hint.
-        - At `severe` base fee (default >2 gwei) tells the user we're routing the
-          order through big blocks (~60s confirmation) instead of slow expensive
-          small-block confirmations. The same threshold drives `/api/gasless/trade`
-          server-side, so the badge and the actual routing decision can't drift.
-      */}
-      <div className="px-2 pt-2">
-        <CongestionBanner compact />
-      </div>
 
       {/* Slippage Config Modal (portaled to body for true screen-center, matching close/modify modals) */}
       {isSlippageModalOpen && createPortal(

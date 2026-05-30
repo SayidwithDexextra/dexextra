@@ -155,7 +155,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   const [isCancelingAll, setIsCancelingAll] = useState(false);
   const [cancelAllProgress, setCancelAllProgress] = useState<{ done: number; total: number; failed: number }>({ done: 0, total: 0, failed: 0 });
 
-  // Pending orders placed via TradingPanel (shown inline with a loading animation)
+  // Pending orders placed via TradingPanel (shown inline with a loading animation).
+  // `congested` is set to true after the relayer reports it promoted this order
+  // to HyperEVM's big-block lane (because small-block base fee crossed the
+  // configured threshold). When true the row renders a small "Big block" pill
+  // so the user knows this specific order may take ~60s to confirm.
   const [pendingOrders, setPendingOrders] = useState<Array<{
     id: string;
     symbol: string;
@@ -164,6 +168,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     price: number;
     size: number;
     timestamp: number;
+    congested?: boolean;
   }>>([]);
 
   // Track pending orders that are collapsing (playing exit animation)
@@ -210,12 +215,26 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       }
     };
 
+    // Per-order congestion flag. Fired by TradingPanel after `/api/gasless/trade`
+    // reports the order was promoted to `hub_trade_big`. Carries the same `id`
+    // that was used in the matching `pendingOrderPlaced` so we can target the
+    // specific row instead of flagging all pending orders.
+    const onPendingRouted = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail?.id || !detail?.congested) return;
+      setPendingOrders(prev =>
+        prev.map(po => (po.id === detail.id ? { ...po, congested: true } : po)),
+      );
+    };
+
     window.addEventListener('pendingOrderPlaced', onPendingPlaced);
     window.addEventListener('pendingOrderResolved', onPendingResolved);
+    window.addEventListener('pendingOrderRouted', onPendingRouted);
 
     return () => {
       window.removeEventListener('pendingOrderPlaced', onPendingPlaced);
       window.removeEventListener('pendingOrderResolved', onPendingResolved);
+      window.removeEventListener('pendingOrderRouted', onPendingRouted);
     };
   }, []);
 
@@ -3050,6 +3069,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         <tr
                           key={po.id}
                           className={`border-b border-t-stroke-sub ${isCollapsing ? 'pending-order-collapse' : 'pending-order-shimmer'}`}
+                          data-congested={po.congested ? '1' : undefined}
                         >
                           <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
                             <div className="flex items-center gap-1 min-w-0">
@@ -3058,10 +3078,26 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                 alt={`${po.symbol} logo`}
                                 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover opacity-60"
                               />
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex items-center gap-1.5">
                                 <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg opacity-70">
                                   {truncateMarketName(marketSymbolMap.get(po.symbol)?.name || po.symbol)}
                                 </span>
+                                {po.congested && (
+                                  <Tooltip
+                                    content={
+                                      <div className="text-[11px] leading-snug max-w-[220px]">
+                                        HyperEVM small-block fees are elevated, so this order was
+                                        routed through the big-block lane. It may take ~60s to
+                                        confirm but costs a fraction of the normal fee.
+                                      </div>
+                                    }
+                                  >
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-[1px] text-[9px] font-medium text-amber-300 leading-none whitespace-nowrap">
+                                      <span className="inline-block h-1 w-1 rounded-full bg-amber-400 animate-pulse" />
+                                      Big block
+                                    </span>
+                                  </Tooltip>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -3080,12 +3116,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                             <span className="text-[10px] sm:text-[11px] text-t-fg font-mono opacity-70">{formatAmount(po.size, 4)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2 py-1.5 text-right">
-                            <span className="inline-flex items-center gap-1.5 text-[10px] text-blue-400 font-medium">
+                            <span
+                              className={`inline-flex items-center gap-1.5 text-[10px] font-medium ${po.congested ? 'text-amber-300' : 'text-blue-400'}`}
+                            >
                               <svg className="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none">
                                 <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.5" />
                                 <path d="M14.5 8a6.5 6.5 0 0 0-6.5-6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                               </svg>
-                              PROCESSING
+                              {po.congested ? 'BIG BLOCK · ~60s' : 'PROCESSING'}
                             </span>
                           </td>
                           <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">

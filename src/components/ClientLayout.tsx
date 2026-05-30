@@ -19,6 +19,7 @@ import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
 import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
 import ComingSoonGate from "@/components/ComingSoonOverlay";
 import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
+import EarlyAccessWarningModal from "@/components/EarlyAccessWarningModal";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 
 interface ClientLayoutProps {
@@ -74,6 +75,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                   <NotificationProvider>
                   <ExternalAppOpenGuard />
                   <GeoBlockWarningModal />
+                  <EarlyAccessWarningModal />
                   <WalkthroughAutoStart />
                   <div className="relative">
                     <Header />
