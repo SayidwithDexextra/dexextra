@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ShareModal.module.css';
+import SocialPreviewCard, { SocialPreviewCardData } from './SocialPreviewCard';
 import { 
   MarketShareData, 
   getShareText, 
@@ -14,8 +15,13 @@ import {
 export interface ShareModalMarketData {
   symbol?: string;
   name?: string;
+  description?: string;
   last_trade_price?: number;
   mark_price?: number;
+  /** Human-readable original cost (not scaled). */
+  start_price?: number;
+  /** Explicit PnL %; overrides the price-derived value on the preview card. */
+  pnl_percent?: number;
   settlement_date?: string;
   total_volume?: number;
   category?: string;
@@ -27,6 +33,7 @@ interface ShareModalProps {
   isOpen: boolean;
   onClose: () => void;
   url?: string;
+  imageUrl?: string;
   title?: string;
   text?: string;
   marketData?: ShareModalMarketData;
@@ -141,6 +148,7 @@ export default function ShareModal({
   isOpen, 
   onClose, 
   url, 
+  imageUrl,
   title, 
   text, 
   marketData,
@@ -149,6 +157,7 @@ export default function ShareModal({
   const [isExiting, setIsExiting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [animationKey, setAnimationKey] = useState(0);
 
   const baseUrl = url || (typeof window !== 'undefined' ? window.location.href : '');
   const shareUrl = buildShareUrl(baseUrl, referralCode);
@@ -158,12 +167,49 @@ export default function ShareModal({
     return buildMarketShareData(marketData, typeof window !== 'undefined' ? window.location.origin : 'https://dexetera.org');
   }, [marketData]);
 
+  const previewData: SocialPreviewCardData | null = useMemo(() => {
+    if (!marketData) return null;
+    const scaledMark = marketData.mark_price ?? marketData.last_trade_price;
+    const markPrice =
+      typeof scaledMark === 'number' && Number.isFinite(scaledMark)
+        ? scaledMark / 1_000_000
+        : undefined;
+    return {
+      title: marketData.name || marketData.symbol || title || 'Market',
+      symbol: marketData.symbol,
+      category: marketData.category,
+      description: marketData.description,
+      iconUrl: marketData.icon_image_url,
+      markPrice,
+      startPrice: marketData.start_price,
+      pnlPercent: marketData.pnl_percent,
+    };
+  }, [marketData, title]);
+
   const shareTitle = title || marketShareData?.name || 'Check this out';
   const shareText = text || '';
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Replay the card assembly animation each time the modal opens.
+  useEffect(() => {
+    if (isOpen) {
+      setAnimationKey((k) => k + 1);
+    }
+  }, [isOpen]);
+
+  // Warm the server-rendered OG image lazily so social scrapers get a cached
+  // PNG the moment a user actually shares (we don't pay for it on page load).
+  const warmOgImage = useCallback(() => {
+    if (!imageUrl) return;
+    try {
+      fetch(imageUrl, { mode: 'no-cors', cache: 'force-cache' }).catch(() => {});
+    } catch {
+      /* best-effort prefetch */
+    }
+  }, [imageUrl]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -198,6 +244,8 @@ export default function ShareModal({
   }, [shareUrl]);
 
   const handleShare = useCallback((platform: string) => {
+    // Generate / cache the real social image on demand, right as the user shares.
+    warmOgImage();
     const encodedUrl = encodeURIComponent(shareUrl);
     
     const getPlatformText = () => {
@@ -251,7 +299,7 @@ export default function ShareModal({
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer,width=600,height=400');
     }
-  }, [shareUrl, shareTitle, shareText, marketShareData]);
+  }, [shareUrl, shareTitle, shareText, marketShareData, warmOgImage]);
 
   if (!isOpen || !mounted) return null;
 
@@ -272,6 +320,13 @@ export default function ShareModal({
 
         {/* Content */}
         <div className={styles.content}>
+          {previewData && (
+            <div className={styles.previewSection}>
+              <div className={styles.previewLabel}>Social Preview Card</div>
+              <SocialPreviewCard data={previewData} animationKey={animationKey} />
+            </div>
+          )}
+
           {/* Share Options Grid */}
           <div className={styles.shareGrid}>
             {SHARE_OPTIONS.map(({ id, label, Icon, className }) => (

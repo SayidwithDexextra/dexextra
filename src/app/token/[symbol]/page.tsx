@@ -45,6 +45,7 @@ import { LifecycleDevDrawer } from '@/components/LifecycleDevDrawer';
 import useWallet from '@/hooks/useWallet';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 import { RolloverNotificationModal } from '@/components/RolloverNotificationModal';
+import { ShareModal } from '@/components/ShareModal';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -108,6 +109,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   // Rollover notification modal state
   const [showRolloverModal, setShowRolloverModal] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [rolloverParentSymbol, setRolloverParentSymbol] = useState<string | null>(null);
   const rolloverShownRef = useRef<string | null>(null);
 
@@ -1469,9 +1471,26 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     const formattedWatchlistCount = watchlistCount !== null 
       ? watchlistCount.toLocaleString() 
       : '—';
+    const shareSymbol = market.market_identifier || market.symbol || symbol;
+    const sharePath = `/token/${encodeURIComponent(shareSymbol)}`;
+    const shareUrl =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${sharePath}`
+        : sharePath;
+    const shareImagePath = `/api/og/market/${encodeURIComponent(shareSymbol)}`;
+    const shareImageUrl =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${shareImagePath}`
+        : shareImagePath;
+    const shareName = market.name || market.market_identifier || symbol;
+    const shareMarkPrice = Number(markPrice || 0);
+    const shareInitialOrder = (market as any)?.initial_order as Record<string, unknown> | undefined;
+    const shareStartPriceRaw =
+      shareInitialOrder?.startPrice ?? shareInitialOrder?.start_price ?? shareInitialOrder?.price;
+    const shareStartPrice = Number(shareStartPriceRaw);
 
     return {
-      name: market.name || market.market_identifier || symbol,
+      name: shareName,
       symbol: market.symbol || market.market_identifier || symbol,
       description: market.description || undefined,
       logoUrl: market.icon_image_url || undefined,
@@ -1500,6 +1519,23 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       websiteUrl: market.market_config?.website_url || undefined,
       twitterUrl: market.market_config?.twitter_url || undefined,
       waybackSnapshot: market.market_config?.wayback_snapshot || undefined,
+      shareUrl,
+      shareImageUrl,
+      shareTitle: `${shareName} | Dexetera`,
+      shareText: `Check out ${shareName} on Dexetera.`,
+      shareMarketData: {
+        symbol: market.symbol || market.market_identifier || symbol,
+        name: shareName,
+        description: market.description || undefined,
+        mark_price: Number.isFinite(shareMarkPrice) ? Math.round(shareMarkPrice * 1_000_000) : undefined,
+        last_trade_price: market.last_trade_price ?? undefined,
+        start_price: Number.isFinite(shareStartPrice) && shareStartPrice > 0 ? shareStartPrice : undefined,
+        settlement_date: market.settlement_date || undefined,
+        total_volume: market.total_volume ?? undefined,
+        category: Array.isArray(market.category) ? market.category[0] : market.category,
+        icon_image_url: market.icon_image_url || undefined,
+        market_identifier: shareSymbol,
+      },
     };
   }, [md.market, watchlistCount, symbol, markPrice, onChainStats, headerSettlementPnl]);
 
@@ -1598,7 +1634,37 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </svg>
             </a>
           )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsShareModalOpen(true);
+            }}
+            className="w-7 h-7 flex items-center justify-center rounded-md bg-t-card border border-t-stroke text-t-fg-muted active:text-t-fg flex-shrink-0"
+            title="Share this market"
+            aria-label="Share this market"
+            data-walkthrough="token-share-mobile"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+          </button>
         </div>
+      )}
+      {marketInfoHeaderProps && (
+        <ShareModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          url={marketInfoHeaderProps.shareUrl}
+          imageUrl={marketInfoHeaderProps.shareImageUrl}
+          title={marketInfoHeaderProps.shareTitle}
+          text={marketInfoHeaderProps.shareText}
+          marketData={marketInfoHeaderProps.shareMarketData}
+        />
       )}
       {/* Desktop: full header */}
       {marketInfoHeaderProps && (

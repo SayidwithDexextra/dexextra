@@ -5,6 +5,13 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 import { formatCompactSize } from '@/lib/formatters';
+import ShareModal from '@/components/ShareModal/ShareModal';
+
+function parsePriceString(value?: string): number {
+  if (!value) return 0;
+  const n = parseFloat(String(value).replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
 
 interface PositionCreatedModalProps {
   isOpen: boolean;
@@ -167,6 +174,20 @@ export default function PositionCreatedModal({
   }, [isSubmittedOnly, onViewOrder, onViewPosition, onClose]);
   const [sparkles, setSparkles] = useState<Sparkle[]>([]);
   const [showContent, setShowContent] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+
+  const entryNum = parsePriceString(entryPrice);
+  const shareUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/token/${encodeURIComponent(marketSymbol)}`
+      : `/token/${marketSymbol}`;
+  const shareMarketData = {
+    symbol: marketSymbol,
+    name: marketName,
+    mark_price: entryNum > 0 ? Math.round(entryNum * 1_000_000) : undefined,
+    start_price: entryNum > 0 ? entryNum : undefined,
+    icon_image_url: marketIconUrl || undefined,
+  };
 
   const isLong = side === 'LONG';
   const sideColor = isLong ? 'text-green-400' : 'text-red-400';
@@ -308,6 +329,19 @@ export default function PositionCreatedModal({
                     {isSubmittedOnly ? 'View Order' : 'View Position'}
                   </button>
                   <button
+                    onClick={() => setIsShareOpen(true)}
+                    className="w-full py-2.5 px-3 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md text-[11px] font-medium text-white transition-all duration-200 flex items-center justify-center gap-1.5"
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="18" cy="5" r="3" />
+                      <circle cx="6" cy="12" r="3" />
+                      <circle cx="18" cy="19" r="3" />
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                    </svg>
+                    Share
+                  </button>
+                  <button
                     onClick={onClose}
                     className="w-full py-2.5 px-3 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md text-[11px] font-medium text-[#808080] transition-all duration-200"
                   >
@@ -399,5 +433,18 @@ export default function PositionCreatedModal({
     </AnimatePresence>
   );
 
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      <ShareModal
+        isOpen={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        url={shareUrl}
+        imageUrl={`/api/og/market/${encodeURIComponent(marketSymbol)}`}
+        title={`${marketName} | Dexetera`}
+        text={`I just opened a ${side} on ${marketName} via Dexetera.`}
+        marketData={shareMarketData}
+      />
+    </>
+  );
 }

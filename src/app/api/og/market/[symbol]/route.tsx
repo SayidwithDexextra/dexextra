@@ -6,6 +6,39 @@ export const runtime = 'edge';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const bebasNeueFontUrl =
+  'https://unpkg.com/@fontsource/bebas-neue/files/bebas-neue-latin-400-normal.woff';
+const interRegularFontUrl = 'https://unpkg.com/@fontsource/inter/files/inter-latin-400-normal.woff';
+const interSemiBoldFontUrl = 'https://unpkg.com/@fontsource/inter/files/inter-latin-600-normal.woff';
+const interBoldFontUrl = 'https://unpkg.com/@fontsource/inter/files/inter-latin-700-normal.woff';
+
+let bebasNeueFontPromise: Promise<ArrayBuffer | null> | null = null;
+let interRegularFontPromise: Promise<ArrayBuffer | null> | null = null;
+let interSemiBoldFontPromise: Promise<ArrayBuffer | null> | null = null;
+let interBoldFontPromise: Promise<ArrayBuffer | null> | null = null;
+
+function loadFont(url: string): Promise<ArrayBuffer | null> {
+  return fetch(url)
+    .then((response) => {
+      if (!response.ok) return null;
+      return response.arrayBuffer();
+    })
+    .catch(() => null);
+}
+
+function loadBebasNeueFont(): Promise<ArrayBuffer | null> {
+  bebasNeueFontPromise ??= loadFont(bebasNeueFontUrl);
+
+  return bebasNeueFontPromise;
+}
+
+function loadInterFonts(): Promise<[ArrayBuffer | null, ArrayBuffer | null, ArrayBuffer | null]> {
+  interRegularFontPromise ??= loadFont(interRegularFontUrl);
+  interSemiBoldFontPromise ??= loadFont(interSemiBoldFontUrl);
+  interBoldFontPromise ??= loadFont(interBoldFontUrl);
+
+  return Promise.all([interRegularFontPromise, interSemiBoldFontPromise, interBoldFontPromise]);
+}
 
 function formatPrice(price: number): string {
   if (price >= 1000) {
@@ -20,39 +53,29 @@ function formatPrice(price: number): string {
   return '$0.00';
 }
 
-function formatVolume(volume: number): string {
-  if (volume >= 1_000_000) {
-    return `$${(volume / 1_000_000).toFixed(1)}M`;
-  }
-  if (volume >= 1_000) {
-    return `$${(volume / 1_000).toFixed(1)}K`;
-  }
-  return `$${volume.toFixed(0)}`;
+function formatPnlPercent(percent: number): string {
+  const sign = percent >= 0 ? '+' : '';
+  return `${sign}${percent.toFixed(2)}%`;
 }
 
-function formatSettlementDate(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return 'TBD';
-  }
+function truncateText(text: string, maxLength: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function getDaysUntil(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffTime = date.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays < 0) return 'Settled';
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return '1 day';
-    return `${diffDays} days`;
-  } catch {
-    return '';
-  }
+function parseStartPrice(initialOrder: unknown): number {
+  if (!initialOrder || typeof initialOrder !== 'object') return 0;
+  const order = initialOrder as Record<string, unknown>;
+  const raw = order.startPrice ?? order.start_price ?? order.price;
+  const price = Number(raw);
+  return Number.isFinite(price) && price > 0 ? price : 0;
+}
+
+function parseCategory(category: unknown): string {
+  if (Array.isArray(category)) return truncateText(String(category[0] || '').toUpperCase(), 18);
+  if (typeof category === 'string') return truncateText(category.toUpperCase(), 18);
+  return '';
 }
 
 export async function GET(
@@ -61,12 +84,12 @@ export async function GET(
 ) {
   try {
     const { symbol } = await params;
-    
+
     const supabase = createClient(supabaseUrl, supabaseKey);
-    
+
     const { data: market, error } = await supabase
       .from('markets')
-      .select('*')
+      .select('id, name, symbol, description, icon_image_url, category, last_trade_price, initial_order')
       .or(`market_identifier.eq.${symbol},symbol.eq.${symbol}`)
       .eq('is_active', true)
       .single();
@@ -82,30 +105,87 @@ export async function GET(
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: '#0F0F0F',
+              backgroundColor: '#000000',
               fontFamily: 'system-ui, sans-serif',
             }}
           >
-            <div style={{ color: '#9CA3AF', fontSize: 32 }}>
-              Market not found
-            </div>
+            <div style={{ color: '#A1A1A1', fontSize: 32 }}>Market not found</div>
           </div>
         ),
         { width: 1200, height: 630 }
       );
     }
 
-    const price = (market.mark_price ?? market.last_trade_price ?? 0) / 1_000_000;
-    const priceFormatted = formatPrice(price);
-    const volume = market.total_volume ? formatVolume(Number(market.total_volume)) : null;
-    const settlementDate = market.settlement_date ? formatSettlementDate(market.settlement_date) : 'TBD';
-    const daysUntil = market.settlement_date ? getDaysUntil(market.settlement_date) : '';
-    
-    // category can be string or array
-    const categoryRaw = market.category;
-    const category = Array.isArray(categoryRaw) 
-      ? (categoryRaw[0] || '').toUpperCase()
-      : (typeof categoryRaw === 'string' ? categoryRaw.toUpperCase() : '');
+    let markPriceScaled = Number(market.last_trade_price ?? 0);
+    if (market.id) {
+      const { data: ticker } = await supabase
+        .from('market_tickers')
+        .select('mark_price')
+        .eq('market_id', market.id)
+        .maybeSingle();
+
+      if (ticker?.mark_price != null) {
+        markPriceScaled = Number(ticker.mark_price);
+      }
+    }
+
+    const currentPrice = Number.isFinite(markPriceScaled) ? markPriceScaled / 1_000_000 : 0;
+    const startPrice = parseStartPrice(market.initial_order);
+    const pnlPercent = startPrice > 0 ? ((currentPrice - startPrice) / startPrice) * 100 : 0;
+    const pnlColor = pnlPercent >= 0 ? '#4ADE80' : '#F87171';
+    const category = parseCategory(market.category);
+    const title = truncateText(market.name || market.symbol || symbol.toUpperCase(), 28);
+    const description = truncateText(
+      market.description ||
+        `Trade ${title} on Dexetera — decentralized metric futures with no permission needed.`,
+      120
+    );
+    const dexeteraLogoUrl = new URL('/Dexicon/LOGO-Dexetera-04.svg', request.url).toString();
+    const [bebasNeueFont, interFonts] = await Promise.all([
+      loadBebasNeueFont(),
+      loadInterFonts(),
+    ]);
+    const [interRegularFont, interSemiBoldFont, interBoldFont] = interFonts;
+    const fonts = interRegularFont
+      ? [
+          {
+            name: 'Inter',
+            data: interRegularFont,
+            style: 'normal' as const,
+            weight: 400 as const,
+          },
+          ...(interSemiBoldFont
+            ? [
+                {
+                  name: 'Inter',
+                  data: interSemiBoldFont,
+                  style: 'normal' as const,
+                  weight: 600 as const,
+                },
+              ]
+            : []),
+          ...(interBoldFont
+            ? [
+                {
+                  name: 'Inter',
+                  data: interBoldFont,
+                  style: 'normal' as const,
+                  weight: 700 as const,
+                },
+              ]
+            : []),
+          ...(bebasNeueFont
+            ? [
+                {
+                  name: 'Bebas Neue',
+                  data: bebasNeueFont,
+                  style: 'normal' as const,
+                  weight: 400 as const,
+                },
+              ]
+            : []),
+        ]
+      : undefined;
 
     return new ImageResponse(
       (
@@ -114,242 +194,247 @@ export async function GET(
             height: '100%',
             width: '100%',
             display: 'flex',
-            flexDirection: 'column',
-            backgroundColor: '#0A0A0A',
-            fontFamily: 'system-ui, sans-serif',
-            position: 'relative',
-            overflow: 'hidden',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#F7F7F4',
+            backgroundImage:
+              'linear-gradient(rgba(0,0,0,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.035) 1px, transparent 1px)',
+            backgroundSize: '32px 32px',
+            fontFamily: '"Inter", system-ui, sans-serif',
+            padding: '18px',
           }}
         >
-          {/* Background gradient accent */}
-          <div
-            style={{
-              position: 'absolute',
-              top: '-200px',
-              right: '-200px',
-              width: '600px',
-              height: '600px',
-              borderRadius: '50%',
-              background: 'radial-gradient(circle, rgba(0,212,255,0.15) 0%, rgba(0,212,255,0.05) 40%, transparent 70%)',
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '-100px',
-              left: '-100px',
-              width: '400px',
-              height: '400px',
-              borderRadius: '50%',
-              background: 'radial-gradient(circle, rgba(0,212,255,0.08) 0%, transparent 60%)',
-            }}
-          />
-
-          {/* Content container */}
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
-              padding: '56px',
-              height: '100%',
+              width: '520px',
+              height: '594px',
+              backgroundColor: '#0F0F0F',
+              border: '12px solid #050505',
+              borderRadius: '30px',
+              padding: '0',
+              gap: '0',
               position: 'relative',
+              overflow: 'hidden',
+              boxShadow: '0 22px 60px rgba(0,0,0,0.22)',
             }}
           >
-            {/* Header */}
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '48px',
+                justifyContent: 'center',
+                width: '100%',
+                height: '296px',
+                backgroundColor: '#FFFFFF',
+                borderRadius: '18px',
+                flexShrink: 0,
+                padding: '18px 22px',
               }}
             >
-              {/* Logo */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div
-                  style={{
-                    width: '44px',
-                    height: '44px',
-                    background: 'linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)',
-                    borderRadius: '10px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 4px 24px rgba(0,212,255,0.3)',
-                  }}
-                >
-                  <span style={{ color: '#0A0A0A', fontWeight: 800, fontSize: '24px' }}>D</span>
-                </div>
+              {market.icon_image_url ? (
+                <img
+                  src={market.icon_image_url}
+                  width={430}
+                  height={240}
+                  style={{ objectFit: 'contain' }}
+                />
+              ) : (
                 <span
                   style={{
-                    color: 'white',
-                    fontSize: '20px',
-                    fontWeight: 600,
-                    letterSpacing: '0.08em',
+                    color: '#000000',
+                    fontSize: '150px',
+                    fontWeight: 700,
+                    lineHeight: 1,
                   }}
                 >
-                  DEXETERA
+                  {(market.symbol || title)[0]}
                 </span>
-              </div>
-              
-              {/* Category badge */}
-              {category && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    backgroundColor: 'rgba(0,212,255,0.1)',
-                    border: '1px solid rgba(0,212,255,0.2)',
-                    borderRadius: '20px',
-                    padding: '8px 16px',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: '#00D4FF',
-                    }}
-                  />
-                  <span style={{ color: '#00D4FF', fontSize: '14px', fontWeight: 600, letterSpacing: '0.05em' }}>
-                    {category}
-                  </span>
-                </div>
               )}
             </div>
 
-            {/* Main content */}
-            <div style={{ display: 'flex', flex: 1, gap: '48px' }}>
-              {/* Left side - Market info */}
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                {/* Icon and name */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px' }}>
-                  <div
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                flex: 1,
+                justifyContent: 'space-between',
+                padding: '28px 30px 26px',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                  }}
+                >
+                  <span
                     style={{
-                      width: '80px',
-                      height: '80px',
-                      backgroundColor: '#1A1A1A',
-                      borderRadius: '16px',
-                      border: '1px solid #2A2A2A',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
+                      color: '#FFFFFF',
+                      fontSize: '32px',
+                      fontWeight: 700,
+                      lineHeight: 1.08,
+                      letterSpacing: '-0.02em',
+                      maxWidth: '330px',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
                     }}
                   >
-                    {market.icon_image_url ? (
-                      <img
-                        src={market.icon_image_url}
-                        width={60}
-                        height={60}
-                        style={{ borderRadius: '12px', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <span style={{ color: '#00D4FF', fontSize: '36px', fontWeight: 700 }}>
-                        {(market.symbol || 'M')[0]}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span
-                      style={{
-                        color: 'white',
-                        fontSize: '42px',
-                        fontWeight: 700,
-                        lineHeight: 1.1,
-                        letterSpacing: '-0.02em',
-                      }}
-                    >
-                      {market.name || market.symbol}
-                    </span>
-                    <span style={{ color: '#606060', fontSize: '18px', fontWeight: 500 }}>
-                      {market.symbol}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Price display */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '40px' }}>
-                  <span style={{ color: '#808080', fontSize: '14px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                    Mark Price
+                    {title}
                   </span>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-                    <span
+                  {category && (
+                    <div
                       style={{
-                        color: 'white',
-                        fontSize: '72px',
-                        fontWeight: 700,
-                        fontFamily: 'system-ui, sans-serif',
-                        letterSpacing: '-0.03em',
-                        lineHeight: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                        borderRadius: '20px',
+                        padding: '7px 12px',
+                        flexShrink: 0,
                       }}
                     >
-                      {priceFormatted}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Stats row */}
-                <div style={{ display: 'flex', gap: '48px' }}>
-                  {volume && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <span style={{ color: '#606060', fontSize: '12px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                        Volume
-                      </span>
-                      <span style={{ color: 'white', fontSize: '24px', fontWeight: 600 }}>
-                        {volume}
+                      <span
+                        style={{
+                          color: '#D4D4D4',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          letterSpacing: '0.06em',
+                        }}
+                      >
+                        {category}
                       </span>
                     </div>
                   )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <span style={{ color: '#606060', fontSize: '12px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                      Settlement
+                </div>
+                <span
+                  style={{
+                    color: '#A1A1A1',
+                    fontSize: '13px',
+                    fontWeight: 400,
+                    lineHeight: 1.35,
+                    maxWidth: '420px',
+                    maxHeight: '54px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {description}
+                </span>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '18px',
+                    marginTop: '10px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: '#737373',
+                        fontSize: '10px',
+                        fontWeight: 500,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                      }}
+                    >
+                      Mark Price
                     </span>
-                    <span style={{ color: 'white', fontSize: '24px', fontWeight: 600 }}>
-                      {settlementDate}
+                    <span style={{ color: '#FFFFFF', fontSize: '19px', fontWeight: 700 }}>
+                      {formatPrice(currentPrice)}
                     </span>
                   </div>
-                  {daysUntil && daysUntil !== 'Settled' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <span style={{ color: '#606060', fontSize: '12px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                        Remaining
+
+                  {startPrice > 0 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: '#737373',
+                          fontSize: '10px',
+                          fontWeight: 500,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.08em',
+                        }}
+                      >
+                        Original Cost
                       </span>
-                      <span style={{ color: '#00D4FF', fontSize: '24px', fontWeight: 600 }}>
-                        {daysUntil}
+                      <span style={{ color: '#FFFFFF', fontSize: '19px', fontWeight: 600 }}>
+                        {formatPrice(startPrice)}
+                      </span>
+                    </div>
+                  )}
+
+                  {startPrice > 0 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: '#737373',
+                          fontSize: '10px',
+                          fontWeight: 500,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.08em',
+                        }}
+                      >
+                        PnL
+                      </span>
+                      <span style={{ color: pnlColor, fontSize: '19px', fontWeight: 700 }}>
+                        {formatPnlPercent(pnlPercent)}
                       </span>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
 
-            {/* Footer */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingTop: '24px',
-                borderTop: '1px solid #1A1A1A',
-              }}
-            >
-              <span style={{ color: '#606060', fontSize: '16px' }}>
-                Trade any metric. No permission needed.
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div
-                  style={{
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    backgroundColor: '#00D4FF',
-                  }}
-                />
-                <span style={{ color: '#808080', fontSize: '16px', fontWeight: 500 }}>
-                  dexetera.org
-                </span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <img
+                    src={dexeteraLogoUrl}
+                    width={30}
+                    height={30}
+                    style={{ opacity: 1 }}
+                  />
+                  <span
+                    style={{
+                      color: '#FFFFFF',
+                      fontFamily: '"Bebas Neue", "Arial Narrow", Impact, system-ui, sans-serif',
+                      fontSize: '28px',
+                      fontWeight: 400,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      lineHeight: 1,
+                    }}
+                  >
+                    DEXETERA
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -358,6 +443,7 @@ export async function GET(
       {
         width: 1200,
         height: 630,
+        fonts,
       }
     );
   } catch (e) {

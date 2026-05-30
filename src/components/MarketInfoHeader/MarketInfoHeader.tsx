@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './MarketInfoHeader.module.css';
 import { ShareModal } from '../ShareModal';
+import type { ShareModalMarketData } from '../ShareModal/ShareModal';
 import { Tooltip } from '../ui/Tooltip';
 
 export interface MarketInfoHeaderTag {
@@ -97,6 +98,11 @@ export interface MarketInfoHeaderProps {
     timestamp?: string;
     source_url?: string;
   };
+  shareUrl?: string;
+  shareImageUrl?: string;
+  shareTitle?: string;
+  shareText?: string;
+  shareMarketData?: ShareModalMarketData;
   onShare?: () => void;
   onWatchlistToggle?: () => void;
   onTriggerSettlementOverlay?: () => void;
@@ -367,6 +373,11 @@ export default function MarketInfoHeader({
   websiteUrl,
   twitterUrl,
   waybackSnapshot,
+  shareUrl,
+  shareImageUrl,
+  shareTitle,
+  shareText,
+  shareMarketData,
   onShare,
   onWatchlistToggle,
   settlementDisputed = false,
@@ -995,8 +1006,11 @@ export default function MarketInfoHeader({
       <ShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
-        title={name}
-        text={description || `Check out ${name}`}
+        url={shareUrl}
+        imageUrl={shareImageUrl}
+        title={shareTitle || name}
+        text={shareText || description || `Check out ${name}`}
+        marketData={shareMarketData}
       />
 
       {/* Always-visible Description with Fade Preview */}
