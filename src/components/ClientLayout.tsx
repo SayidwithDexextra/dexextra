@@ -21,12 +21,16 @@ import ComingSoonGate from "@/components/ComingSoonOverlay";
 import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
 import EarlyAccessWarningModal from "@/components/EarlyAccessWarningModal";
 import { NotificationProvider } from "@/contexts/NotificationContext";
+import { useReferralCapture } from "@/hooks/useReferralCapture";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
 }
 
 export default function ClientLayout({ children }: ClientLayoutProps) {
+  // Capture `?ref=` codes on first load so they can be attributed at connect.
+  useReferralCapture();
+
   const [isNavbarOpen, setIsNavbarOpen] = useState(false);
   const [isPortfolioSidebarOpen, setIsPortfolioSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);

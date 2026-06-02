@@ -21,6 +21,7 @@ import {
 } from '@/lib/wallet'
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
+import { trackStoredReferral } from '@/lib/referralApi'
 import { withDefaultProfileImage } from '@/types/userProfile'
 import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry, blockMagicAutoInit, unblockMagicAutoInit, isMagicSelectedWallet } from '@/lib/magic'
 
@@ -106,6 +107,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
       }))
       
        console.log('User profile created/retrieved:', userProfile)
+
+      // Attribute a stored `?ref=` referral code to this wallet, if any.
+      // Non-blocking: referral tracking failures must not affect connection.
+      trackStoredReferral(walletAddress).catch(error =>
+        console.warn('Referral tracking failed (non-blocking):', error)
+      )
     } catch (error) {
       console.error('Error creating/getting user profile:', error)
       // Don't throw error - profile creation failure shouldn't prevent wallet connection

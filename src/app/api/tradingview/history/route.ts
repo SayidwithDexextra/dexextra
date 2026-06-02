@@ -423,6 +423,43 @@ export async function GET(request: NextRequest) {
     const tResolve1 = Date.now();
     const tCh1 = Date.now();
 
+    // ── ADAPTIVE LOOKBACK ──
+    // The bounded query above only scans `limit * tfSec * 1.5` of history (a tight,
+    // fast window). For SPARSE markets whose newest candles are OLDER than that window,
+    // it returns 0 (or very few) candles — which makes TradingView page backward one
+    // window at a time (dozens of sequential requests just to find the first candle,
+    // then more to fill the screen). Instead, when a *recent* request comes back short,
+    // do ONE unbounded "latest N candles" query so the very first request returns the
+    // newest real data. Healthy markets (>= `limit` candles in the window) never hit
+    // this, so their fast path is unchanged.
+    const reqToSec = Math.floor(endTime.getTime() / 1000);
+    const isRecentRequest = Math.floor(Date.now() / 1000) - reqToSec < tfSec * 3;
+    if (isRecentRequest && Array.isArray(candles) && candles.length < limit) {
+      try {
+        const latest = await withTimeout(
+          clickhouse.getOHLCVCandles(
+            marketUuid ? undefined : symbol,
+            timeframe,
+            limit,
+            undefined, // no lower time bound → return the most recent `limit` candles
+            endTime,
+            marketUuid
+          ),
+          CLICKHOUSE_QUERY_TIMEOUT_MS,
+          `OHLCV latest-N fallback for ${marketUuid || symbol}`
+        );
+        if (latest && latest.length > (candles?.length ?? 0)) {
+          candles = latest;
+        }
+      } catch (e) {
+        // Non-fatal: keep whatever the bounded query returned.
+        console.warn(
+          `⚠️ latest-N fallback failed for ${marketUuid || symbol}:`,
+          e instanceof Error ? e.message : e
+        );
+      }
+    }
+
     // Some older dev seed runs accidentally inserted OHLCV with price=0 due to empty-query-param parsing.
     // If we're in a debugSeed session and all OHLC are 0, treat it as empty and reseed/repair.
     const looksLikeAllZero =
@@ -431,9 +468,15 @@ export async function GET(request: NextRequest) {
     // Handle no data case — candlesticks only render from ohlcv trade data, never from metric_series.
     // The metric overlay (Live Metric Tracker) is the sole consumer of metric_series_1m.
     if (candles.length === 0 || (debugSeed && looksLikeAllZero)) {
+      // NOTE: deliberately NO `nextTime` here.
+      // In the UDF protocol a `nextTime` tells TradingView "there IS data, fetch it at
+      // this timestamp", which makes the library keep paging backward window-by-window
+      // (we observed 50+ empty requests after the chart was already populated). The old
+      // value (`endTime + tfSec`) also pointed into the FUTURE, which is never correct
+      // for a backward history request. Omitting it signals "no more data in this
+      // direction" so the chart stops paging once it has the candles that exist.
       const body = {
         s: 'no_data',
-        nextTime: Math.floor(endTime.getTime() / 1000) + tfSec,
       };
       const headers: Record<string, string> = {
         'Access-Control-Allow-Origin': '*',

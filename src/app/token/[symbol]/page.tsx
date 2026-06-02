@@ -1668,7 +1668,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       )}
       {/* Desktop: full header */}
       {marketInfoHeaderProps && (
-        <div className="px-1 flex-shrink-0 hidden md:block">
+        <div className="px-1 flex-shrink-0 hidden md:block w-full max-w-[1920px] mx-auto">
           <MarketInfoHeader
             {...marketInfoHeaderProps}
             onWatchlistToggle={handleWatchlistToggle}
@@ -1701,7 +1701,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           />
         </div>
       )}
-      <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1">
+      <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1 w-full max-w-[1920px] mx-auto">
         <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-hidden md:overflow-y-visible">
           <div className={`flex-1 min-h-0 flex flex-col md:block transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
             <div className="flex md:hidden flex-col flex-1 min-h-0">
