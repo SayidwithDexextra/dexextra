@@ -49,7 +49,6 @@
     "@sparticuz/chromium": "141.0.0",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.56.0",
-    "@tailwindcss/oxide-win32-x64-msvc": "4.3.0",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
