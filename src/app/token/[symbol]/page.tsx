@@ -1526,6 +1526,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       shareMarketData: {
         symbol: market.symbol || market.market_identifier || symbol,
         name: shareName,
+        market_id: (market as any)?.id || undefined,
         description: market.description || undefined,
         mark_price: Number.isFinite(shareMarkPrice) ? Math.round(shareMarkPrice * 1_000_000) : undefined,
         last_trade_price: market.last_trade_price ?? undefined,

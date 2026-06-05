@@ -78,12 +78,117 @@ function parseCategory(category: unknown): string {
   return '';
 }
 
+// Output formats. Landscape (1.91:1) is the link-unfurl standard for
+// Twitter/Facebook/LinkedIn/etc; square & portrait/story are sized for
+// Instagram feed and stories. The card itself is reused and scaled to fit.
+const FORMATS: Record<string, { w: number; h: number; scale: number }> = {
+  landscape: { w: 1200, h: 630, scale: 1 },
+  square: { w: 1080, h: 1080, scale: 1.6 },
+  portrait: { w: 1080, h: 1350, scale: 1.62 },
+  story: { w: 1080, h: 1920, scale: 1.78 },
+};
+
+// ── Chart variant helpers (mirror SocialPreviewCard) ──
+const CHART_W = 496;
+const CHART_H = 296;
+const CHART_PAD_X = 30;
+const CHART_PAD_Y = 42;
+const CHART_GRID_LINES = 5;
+
+function hashString(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h) || 1;
+}
+
+function seededRandom(seed: number): () => number {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function synthesizeSeries(start: number, end: number, seedStr: string, n = 56): number[] {
+  const s = start > 0 ? start : end > 0 ? end : 1;
+  const e = end > 0 ? end : s;
+  const rand = seededRandom(hashString(seedStr));
+  const vol = Math.max(Math.abs(e - s), Math.max(s, e) * 0.05) * 0.45;
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const base = s + (e - s) * t;
+    const wave = Math.sin(t * Math.PI * 3 + (rand() - 0.5)) * vol * 0.35;
+    const noise = (rand() - 0.5) * vol * (1 - t * 0.5);
+    out.push(Math.max(0, base + wave + noise));
+  }
+  out[0] = s;
+  out[n - 1] = e;
+  return out;
+}
+
+function buildChartSvg(series: number[], color: string): string {
+  const pts = series.length >= 2 ? series : [series[0] ?? 0, series[0] ?? 0];
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const range = max - min || 1;
+  const innerW = CHART_W - CHART_PAD_X * 2;
+  const innerH = CHART_H - CHART_PAD_Y * 2;
+  const coords = pts.map((v, i) => ({
+    x: CHART_PAD_X + (i / (pts.length - 1)) * innerW,
+    y: CHART_PAD_Y + innerH - ((v - min) / range) * innerH,
+  }));
+  const line = coords
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+    .join(' ');
+  const baseY = (CHART_H - CHART_PAD_Y).toFixed(2);
+  const last = coords[coords.length - 1];
+  const area = `${line} L${last.x.toFixed(2)} ${baseY} L${coords[0].x.toFixed(2)} ${baseY} Z`;
+  const grid = Array.from({ length: CHART_GRID_LINES }, (_, i) => {
+    const y = CHART_PAD_Y + (i / (CHART_GRID_LINES - 1)) * innerH;
+    return `<line x1="${CHART_PAD_X - 12}" x2="${CHART_W - CHART_PAD_X + 12}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="#E2E2E0" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/>`;
+  }).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CHART_W}" height="${CHART_H}" viewBox="0 0 ${CHART_W} ${CHART_H}"><defs><linearGradient id="a" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.16"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>${grid}<path d="${area}" fill="url(#a)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="9" fill="#FFFFFF"/><circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="6.5" fill="${color}"/></svg>`;
+}
+
+async function loadChartSeries(
+  origin: string,
+  marketId: string | undefined,
+  startPrice: number,
+  currentPrice: number,
+  seedStr: string
+): Promise<number[]> {
+  if (marketId) {
+    try {
+      const res = await fetch(
+        `${origin}/api/charts/ohlcv?marketId=${encodeURIComponent(marketId)}&timeframe=1h&limit=120`
+      );
+      if (res.ok) {
+        const json = (await res.json()) as { data?: Array<{ close?: number; c?: number; y?: number }> };
+        const closes = Array.isArray(json?.data)
+          ? json.data
+              .map((d) => Number(d?.close ?? d?.c ?? d?.y))
+              .filter((n) => Number.isFinite(n))
+          : [];
+        if (closes.length >= 2) return closes;
+      }
+    } catch {
+      /* fall through to synthesized series */
+    }
+  }
+  return synthesizeSeries(startPrice, currentPrice, seedStr);
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   try {
     const { symbol } = await params;
+    const sp = new URL(request.url).searchParams;
+    const variant = sp.get('variant') === 'chart' ? 'chart' : 'image';
+    const fmt = FORMATS[sp.get('format') || ''] ?? FORMATS.landscape;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -133,6 +238,16 @@ export async function GET(
     const startPrice = parseStartPrice(market.initial_order);
     const pnlPercent = startPrice > 0 ? ((currentPrice - startPrice) / startPrice) * 100 : 0;
     const pnlColor = pnlPercent >= 0 ? '#4ADE80' : '#F87171';
+
+    let chartImageDataUri = '';
+    if (variant === 'chart') {
+      const origin = new URL(request.url).origin;
+      const seedStr = market.symbol || market.name || symbol;
+      const series = await loadChartSeries(origin, market.id, startPrice, currentPrice, seedStr);
+      const chartColor = pnlPercent >= 0 ? '#16C784' : '#EA3943';
+      const svg = buildChartSvg(series, chartColor);
+      chartImageDataUri = `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
     const category = parseCategory(market.category);
     const title = truncateText(market.name || market.symbol || symbol.toUpperCase(), 28);
     const description = truncateText(
@@ -210,6 +325,7 @@ export async function GET(
               flexDirection: 'column',
               width: '520px',
               height: '594px',
+              transform: `scale(${fmt.scale})`,
               backgroundColor: '#0F0F0F',
               border: '12px solid #050505',
               borderRadius: '30px',
@@ -230,10 +346,13 @@ export async function GET(
                 backgroundColor: '#FFFFFF',
                 borderRadius: '18px',
                 flexShrink: 0,
-                padding: '18px 22px',
+                overflow: 'hidden',
+                padding: variant === 'chart' ? '0' : '18px 22px',
               }}
             >
-              {market.icon_image_url ? (
+              {variant === 'chart' && chartImageDataUri ? (
+                <img src={chartImageDataUri} width={CHART_W} height={CHART_H} />
+              ) : market.icon_image_url ? (
                 <img
                   src={market.icon_image_url}
                   width={430}
@@ -441,9 +560,12 @@ export async function GET(
         </div>
       ),
       {
-        width: 1200,
-        height: 630,
+        width: fmt.w,
+        height: fmt.h,
         fonts,
+        headers: {
+          'Cache-Control': 'public, immutable, no-transform, max-age=300, s-maxage=600, stale-while-revalidate=86400',
+        },
       }
     );
   } catch (e) {

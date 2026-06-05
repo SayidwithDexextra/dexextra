@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ShareModal.module.css';
-import SocialPreviewCard, { SocialPreviewCardData } from './SocialPreviewCard';
+import SocialPreviewCard, { SocialPreviewCardData, SocialPreviewVariant } from './SocialPreviewCard';
 import { 
   MarketShareData, 
   getShareText, 
@@ -15,6 +15,8 @@ import {
 export interface ShareModalMarketData {
   symbol?: string;
   name?: string;
+  /** Supabase market UUID — enables fetching real price action for the chart card. */
+  market_id?: string;
   description?: string;
   last_trade_price?: number;
   mark_price?: number;
@@ -133,6 +135,58 @@ function MoreIcon() {
   );
 }
 
+function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+const PREVIEW_VARIANTS: { id: SocialPreviewVariant; label: string }[] = [
+  { id: 'image', label: 'Market Card' },
+  { id: 'chart', label: 'Price Chart' },
+];
+
+function ShareNodesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={styles.spinner}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const SHARE_OPTIONS = [
   { id: 'twitter', label: 'Twitter', Icon: TwitterIcon, className: 'twitter' },
   { id: 'facebook', label: 'Facebook', Icon: FacebookIcon, className: 'facebook' },
@@ -158,9 +212,25 @@ export default function ShareModal({
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [animationKey, setAnimationKey] = useState(0);
+  const [isSharing, setIsSharing] = useState(false);
+  const [canShareFiles, setCanShareFiles] = useState(false);
+  const [savedImage, setSavedImage] = useState(false);
+  const [previewVariant, setPreviewVariant] = useState<SocialPreviewVariant>('image');
+  const [chartSeries, setChartSeries] = useState<number[] | null>(null);
+  const imageFileCache = useRef<{ url: string; promise: Promise<File | null> } | null>(null);
 
   const baseUrl = url || (typeof window !== 'undefined' ? window.location.href : '');
-  const shareUrl = buildShareUrl(baseUrl, referralCode);
+  // Link-based platforms unfurl an image from page metadata, not from the share
+  // action. Route those links through /s/<symbol>?variant=… so the unfurled
+  // preview matches the selected card (chart vs market). Humans get redirected
+  // to the market page; crawlers read the variant-aware OG tags.
+  const shareSymbol = marketData?.market_identifier || marketData?.symbol;
+  const shareOrigin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://dexetera.org';
+  const linkBase = shareSymbol
+    ? `${shareOrigin}/s/${encodeURIComponent(shareSymbol)}?variant=${previewVariant}`
+    : baseUrl;
+  const shareUrl = buildShareUrl(linkBase, referralCode);
   
   const marketShareData: MarketShareData | null = useMemo(() => {
     if (!marketData) return null;
@@ -183,11 +253,25 @@ export default function ShareModal({
       markPrice,
       startPrice: marketData.start_price,
       pnlPercent: marketData.pnl_percent,
+      series: chartSeries ?? undefined,
     };
-  }, [marketData, title]);
+  }, [marketData, title, chartSeries]);
 
   const shareTitle = title || marketShareData?.name || 'Check this out';
   const shareText = text || '';
+
+  // The image actually shared/downloaded reflects the selected preview variant.
+  // We request the square (1080×1080) format here because this file is sent
+  // straight into apps (Instagram, iMessage, Mail) via the native share sheet,
+  // and a square image is the universally safe, Instagram-friendly aspect.
+  const variantImageUrl = useMemo(() => {
+    if (!imageUrl) return imageUrl;
+    const sep = imageUrl.includes('?') ? '&' : '?';
+    const parts: string[] = [];
+    if (previewVariant === 'chart') parts.push('variant=chart');
+    parts.push('format=square');
+    return `${imageUrl}${sep}${parts.join('&')}`;
+  }, [imageUrl, previewVariant]);
 
   useEffect(() => {
     setMounted(true);
@@ -200,16 +284,109 @@ export default function ShareModal({
     }
   }, [isOpen]);
 
+  // Reset cached price-action whenever the target market changes.
+  useEffect(() => {
+    setChartSeries(null);
+  }, [marketData?.market_id, marketData?.symbol]);
+
+  // Replay the assembly animation when switching preview variants.
+  const handleVariantChange = useCallback((variant: SocialPreviewVariant) => {
+    setPreviewVariant((cur) => {
+      if (cur !== variant) setAnimationKey((k) => k + 1);
+      return variant;
+    });
+  }, []);
+
+  // Carousel navigation across the available shareable card types.
+  const stepVariant = useCallback((dir: 1 | -1) => {
+    setPreviewVariant((cur) => {
+      const idx = PREVIEW_VARIANTS.findIndex((v) => v.id === cur);
+      const nextIdx = (idx + dir + PREVIEW_VARIANTS.length) % PREVIEW_VARIANTS.length;
+      const next = PREVIEW_VARIANTS[nextIdx].id;
+      if (next !== cur) setAnimationKey((k) => k + 1);
+      return next;
+    });
+  }, []);
+
+  // Lazily fetch the real price action (candle closes) the first time the user
+  // opens the chart card. Falls back to a synthesized trend if unavailable.
+  useEffect(() => {
+    if (!isOpen || previewVariant !== 'chart' || chartSeries !== null) return;
+    const marketId = marketData?.market_id;
+    if (!marketId) {
+      setChartSeries([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/charts/ohlcv?marketId=${encodeURIComponent(marketId)}&timeframe=1h&limit=120`,
+          { cache: 'force-cache' }
+        );
+        const json = await res.json();
+        const closes: number[] = Array.isArray(json?.data)
+          ? json.data
+              .map((d: { close?: number; c?: number; y?: number }) => Number(d?.close ?? d?.c ?? d?.y))
+              .filter((n: number) => Number.isFinite(n))
+          : [];
+        if (!cancelled) setChartSeries(closes);
+      } catch {
+        if (!cancelled) setChartSeries([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, previewVariant, chartSeries, marketData?.market_id]);
+
   // Warm the server-rendered OG image lazily so social scrapers get a cached
   // PNG the moment a user actually shares (we don't pay for it on page load).
   const warmOgImage = useCallback(() => {
-    if (!imageUrl) return;
+    if (!variantImageUrl) return;
     try {
-      fetch(imageUrl, { mode: 'no-cors', cache: 'force-cache' }).catch(() => {});
+      fetch(variantImageUrl, { mode: 'no-cors', cache: 'force-cache' }).catch(() => {});
     } catch {
       /* best-effort prefetch */
     }
-  }, [imageUrl]);
+  }, [variantImageUrl]);
+
+  // Detect whether this device can share actual image files via the native
+  // share sheet (the iMessage / Instagram / Mail path). Safari iOS, Android
+  // Chrome, and some desktops support it; we fall back gracefully otherwise.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || typeof navigator.canShare !== 'function') return;
+    try {
+      const probe = new File([new Blob(['x'], { type: 'image/png' })], 'probe.png', {
+        type: 'image/png',
+      });
+      setCanShareFiles(navigator.canShare({ files: [probe] }));
+    } catch {
+      setCanShareFiles(false);
+    }
+  }, []);
+
+  // Fetch the real OG PNG and wrap it as a File (cached per image URL) so it can
+  // be handed directly to the OS share sheet or downloaded for manual attach.
+  const getShareImageFile = useCallback(async (): Promise<File | null> => {
+    if (!variantImageUrl) return null;
+    if (imageFileCache.current?.url === variantImageUrl) return imageFileCache.current.promise;
+    const promise = (async () => {
+      try {
+        const res = await fetch(variantImageUrl, { cache: 'force-cache' });
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        const sym = String(marketData?.symbol || marketData?.market_identifier || 'market')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-');
+        return new File([blob], `dexetera-${sym}.png`, { type: blob.type || 'image/png' });
+      } catch {
+        return null;
+      }
+    })();
+    imageFileCache.current = { url: variantImageUrl, promise };
+    return promise;
+  }, [variantImageUrl, marketData]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -242,6 +419,52 @@ export default function ShareModal({
       console.error('Failed to copy:', err);
     }
   }, [shareUrl]);
+
+  // The Kalshi / Polymarket-style action: push the actual image file + link into
+  // the native OS share sheet so the user can send it straight to iMessage,
+  // Instagram, Mail, etc. Falls back to link-only share, then clipboard.
+  const handleNativeShare = useCallback(async () => {
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      const platformText = marketShareData
+        ? getShareText('more', { ...marketShareData, url: shareUrl })
+        : shareText || shareTitle;
+      const file = await getShareImageFile();
+
+      if (file && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: shareTitle, text: platformText, url: shareUrl });
+      } else if (typeof navigator.share === 'function') {
+        await navigator.share({ title: shareTitle, text: platformText, url: shareUrl });
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch (err) {
+      // Swallow user-cancelled shares (AbortError); surface nothing intrusive.
+      if (err instanceof Error && err.name !== 'AbortError') {
+        console.error('Native share failed:', err);
+      }
+    } finally {
+      setIsSharing(false);
+    }
+  }, [isSharing, marketShareData, shareUrl, shareText, shareTitle, getShareImageFile]);
+
+  const handleDownloadImage = useCallback(async () => {
+    const file = await getShareImageFile();
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    setSavedImage(true);
+    setTimeout(() => setSavedImage(false), 2000);
+  }, [getShareImageFile]);
 
   const handleShare = useCallback((platform: string) => {
     // Generate / cache the real social image on demand, right as the user shares.
@@ -285,13 +508,7 @@ export default function ShareModal({
     }
 
     if (platform === 'more') {
-      if (navigator.share) {
-        navigator.share({
-          title: shareTitle,
-          text: platformText,
-          url: shareUrl,
-        }).catch(() => {});
-      }
+      void handleNativeShare();
       return;
     }
 
@@ -299,7 +516,7 @@ export default function ShareModal({
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer,width=600,height=400');
     }
-  }, [shareUrl, shareTitle, shareText, marketShareData, warmOgImage]);
+  }, [shareUrl, shareTitle, shareText, marketShareData, warmOgImage, handleNativeShare]);
 
   if (!isOpen || !mounted) return null;
 
@@ -322,8 +539,91 @@ export default function ShareModal({
         <div className={styles.content}>
           {previewData && (
             <div className={styles.previewSection}>
-              <div className={styles.previewLabel}>Social Preview Card</div>
-              <SocialPreviewCard data={previewData} animationKey={animationKey} />
+              <div className={styles.previewHeader}>
+                <div className={styles.previewLabel}>Social Preview Card</div>
+                <div className={styles.previewTypeName}>
+                  {PREVIEW_VARIANTS.find((v) => v.id === previewVariant)?.label}
+                </div>
+              </div>
+              <div className={styles.carouselRow}>
+                {PREVIEW_VARIANTS.length > 1 && (
+                  <button
+                    type="button"
+                    className={styles.carouselArrow}
+                    onClick={() => stepVariant(-1)}
+                    aria-label="Previous card type"
+                  >
+                    <ChevronLeftIcon />
+                  </button>
+                )}
+                <div className={styles.carousel}>
+                  <SocialPreviewCard
+                    data={previewData}
+                    animationKey={animationKey}
+                    variant={previewVariant}
+                    shape="square"
+                  />
+                </div>
+                {PREVIEW_VARIANTS.length > 1 && (
+                  <button
+                    type="button"
+                    className={styles.carouselArrow}
+                    onClick={() => stepVariant(1)}
+                    aria-label="Next card type"
+                  >
+                    <ChevronRightIcon />
+                  </button>
+                )}
+              </div>
+              {PREVIEW_VARIANTS.length > 1 && (
+                <div className={styles.carouselDots}>
+                  {PREVIEW_VARIANTS.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      className={`${styles.carouselDot} ${previewVariant === v.id ? styles.carouselDotActive : ''}`}
+                      onClick={() => handleVariantChange(v.id)}
+                      aria-label={`Show ${v.label}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Primary action: native share sheet with the image attached */}
+          {imageUrl && (
+            <div className={styles.primaryShareRow}>
+              <button
+                className={styles.primaryShareBtn}
+                onClick={handleNativeShare}
+                disabled={isSharing}
+                aria-label="Share post with image"
+              >
+                {isSharing ? <SpinnerIcon /> : <ShareNodesIcon />}
+                <span>
+                  {isSharing
+                    ? 'Preparing image…'
+                    : canShareFiles
+                      ? 'Share post'
+                      : 'Share'}
+                </span>
+              </button>
+              <button
+                className={`${styles.secondaryShareBtn} ${savedImage ? styles.copyBtnSuccess : ''}`}
+                onClick={handleDownloadImage}
+                aria-label="Save image"
+                title="Save image"
+              >
+                {savedImage ? <CheckIcon /> : <DownloadIcon />}
+              </button>
+            </div>
+          )}
+          {imageUrl && (
+            <div className={styles.primaryShareHint}>
+              {canShareFiles
+                ? 'Sends the card image + link straight to Messages, Instagram, Mail and more.'
+                : 'Save the card image, or use a platform below to post your link.'}
             </div>
           )}
 

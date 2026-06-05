@@ -40,7 +40,10 @@
 .modal {
   position: relative;
   width: 100%;
-  max-width: 480px;
+  max-width: 460px;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(
     135deg,
     rgba(15, 15, 15, 1) 0%,
@@ -102,6 +105,7 @@
 
 /* ── Header ── */
 .header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -142,11 +146,22 @@
 
 /* ── Share Options Grid ── */
 .content {
-  padding: 16px 20px 20px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 20px 16px;
 }
 
 .previewSection {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.previewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
 .previewLabel {
@@ -155,42 +170,208 @@
   color: #666666;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.previewTypeName {
+  font-size: 11px;
+  font-weight: 600;
+  color: #cfcfcf;
+  letter-spacing: 0.01em;
+}
+
+/* Carousel: arrows flank the animated preview card as flex siblings, so they
+   always sit fully outside the card (never overlapping it) on any screen. */
+.carouselRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.carousel {
+  position: relative;
+  flex: 0 1 300px;
+  min-width: 0;
+}
+
+.carouselArrow {
+  flex: 0 0 auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.carouselArrow:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.carouselArrow:active {
+  transform: scale(0.9);
+}
+
+.carouselArrow svg {
+  width: 18px;
+  height: 18px;
+}
+
+.carouselDots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.carouselDot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.2);
+  transition: all 0.2s ease;
+}
+
+.carouselDot:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.carouselDotActive {
+  width: 20px;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+/* Primary native-share action (Kalshi / Polymarket style) */
+.primaryShareRow {
+  display: flex;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
-.previewFrame {
-  width: 100%;
-  aspect-ratio: 1200 / 630;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #0f0f0f;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.primaryShareBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #5b6bff 0%, #7c4dff 100%);
+  box-shadow: 0 6px 20px rgba(91, 107, 255, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
-.previewImage {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.primaryShareBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(91, 107, 255, 0.38);
 }
 
+.primaryShareBtn:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.primaryShareBtn:disabled {
+  opacity: 0.7;
+  cursor: default;
+  transform: none;
+}
+
+.primaryShareBtn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.secondaryShareBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  color: #d4d4d4;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.secondaryShareBtn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+}
+
+.secondaryShareBtn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.primaryShareHint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #707070;
+  margin-bottom: 12px;
+}
+
+.spinner {
+  animation: shareSpin 0.7s linear infinite;
+}
+
+@keyframes shareSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Horizontal, scrollable strip of platforms — keeps the footer compact so the
+   preview card stays the hero of the modal. */
 .shareGrid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 6px;
+  margin: 0 -2px 12px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.shareGrid::-webkit-scrollbar {
+  display: none;
 }
 
 .shareOption {
+  flex: 0 0 auto;
+  width: 62px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 12px 8px;
-  border-radius: 8px;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 12px;
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
+  scroll-snap-align: start;
   transition: all 0.2s ease;
 }
 
@@ -207,8 +388,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   transition: transform 0.2s ease;
 }
@@ -218,8 +399,8 @@
 }
 
 .iconCircle svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 .shareLabel {
@@ -390,24 +571,22 @@
 @media (max-width: 500px) {
   .modal {
     max-width: 100%;
-  }
-
-  .shareGrid {
-    gap: 8px;
+    max-height: 90vh;
   }
 
   .shareOption {
-    padding: 10px 6px;
+    width: 60px;
+    padding: 8px 4px;
   }
 
   .iconCircle {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
   }
 
   .iconCircle svg {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
   }
 
   .shareLabel {

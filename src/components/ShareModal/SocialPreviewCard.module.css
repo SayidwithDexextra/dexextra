@@ -29,6 +29,15 @@
   font-family: 'Inter', system-ui, sans-serif;
 }
 
+/* Enlarges the fixed-size card to fill non-landscape frames (square/portrait)
+   without disturbing the card's own assembly transform animation. */
+.scaler {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center;
+}
+
 .card {
   display: flex;
   flex-direction: column;
@@ -58,6 +67,66 @@
   width: 430px;
   height: 240px;
   object-fit: contain;
+}
+
+.chartPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 296px;
+  background-color: #ffffff;
+  border-radius: 18px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.chartSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Chart "draw-in" assembly */
+.chartArea {
+  opacity: 0;
+  animation: chartAreaIn 600ms ease 900ms both;
+}
+
+.chartLine {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: chartDraw 950ms cubic-bezier(0.65, 0, 0.35, 1) 360ms forwards;
+}
+
+.chartDot {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: chartDotIn 380ms cubic-bezier(0.16, 1, 0.3, 1) 1200ms both;
+}
+
+@keyframes chartDraw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes chartAreaIn {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes chartDotIn {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .imageFallback {
@@ -253,8 +322,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .assemble {
+  .assemble,
+  .chartArea,
+  .chartLine,
+  .chartDot {
     animation: none;
     opacity: 1;
+    stroke-dashoffset: 0;
   }
 }

@@ -46,13 +46,19 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
     
     const { data: market } = await supabase
       .from('markets')
-      .select('name, symbol, mark_price, last_trade_price, settlement_date, category')
+      .select('id, name, symbol, last_trade_price, settlement_date, category')
       .or(`market_identifier.eq.${symbol},symbol.eq.${symbol}`)
       .eq('is_active', true)
       .single();
     
     if (market) {
-      const price = (market.mark_price ?? market.last_trade_price ?? 0) / 1_000_000;
+      // mark_price lives on market_tickers, not markets.
+      const { data: ticker } = await supabase
+        .from('market_tickers')
+        .select('mark_price')
+        .eq('market_id', market.id)
+        .maybeSingle();
+      const price = (ticker?.mark_price ?? market.last_trade_price ?? 0) / 1_000_000;
       const priceFormatted = formatPrice(price);
       const settlementDate = market.settlement_date 
         ? formatSettlementDate(market.settlement_date) 
