@@ -1,0 +1,485 @@
+{
+  "meta": {
+    "title": "Dexetera — Trade Any Metric",
+    "subtitle": "The permissionless protocol for creating and trading futures markets on any measurable metric",
+    "purpose": "Source-of-truth content for an AI pitch-deck generator. Each object in `slides` maps to one slide. Use `company`, `problem`, `solution`, etc. as supporting context and talking points.",
+    "deck_format": "investor_pitch",
+    "recommended_slide_count": 15,
+    "tone": "confident, technical-but-accessible, ambitious",
+    "design_direction": {
+      "aesthetic": "sophisticated minimal, dark mode, fintech-grade",
+      "background": ["#0A0A0A", "#0F0F0F", "#1A1A1A"],
+      "accent": "#00D4FF",
+      "positive": "#4ade80",
+      "negative": "#f87171",
+      "text": ["#FFFFFF", "#9CA3AF", "#808080"],
+      "typography": "clean geometric sans-serif, generous whitespace, large numbers for key stats",
+      "imagery": "abstract data/orderbook visualizations, glowing cyan gradients, no stock photos"
+    }
+  },
+
+  "company": {
+    "name": "Dexetera",
+    "tagline": "If it can be measured, it can be traded.",
+    "one_liner": "Dexetera is a decentralized protocol that lets anyone create and trade futures markets on any measurable metric — settled trustlessly by an on-chain oracle, with no gatekeepers.",
+    "category": "DeFi / Decentralized Derivatives / Permissionless Futures",
+    "stage": "Live on mainnet with multiple active markets; building viral growth + organic acquisition engine",
+    "blockchain": "HyperLiquid (EVM-compatible)",
+    "website": "https://dexetera.org",
+    "app": "https://app.dexetera.org",
+    "docs": "https://doc.dexetera.org",
+    "twitter": "https://x.com/dexeteralabs",
+    "mission": "Remove every gatekeeper between a person and a market they want to trade.",
+    "vision": "A world where any objectively measurable value — inflation, lithium, protocol TVL, a temperature index — has a liquid, permissionless market attached to it.",
+    "elevator_pitch": "Creating a new futures contract today requires regulatory approval, exchange partnerships, and capital. Trading is gated by geography and wealth. Settlement depends on intermediaries who can be slow or compromised. Dexetera inverts this: anyone can deploy a market on any measurable metric in minutes, anyone can trade it with a wallet, and settlement is verified cryptographically through UMA's Optimistic Oracle. The question stops being 'who will let me trade this?' and becomes 'what do I want to trade?'"
+  },
+
+  "problem": {
+    "headline": "Derivatives markets are defined by exclusion.",
+    "summary": "The traditional and even most DeFi derivatives infrastructure locks out the long tail of things people actually want to price and hedge.",
+    "pain_points": [
+      {
+        "title": "Permission is the prerequisite",
+        "detail": "Launching a new futures contract requires regulatory approval, exchange partnerships, and significant capital. The vast majority of measurable metrics never get a market."
+      },
+      {
+        "title": "Trading is gatekept",
+        "detail": "Access is restricted by geography, wealth thresholds, and institutional gatekeeping. Most of the world cannot participate."
+      },
+      {
+        "title": "Settlement requires trust",
+        "detail": "Outcomes depend on centralized intermediaries who can be slow, opaque, or compromised."
+      },
+      {
+        "title": "DeFi only solved crypto",
+        "detail": "Perp DEXs brought derivatives on-chain but only for crypto assets, using AMMs and mark-price settlement. Prediction markets handle events but not continuous metrics, and creation is still limited."
+      }
+    ],
+    "stakes": "Trillions of dollars of real-world risk — commodities, macro data, protocol metrics, climate, sports — has no permissionless, on-chain way to be priced, hedged, or speculated on."
+  },
+
+  "solution": {
+    "headline": "Dexetera: permissionless futures on any measurable metric.",
+    "summary": "Combine a true on-chain orderbook with UMA's Optimistic Oracle for trustless settlement. Anyone creates a market, anyone trades, no one controls the outcome.",
+    "pillars": [
+      {
+        "title": "Permissionless creation",
+        "detail": "Deploy a market on any metric through a Market Creation Wizard — define the metric, the data source, the settlement date, and parameters. No approval needed."
+      },
+      {
+        "title": "True on-chain orderbook",
+        "detail": "Real bid/ask price discovery with limit and market orders, not bonding-curve AMMs. Capital-efficient, transparent, and familiar to traders."
+      },
+      {
+        "title": "Trustless settlement",
+        "detail": "UMA's Optimistic Oracle V3 settles markets. Proposers post evidence and a bond; anyone can dispute; disputes escalate to UMA's DVM vote. No central settlement authority."
+      },
+      {
+        "title": "Non-custodial by design",
+        "detail": "Funds stay in user wallets until used for trading; collateral sits in the CoreVault contract, never with a central party."
+      }
+    ],
+    "before_after": {
+      "before": "Markets are scarce, gated, and centrally settled.",
+      "after": "Markets are abundant, open, and cryptographically settled."
+    }
+  },
+
+  "how_it_works": {
+    "headline": "From metric to liquid market in four steps.",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Define the metric",
+        "detail": "A creator specifies what is being measured (e.g. 'Price of Gold in USD'), the public data source, and the settlement date."
+      },
+      {
+        "step": 2,
+        "title": "Deploy the market",
+        "detail": "A dedicated on-chain market is deployed as its own Diamond contract (EIP-2535) with an isolated orderbook and settlement logic, so issues in one market never affect others."
+      },
+      {
+        "step": 3,
+        "title": "Trade long or short",
+        "detail": "Traders take leveraged long/short positions collateralized in USDC, using market or limit orders against a live on-chain orderbook with a mark price for P&L and liquidations."
+      },
+      {
+        "step": 4,
+        "title": "Settle trustlessly",
+        "detail": "At expiry a proposer submits the final value plus verifiable evidence and a bond. A challenge window opens; undisputed values settle automatically, disputed ones escalate to UMA's DVM. Positions close at the oracle-verified price."
+      }
+    ]
+  },
+
+  "use_cases": {
+    "headline": "One protocol, an unbounded market surface.",
+    "core_use_case": {
+      "title": "Create a market on anything measurable, then trade it",
+      "narrative": "A user in Lagos creates a market on Nigerian inflation. A trader in São Paulo takes a position on the price of lithium. A developer in Berlin spins up a market on their protocol's TVL. None of them asked permission. Each market is its own page and its own on-chain contract, tradeable by anyone with a wallet."
+    },
+    "categories": [
+      { "category": "Cryptocurrency", "examples": ["BTC price", "ETH gas fees", "protocol TVL", "token supplies"] },
+      { "category": "Commodities", "examples": ["Gold", "silver", "oil", "agricultural products"] },
+      { "category": "Indices", "examples": ["S&P 500", "NASDAQ", "custom baskets"] },
+      { "category": "Economics", "examples": ["Inflation rates", "GDP growth", "unemployment figures"] },
+      { "category": "Weather", "examples": ["Temperature derivatives", "rainfall indices"] },
+      { "category": "Sports", "examples": ["Player statistics", "game outcomes"] },
+      { "category": "Social", "examples": ["Follower counts", "engagement metrics"] }
+    ],
+    "only_requirement": "The metric must be objectively measurable at settlement time from a publicly accessible source."
+  },
+
+  "why_now": {
+    "headline": "The infrastructure finally exists.",
+    "drivers": [
+      "High-throughput, low-cost EVM chains (HyperLiquid) make on-chain orderbooks viable at the speed trading demands.",
+      "UMA's Optimistic Oracle has secured billions in value, proving economically-secure trustless settlement at scale.",
+      "Perp DEXs have trained millions of users on non-custodial, wallet-based derivatives trading.",
+      "Demand for hedging and speculation on real-world metrics (macro, commodities, climate) keeps growing while access stays gated."
+    ]
+  },
+
+  "product": {
+    "headline": "Professional-grade trading, permissionless plumbing.",
+    "trading_features": [
+      "Long and short leveraged positions collateralized in USDC",
+      "Market and limit orders on a real on-chain orderbook",
+      "Mark price for live valuation, unrealized P&L, and liquidation thresholds",
+      "Oracle-verified settlement price at expiry (not mark price)"
+    ],
+    "interface_features": [
+      "TradingView charting integration",
+      "Real-time orderbook visualization",
+      "Portfolio management dashboard",
+      "Mobile-responsive design",
+      "Per-market shareable pages with dynamic social cards"
+    ],
+    "creator_experience": "A guided Market Creation Wizard turns a metric definition into a live, isolated, tradeable market contract."
+  },
+
+  "technology": {
+    "headline": "Modular, isolated, upgradeable, trust-minimized.",
+    "architecture_highlights": [
+      "On-chain orderbook (not AMM) for genuine price discovery and capital efficiency",
+      "Diamond pattern (EIP-2535): markets are individual Diamond contracts with modular, upgradeable facets (trading, settlement, admin)",
+      "Per-market isolation: each market has its own orderbook and settlement storage, so failures don't cascade",
+      "FacetRegistry-based upgrades: code upgrades propagate to every market atomically",
+      "UMA Optimistic Oracle V3 for evidence-backed, bonded, disputable settlement"
+    ],
+    "smart_contracts": [
+      { "component": "MetricsMarketFactory", "function": "Deploys new market contracts" },
+      { "component": "DiamondRegistry", "function": "Manages facet upgrades across markets" },
+      { "component": "CoreVault", "function": "Holds collateral and processes settlements" },
+      { "component": "OrderRouter", "function": "Routes orders and tracks P&L" },
+      { "component": "UMAOracleManager", "function": "Interfaces with UMA Optimistic Oracle V3" }
+    ],
+    "blockchain": "HyperLiquid — high throughput, low transaction costs, EVM compatibility",
+    "frontend": "Next.js + React trading interface with TradingView charts and real-time orderbook"
+  },
+
+  "settlement_and_security": {
+    "headline": "Trust replaced with cryptography and economic incentives.",
+    "settlement_flow": [
+      "Market expiry",
+      "Proposer submits settlement value + evidence URL + bond",
+      "Challenge window opens",
+      "If no challenge → settlement executes at proposed value",
+      "If challenged → escalates to UMA's Data Verification Mechanism (DVM)",
+      "DVM vote determines final value → settlement executes"
+    ],
+    "evidence_requirements": [
+      "Screenshot of the data source at settlement time",
+      "Wayback Machine archive URL",
+      "Hash of evidence stored on-chain for permanent verifiability"
+    ],
+    "incentives": {
+      "proposer_bond": "Forfeited if the proposal is successfully challenged",
+      "challenger_bond": "Forfeited if the challenge fails",
+      "effect": "Skin-in-the-game on both sides discourages frivolous proposals and baseless disputes."
+    },
+    "security_principles": [
+      "Non-custodial: user funds remain in wallets until used for trading",
+      "Oracle security: UMA's model makes corruption cost exceed potential profit",
+      "Upgrade safety: Diamond/FacetRegistry pattern allows targeted upgrades without migrating funds or positions"
+    ]
+  },
+
+  "business_model": {
+    "headline": "Fees scale with markets and volume.",
+    "revenue_streams": [
+      {
+        "stream": "Trading fees",
+        "detail": "A small percentage of notional value on every trade, split between the protocol and the market creator."
+      },
+      {
+        "stream": "Settlement fees",
+        "detail": "A nominal fee to cover oracle costs at settlement."
+      }
+    ],
+    "creator_incentive": "Market creators earn a share of the trading fees their markets generate — aligning incentives so creators build markets that attract real volume.",
+    "flywheel": "More creators → more markets → more long-tail demand captured → more volume → more fees shared back to creators → more creators."
+  },
+
+  "growth_strategy": {
+    "headline": "A viral share layer plus a programmatic-SEO acquisition engine.",
+    "viral_layer": {
+      "status": "Live / well developed",
+      "components": [
+        "Dynamic per-market social share cards (OG images) that unfurl richly on X, Telegram, and Discord",
+        "Referral tracking with unique codes and atomic on-chain-backed attribution",
+        "Points system rewarding referrals, first trades, volume milestones, and successful market creation",
+        "Public leaderboard to surface and gamify top users"
+      ]
+    },
+    "organic_layer": {
+      "status": "Foundation shipped; programmatic pages in progress",
+      "thesis": "Every market is already its own page (/token/[symbol]). With the right technical SEO foundation, Dexetera auto-publishes a rankable page for every market it lists — at the same rate it creates markets.",
+      "components": [
+        "Dynamic sitemap + robots covering every active market",
+        "Server-rendered market facts and JSON-LD structured data per market",
+        "Editorial /learn content capturing top-of-funnel informational demand",
+        "Directory/aggregator listings (DefiLlama, DappRadar, CoinGecko) for authority and qualified traffic"
+      ]
+    },
+    "funnel": "Organic + social discovery → wallet connect → first trade → referral loop and points → leaderboard → repeat."
+  },
+
+  "competition": {
+    "headline": "Neither traditional futures, prediction markets, nor perp DEXs cover this surface.",
+    "comparison_table": {
+      "columns": ["Feature", "Dexetera", "Traditional Futures", "Prediction Markets", "Perp DEXs"],
+      "rows": [
+        ["Permissionless creation", "Yes", "No", "Limited", "No"],
+        ["Custom metrics", "Any measurable", "Standardized only", "Events only", "Crypto only"],
+        ["Settlement model", "UMA Oracle", "Centralized", "Centralized", "Mark price"],
+        ["Trading model", "Orderbook", "Orderbook", "AMM/Orderbook", "AMM"],
+        ["Non-custodial", "Yes", "No", "Varies", "Yes"]
+      ]
+    },
+    "moats": [
+      "The only protocol combining permissionless creation + custom metrics + orderbook + trustless oracle settlement + non-custodial",
+      "Market-creator fee share builds a supply-side network of market creators competitors lack",
+      "Programmatic page-per-market structure compounds an organic acquisition moat over time"
+    ]
+  },
+
+  "traction": {
+    "headline": "Live, with the growth engine coming online.",
+    "milestones": [
+      "Live on HyperLiquid mainnet",
+      "UMA Oracle integration complete",
+      "Multiple active markets trading",
+      "Viral share + referral + points systems implemented",
+      "Technical SEO foundation shipped; programmatic market-page SEO in progress"
+    ],
+    "note_for_generator": "Replace bracketed placeholders with live numbers before presenting: total markets created, active markets, cumulative volume, unique traders, wallets connected, referral signups, points awarded.",
+    "placeholder_metrics": {
+      "markets_created": "[X]",
+      "active_markets": "[X]",
+      "cumulative_volume_usd": "[$X]",
+      "unique_traders": "[X]",
+      "wallets_connected": "[X]"
+    }
+  },
+
+  "roadmap": {
+    "headline": "From live protocol to cross-chain market layer.",
+    "phases": [
+      {
+        "phase": "Now",
+        "items": ["Live on HyperLiquid mainnet", "UMA settlement in production", "Multiple active markets", "Viral + referral + points growth systems"]
+      },
+      {
+        "phase": "Near term",
+        "items": ["Expanded market categories", "Automated market-making tools", "Enhanced analytics dashboard", "Programmatic SEO page-per-market", "Editorial /learn content"]
+      },
+      {
+        "phase": "Future",
+        "items": ["Cross-chain deployment", "API for programmatic trading", "Mobile applications"]
+      }
+    ]
+  },
+
+  "market_opportunity": {
+    "headline": "Every measurable metric is a potential market.",
+    "framing": "The serviceable surface is not one asset class — it's the union of crypto, commodities, indices, macroeconomics, climate, sports, and social metrics. Dexetera's permissionless model means the addressable market expands every time a creator finds a new metric worth pricing.",
+    "talking_points": [
+      "Global derivatives notional dwarfs the underlying spot markets — and that's only the standardized contracts that exist today.",
+      "Dexetera unlocks the long tail of metrics that never qualified for a traditional contract.",
+      "Supply (creators) and demand (traders) are both permissionless, so the market count is uncapped."
+    ]
+  },
+
+  "ask": {
+    "headline": "What we're raising and why.",
+    "note_for_generator": "Fill in the round details with the founder's actual numbers; these are structural placeholders.",
+    "use_of_funds": [
+      "Engineering: scale orderbook performance, market-making tooling, and cross-chain deployment",
+      "Liquidity and market-maker incentives to deepen books on flagship markets",
+      "Growth: programmatic SEO, content, and aggregator listings to compound organic acquisition",
+      "Security: audits and ongoing oracle/settlement hardening"
+    ],
+    "raise_amount": "[$X]",
+    "round": "[Seed / Series A]"
+  },
+
+  "slides": [
+    {
+      "n": 1,
+      "type": "title",
+      "title": "Dexetera",
+      "subtitle": "If it can be measured, it can be traded.",
+      "body": "The permissionless protocol for creating and trading futures markets on any measurable metric.",
+      "visual": "Glowing cyan logo on near-black background with abstract orderbook gradient."
+    },
+    {
+      "n": 2,
+      "type": "problem",
+      "title": "Derivatives markets are defined by exclusion",
+      "bullets": [
+        "Creating a futures contract needs regulatory approval, exchange deals, and capital",
+        "Trading is gated by geography, wealth, and institutions",
+        "Settlement depends on slow, opaque, or compromised intermediaries",
+        "DeFi only solved crypto — the long tail of metrics has no market"
+      ],
+      "visual": "Locked gate / walled-garden motif."
+    },
+    {
+      "n": 3,
+      "type": "solution",
+      "title": "Permissionless futures on any measurable metric",
+      "body": "On-chain orderbook for real price discovery + UMA Optimistic Oracle for trustless settlement. Anyone creates, anyone trades, no one controls the outcome.",
+      "bullets": [
+        "Permissionless market creation",
+        "True on-chain orderbook",
+        "Trustless oracle settlement",
+        "Non-custodial by design"
+      ],
+      "visual": "Before/after split: scarce gated markets → abundant open markets."
+    },
+    {
+      "n": 4,
+      "type": "core_use_case",
+      "title": "The question becomes: what do you want to trade?",
+      "body": "A user in Lagos creates a market on Nigerian inflation. A trader in São Paulo shorts lithium. A developer in Berlin lists their protocol's TVL. No permission required.",
+      "visual": "World map with diverse example markets pinned."
+    },
+    {
+      "n": 5,
+      "type": "how_it_works",
+      "title": "From metric to liquid market in four steps",
+      "steps": ["Define the metric & data source", "Deploy an isolated on-chain market", "Trade long/short on the orderbook", "Settle trustlessly via UMA"],
+      "visual": "Horizontal 4-step flow with cyan connectors."
+    },
+    {
+      "n": 6,
+      "type": "use_cases",
+      "title": "One protocol, an unbounded market surface",
+      "body": "Crypto · Commodities · Indices · Economics · Weather · Sports · Social. The only rule: the metric must be objectively measurable from a public source at settlement.",
+      "visual": "Grid of category tiles with example metrics."
+    },
+    {
+      "n": 7,
+      "type": "why_now",
+      "title": "Why now",
+      "bullets": [
+        "High-throughput, low-cost EVM chains make on-chain orderbooks viable",
+        "UMA's oracle has secured billions — trustless settlement is proven",
+        "Perp DEXs trained millions on non-custodial trading",
+        "Demand to hedge real-world metrics keeps growing while access stays gated"
+      ],
+      "visual": "Converging trend lines."
+    },
+    {
+      "n": 8,
+      "type": "product",
+      "title": "Professional-grade trading, permissionless plumbing",
+      "bullets": [
+        "Leveraged long/short in USDC on a real orderbook",
+        "Market & limit orders, mark price, liquidations",
+        "TradingView charts + real-time orderbook UI",
+        "Guided Market Creation Wizard"
+      ],
+      "visual": "Trading interface screenshot mockup (dark, cyan accents)."
+    },
+    {
+      "n": 9,
+      "type": "technology",
+      "title": "Modular, isolated, upgradeable, trust-minimized",
+      "bullets": [
+        "On-chain orderbook, not AMM",
+        "Diamond pattern (EIP-2535): each market its own contract",
+        "Per-market isolation + atomic FacetRegistry upgrades",
+        "UMA Optimistic Oracle V3 settlement on HyperLiquid"
+      ],
+      "visual": "Architecture diagram: Factory → Markets (Diamonds) → CoreVault / OrderRouter / UMAOracleManager."
+    },
+    {
+      "n": 10,
+      "type": "settlement",
+      "title": "Trust replaced with evidence and bonds",
+      "body": "Proposers post a value + evidence + bond. Anyone can dispute. Disputes escalate to UMA's DVM vote. Bonds on both sides keep everyone honest.",
+      "visual": "Settlement flow diagram with challenge window."
+    },
+    {
+      "n": 11,
+      "type": "business_model",
+      "title": "Fees scale with markets and volume",
+      "bullets": [
+        "Trading fees split between protocol and market creator",
+        "Settlement fees cover oracle costs",
+        "Creators earn from the volume their markets attract"
+      ],
+      "visual": "Flywheel: creators → markets → volume → fees → creators."
+    },
+    {
+      "n": 12,
+      "type": "growth",
+      "title": "Viral share layer + programmatic acquisition engine",
+      "bullets": [
+        "Dynamic per-market share cards, referrals, points, leaderboard (live)",
+        "Every market is a rankable page — programmatic SEO at market-creation rate",
+        "Aggregator listings for authority and qualified traffic"
+      ],
+      "visual": "Funnel: discovery → wallet connect → first trade → referral loop."
+    },
+    {
+      "n": 13,
+      "type": "competition",
+      "title": "No one else covers this surface",
+      "comparison": {
+        "columns": ["Feature", "Dexetera", "Traditional", "Prediction Mkts", "Perp DEXs"],
+        "rows": [
+          ["Permissionless creation", "Yes", "No", "Limited", "No"],
+          ["Custom metrics", "Any", "Standardized", "Events", "Crypto"],
+          ["Settlement", "UMA Oracle", "Centralized", "Centralized", "Mark price"],
+          ["Trading model", "Orderbook", "Orderbook", "AMM/OB", "AMM"],
+          ["Non-custodial", "Yes", "No", "Varies", "Yes"]
+        ]
+      },
+      "visual": "Comparison matrix with Dexetera column highlighted in cyan."
+    },
+    {
+      "n": 14,
+      "type": "traction_roadmap",
+      "title": "Live today, compounding from here",
+      "bullets": [
+        "Live on HyperLiquid mainnet with multiple active markets",
+        "UMA settlement + viral growth systems shipped",
+        "Near term: more categories, MM tools, analytics, programmatic SEO",
+        "Future: cross-chain, trading API, mobile apps"
+      ],
+      "visual": "Timeline with Now / Near term / Future."
+    },
+    {
+      "n": 15,
+      "type": "closing_ask",
+      "title": "What do you want to trade?",
+      "body": "Dexetera makes any measurable metric a permissionless, trustlessly-settled market. [Raising $X to scale liquidity, engineering, security, and growth.]",
+      "cta": "dexetera.org · app.dexetera.org · @dexeteralabs",
+      "visual": "Bold closing statement on dark background with cyan glow."
+    }
+  ],
+
+  "disclaimer": "This document is for informational purposes only and does not constitute financial advice. Trading derivatives involves significant risk of loss."
+}

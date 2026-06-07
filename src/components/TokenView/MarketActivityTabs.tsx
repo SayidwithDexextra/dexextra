@@ -4264,7 +4264,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                 const wasLiquidated = realizedData?.wasLiquidated || false;
 
                 return (
-                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${isLiquidation || wasLiquidated ? 'bg-red-950/20' : ''} ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
+                  <tr key={`${trade.tradeId}-${index}`} className={`mat-slide-rtl hover:bg-t-card-hover transition-colors duration-200 ${isLiquidation || wasLiquidated ? 'bg-red-950/20' : ''} ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
                       <div className="flex items-center gap-1 flex-wrap">
                         <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
@@ -4367,7 +4367,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                     </thead>
                     <tbody>
                       {orderHistory.map((order, index) => (
-                        <tr key={`${order.id}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
+                        <tr key={`${order.id}-${index}`} className={`mat-slide-rtl hover:bg-t-card-hover transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-t-stroke-sub' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
                           <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 w-[clamp(100px,24%,260px)] max-w-0">
                             <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                               <Link

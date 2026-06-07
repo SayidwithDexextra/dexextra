@@ -1,0 +1,430 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "specVersion": "1.0.0",
+  "title": "Prediction-Market Newsletter & SEO Growth Plan",
+  "purpose": "Machine-readable handoff spec for an AI agent to implement a Polymarket-data-driven newsletter/blog plus a programmatic SEO content layer inside an existing prediction-market web app (separate repo).",
+  "audience": "Implementing AI agent + human reviewer",
+  "lastUpdated": "2026-06-06",
+
+  "readMeFirst": {
+    "instructions": [
+      "This spec is stack-agnostic where possible. The reference implementation context was Next.js (App Router) + React + Tailwind + Supabase, but adapt to the target repo's actual framework.",
+      "Before implementing, detect the target repo's framework, rendering model, data store, and existing SEO setup, then map each requirement onto the available primitives.",
+      "The single most important technical requirement: data that earns rankings MUST be present in server-rendered HTML (SSR/SSG/ISR). Do not rely on client-side rendering for indexable content.",
+      "Never hardcode secrets or private keys. Use environment variables for all API keys and credentials.",
+      "Respect Polymarket API rate limits. Cache all data in a datastore; never block page render on a live third-party API call."
+    ],
+    "openInputsNeeded": [
+      "Target repo framework & rendering capabilities (Next.js, Remix, SvelteKit, Astro, Rails, etc.)",
+      "Existing datastore (Supabase/Postgres/other) and whether Polymarket data is already ingested",
+      "Email service provider choice (Resend, Buttondown, Beehiiv, etc.)",
+      "Primary domain and whether Google Search Console is set up",
+      "Brand voice constraints / existing design system"
+    ]
+  },
+
+  "context": {
+    "product": "A prediction-market web application centered on Polymarket smart-money / copy-trading data.",
+    "dataAssets": [
+      "Smart-money consensus signals (which top traders agree on which market outcomes)",
+      "Trader success scores and per-category accuracy (e.g. Wilson score by sport/topic)",
+      "Whale positions (largest single positions opened by tracked traders)",
+      "Copy-trade signals with strength (STRONG/MODERATE/WEAK)",
+      "Smart-money reversals (traders flipping YES<->NO)",
+      "Market price history (CLOB midpoint over time)",
+      "Market resolutions (canonical win/loss outcomes)"
+    ],
+    "polymarketApis": {
+      "dataApi": { "baseUrl": "https://data-api.polymarket.com", "authRequired": false, "uses": ["/v1/leaderboard", "/trades", "/positions", "/holders", "/activity", "/value"] },
+      "gammaApi": { "baseUrl": "https://gamma-api.polymarket.com", "authRequired": false, "uses": ["/markets", "/events", "/markets/slug/{slug}", "/tags"] },
+      "clobApi": { "baseUrl": "https://clob.polymarket.com", "authRequired": "only for trading", "uses": ["/markets/{conditionId}", "/prices-history", "/book", "/spread"] },
+      "notes": [
+        "Gamma /markets and /events hard-cap limit at 100; paginate with offset.",
+        "CLOB /markets/{conditionId} tokens carry a 'winner' boolean used for resolution/accuracy scoring.",
+        "Use the leaderboard endpoint as a health check (no /health endpoint exists).",
+        "On HTTP 429, back off and increase polling interval."
+      ]
+    }
+  },
+
+  "apiResearch": {
+    "summary": "Live probe (2026-06-06) of the Polymarket APIs to catalog the full field surface and undocumented endpoints. The recipes below depend on these. Several of these endpoints/fields are NOT in the reference repo's existing client and unlock the highest-value insights.",
+    "verifiedEndpoints": [
+      {
+        "id": "data_trades_whale_feed",
+        "method": "GET",
+        "url": "https://data-api.polymarket.com/trades",
+        "keyParams": { "takerOnly": "true = only aggressive (taker) fills", "filterType": "CASH", "filterAmount": "min USD notional, e.g. 10000", "user": "wallet (optional)", "market": "conditionId (optional)", "side": "BUY|SELL", "limit": "default 100", "offset": "pagination" },
+        "returnsFields": ["proxyWallet", "side", "asset(tokenId)", "conditionId", "size", "price", "timestamp", "title", "slug", "eventSlug", "outcome", "outcomeIndex", "name", "pseudonym", "transactionHash"],
+        "value": "PLATFORM-WIDE LIVE WHALE TAPE. Without a user filter + with filterAmount, returns every large aggressive trade across all of Polymarket. Taker side = paid for urgency = conviction signal.",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "data_holders",
+        "method": "GET",
+        "url": "https://data-api.polymarket.com/holders",
+        "keyParams": { "market": "conditionId", "limit": "holders per token" },
+        "returnsFields": ["token(per outcome)", "holders[].proxyWallet", "holders[].name", "holders[].pseudonym", "holders[].amount(shares)", "holders[].outcomeIndex", "holders[].verified"],
+        "value": "Top holders per outcome with names + share amounts. Enables concentration/fragility analysis and 'who actually holds this' composition.",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "data_activity",
+        "method": "GET",
+        "url": "https://data-api.polymarket.com/activity",
+        "keyParams": { "user": "wallet", "limit": "default 100", "offset": "pagination" },
+        "returnsFields": ["proxyWallet", "timestamp", "conditionId", "type(TRADE|REDEEM|MERGE|SPLIT|REWARD|CONVERSION)", "size", "usdcSize", "price", "outcome", "title", "slug", "transactionHash", "name", "pseudonym"],
+        "value": "Full position lifecycle. REDEEM = trader CLAIMED winnings (realized cash, proven win). REWARD = liquidity-mining (not directional skill). Lets you separate realized skill from paper/mark-to-market gains, and detect LPs vs directional bettors.",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "data_value",
+        "method": "GET",
+        "url": "https://data-api.polymarket.com/value",
+        "keyParams": { "user": "wallet" },
+        "returnsFields": ["user", "value(current USD portfolio mark)"],
+        "value": "Live portfolio value for a wallet.",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "clob_book",
+        "method": "GET",
+        "url": "https://clob.polymarket.com/book",
+        "keyParams": { "token_id": "outcome token id (asset)" },
+        "returnsFields": ["market", "asset_id", "timestamp", "bids[].price/size", "asks[].price/size"],
+        "value": "Full order-book depth. Enables slippage-to-deploy-$X, support/resistance walls, and bid/ask depth imbalance (order-flow pressure).",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "clob_spread",
+        "method": "GET",
+        "url": "https://clob.polymarket.com/spread",
+        "keyParams": { "token_id": "outcome token id" },
+        "returnsFields": ["spread"],
+        "value": "Bid/ask spread = market efficiency + tradeability proxy.",
+        "notInReferenceClient": true
+      },
+      {
+        "id": "gamma_markets_microstructure",
+        "method": "GET",
+        "url": "https://gamma-api.polymarket.com/markets",
+        "keyParams": { "active": "true", "closed": "false", "order": "volume24hr|volumeNum|liquidity", "ascending": "false", "limit": "<=100", "offset": "pagination" },
+        "returnsFields": ["competitive(0-1 odds-competitiveness)", "oneDayPriceChange", "oneHourPriceChange", "lastTradePrice", "bestBid", "bestAsk", "spread", "volume24hr", "volume1wk", "volume1mo", "openInterest", "commentCount", "clobTokenIds", "outcomePrices", "orderMinSize", "orderPriceMinTickSize", "negRisk", "umaBond", "endDate", "events[]", "events[].series[].recurrence"],
+        "value": "Momentum (price changes), mispricing (lastTradePrice vs bestBid/Ask), liquidity (spread/openInterest), hype (commentCount), and recurring-series detection - mostly without even hitting the CLOB.",
+        "notInReferenceClient": "partial - reference client uses /markets but not these fields"
+      },
+      {
+        "id": "clob_prices_history",
+        "method": "GET",
+        "url": "https://clob.polymarket.com/prices-history",
+        "keyParams": { "market": "tokenId", "interval": "1h|6h|1d|1w|1m|max", "fidelity": "bar width in minutes", "startTs/endTs": "epoch seconds" },
+        "returnsFields": ["history[].t(epoch)", "history[].p(price)"],
+        "value": "Time series for volatility, momentum, and mean-reversion analysis."
+      }
+    ],
+    "activityTypes": {
+      "TRADE": "Open/adjust a position (directional).",
+      "REDEEM": "Claimed winnings on a resolved market = realized win.",
+      "MERGE": "Combined YES+NO back into collateral.",
+      "SPLIT": "Split collateral into YES+NO tokens.",
+      "REWARD": "Liquidity-mining reward (not directional skill).",
+      "CONVERSION": "Neg-risk conversion between outcomes."
+    }
+  },
+
+  "strategicThesis": {
+    "summary": "Turn proprietary Polymarket trader-behavior data into original, recurring, structured content. This is content that does not currently exist online and is therefore both rankable and citable.",
+    "threeLayers": [
+      {
+        "layer": "Freshness + recurrence",
+        "rationale": "Markets resolve constantly, creating an infinite self-replenishing content supply. Weekly cadence signals an active, authoritative site; each resolved market is a new publishable fact."
+      },
+      {
+        "layer": "Programmatic scale",
+        "rationale": "Every market, trader, and category is a potential indexable URL. One data pipeline yields thousands of long-tail pages (classic programmatic SEO, like real-estate listing sites)."
+      },
+      {
+        "layer": "Trust / E-E-A-T",
+        "rationale": "Prediction markets are finance-adjacent YMYL content where trust signals are decisive. Publicly grading past calls (a settled scorecard) is the strongest trust-builder: experience, expertise, and accountability combined."
+      }
+    ],
+    "guidingPrinciples": [
+      "Original data beats commentary. The moat is the numbers nobody else surfaces; prose is the human wrapper that makes it linkable.",
+      "Build 'linkable assets' (citable reference pages) not just posts. Ask of every piece: would a journalist or another site cite this?",
+      "Map content to search intent tiers: informational (evergreen explainers), navigational/entity (programmatic pages), transactional/decision (closest to product).",
+      "Rendering is the silent killer: indexable data must be in server-rendered HTML.",
+      "Newsletter + SEO are one flywheel: every post is a permanent indexable URL AND an email; site -> signup -> email -> shares/links back.",
+      "Optimize for AI answers (GEO): declarative factual sentences, structured data, explicit dates, so LLMs and AI Overviews cite you verbatim."
+    ]
+  },
+
+  "contentConcept": {
+    "name": "The Consensus (working title) / Smart Money Weekly",
+    "format": "Auto-assembled-from-data, lightly editorialized newsletter that doubles as an indexable blog.",
+    "tone": "Confident, witty, numbers-forward. A sports-betting 'sharp report' crossed with a finance newsletter. Clear hook: 'here is what the smart money is doing.'",
+    "cadence": "Weekly (plus optional event-driven special issues)",
+    "recurringSegments": [
+      { "id": "whale_watch", "title": "Whale Watch", "description": "Biggest single positions top traders opened this week (size, entry price, market).", "dataSource": "trades/positions of top-ranked traders" },
+      { "id": "consensus_board", "title": "The Consensus Board", "description": "Markets where the most tracked sharps agree; implied odds vs. the crowd.", "dataSource": "market_consensus" },
+      { "id": "reversals", "title": "Smart-Money Reversals", "description": "Traders who flipped YES<->NO on a market.", "dataSource": "reversals detection" },
+      { "id": "contrarian_corner", "title": "Contrarian Corner", "description": "Markets where sharps are fading the public favorite.", "dataSource": "consensus vs. market price divergence" },
+      { "id": "trader_of_week", "title": "Trader of the Week", "description": "Spotlight a top success-score trader: specialty category, hit rate, signature win.", "dataSource": "trader_profiles + assessments" },
+      { "id": "category_heat", "title": "Category Heat", "description": "Which category (NBA, politics, crypto...) smart money is piling into.", "dataSource": "consensus aggregated by category" },
+      { "id": "settled_scorecard", "title": "Settled Scorecard", "description": "Last week's consensus calls graded win/loss. Core trust + recurring-proof mechanism.", "dataSource": "market_resolutions vs. prior published consensus" }
+    ]
+  },
+
+  "insightRecipes": {
+    "summary": "Creative route combinations that produce conclusions a reader cannot get from Polymarket's own UI (because each requires JOINING routes). The throughline: 'what does the smart money know that the price doesn't reflect yet - and can I act on it?'. Each recipe is a reusable content+data unit: it powers a newsletter segment AND a programmatic page AND a structured-data block. Recipes 1, 2, 5, and 8 are the strongest core; recipe 5 (calibration) is the flagship link-earning asset.",
+    "implementationNotes": [
+      "Cache all inputs in the datastore; never call these APIs in a page's render hot path.",
+      "Every numeric claim in generated prose must trace to a stored value (no LLM-invented figures).",
+      "Store each recipe's output with a timestamp so the Settled Scorecard can grade it later.",
+      "Most recipes map 1:1 to a JSON-LD block (Article/Dataset/FAQPage) for AI-answer citation."
+    ],
+    "recipes": [
+      {
+        "id": "mispricing_gap",
+        "rank": 1,
+        "title": "The Mispricing Gap (smart money vs. the price)",
+        "question": "Where are top traders positioned away from where the market is priced?",
+        "routes": ["/v1/leaderboard", "/positions or /trades (per sharp)", "gamma /markets lastTradePrice/outcomePrices"],
+        "method": "Compute a size-weighted 'smart-money implied price' from top-trader entries on a market, then subtract current market price. Rank markets by the absolute gap.",
+        "outputFields": ["conditionId", "marketPrice", "smartMoneyImpliedPrice", "gap", "sharpCount", "avgSharpEntry"],
+        "readerTakeaway": "Market says 18%, but 7 of the top-20 traders are loading YES at avg 24c - a 6-point smart-money premium.",
+        "powers": ["consensus_board", "contrarian_corner", "/markets/[slug]"]
+      },
+      {
+        "id": "conviction_tape",
+        "rank": 2,
+        "title": "The Conviction Tape (whale taker feed + book impact)",
+        "question": "Who is aggressively betting big right now, and did they move the market?",
+        "routes": ["/trades?takerOnly=true&filterType=CASH&filterAmount=10000", "clob /book (before/after)"],
+        "method": "Stream large taker fills platform-wide. Taker = crossed the spread = paid for urgency. Cross-reference book depth to estimate price impact of the sweep.",
+        "outputFields": ["trader", "market", "side", "outcome", "usdNotional", "fillPrice", "priceImpact", "timestamp"],
+        "readerTakeaway": "A $250k taker buy just swept YES from 0.55 -> 0.61. Someone wanted in now, not at a better price.",
+        "powers": ["whale_watch", "live feed widget"]
+      },
+      {
+        "id": "concentration_fragility",
+        "rank": 3,
+        "title": "Concentration Fragility (who actually holds this)",
+        "question": "Is this price held up by broad conviction or a couple of whales who could bail?",
+        "routes": ["/holders?market=conditionId", "gamma volume24hr"],
+        "method": "Compute share of an outcome held by top-N wallets (Herfindahl-style concentration). High concentration + thin volume = fragile.",
+        "outputFields": ["conditionId", "outcome", "topHolderSharePct", "holderCount", "concentrationScore"],
+        "readerTakeaway": "92% of YES is held by 3 wallets. That isn't conviction, it's a cliff.",
+        "powers": ["contrarian_corner", "/markets/[slug] risk box"]
+      },
+      {
+        "id": "paper_vs_proven",
+        "rank": 4,
+        "title": "Paper vs. Proven (realized-skill filter)",
+        "question": "Is this leaderboard trader's PnL banked cash or unrealized luck?",
+        "routes": ["/v1/leaderboard", "/activity (REDEEM count + usdcSize)", "/value"],
+        "method": "Compare realized cash (sum of REDEEM usdcSize) and current /value against leaderboard PnL. Flag traders whose rank is driven by a single open mark-to-market position.",
+        "outputFields": ["address", "leaderboardPnl", "realizedRedeemed", "currentValue", "realizedRatio", "isProven"],
+        "readerTakeaway": "He's #4 on the leaderboard, but 80% of that is one unrealized position. Here's who actually banked it.",
+        "powers": ["trader_of_week", "/traders/[address]"]
+      },
+      {
+        "id": "calibration_truth",
+        "rank": 5,
+        "title": "The Calibration Truth (platform-wide flagship)",
+        "question": "Are Polymarket prices well-calibrated, or are some price bands systematically mispriced?",
+        "routes": ["resolved markets via clob /markets/{conditionId} winner flag", "entry/last prices bucketed"],
+        "method": "Across a large sample of resolved markets, bucket by price (e.g. 5-10c bands) and compute realized YES frequency per bucket. Plot predicted vs actual = calibration curve.",
+        "outputFields": ["priceBucket", "marketCount", "predictedProb", "realizedYesRate", "edge"],
+        "readerTakeaway": "Heavy favorites (85-95c) resolve YES 96% of the time - the market underprices near-locks.",
+        "powers": ["flagship evergreen post", "Dataset JSON-LD", "backlink magnet"]
+      },
+      {
+        "id": "move_attribution",
+        "rank": 6,
+        "title": "Move Attribution + Reversion (momentum)",
+        "question": "That big price move - was it real flow or one wallet, and will it hold?",
+        "routes": ["gamma oneDayPriceChange/oneHourPriceChange", "clob /prices-history", "/trades whale feed"],
+        "method": "For markets with large recent moves, attribute the move to broad flow vs a single dominant trade. Backtest reversion rate of single-wallet-driven moves.",
+        "outputFields": ["conditionId", "priceChange", "driverType(broad|single)", "topTradeShareOfMove", "histReversionRate"],
+        "readerTakeaway": "40 -> 62c in 6 hours, but it was one trader. These round-trip ~70% of the time.",
+        "powers": ["category_heat", "/markets/[slug]"]
+      },
+      {
+        "id": "specialist_edge",
+        "rank": 7,
+        "title": "Specialist Edge (don't follow stars blindly)",
+        "question": "What is this top trader actually good at - and where should you fade them?",
+        "routes": ["/trades (per trader)", "category inference", "resolutions via clob winner flag"],
+        "method": "Bucket a trader's resolved trades by inferred category; compute per-category win rate + Wilson score. Contrast with their overall rank.",
+        "outputFields": ["address", "category", "decided", "winRate", "wilson", "isProficient"],
+        "readerTakeaway": "Follow Theo4 on politics (71%), fade him on sports (48%).",
+        "powers": ["trader_of_week", "/traders/[address]", "/categories/[key]"]
+      },
+      {
+        "id": "tradeable_edge",
+        "rank": 8,
+        "title": "Is the Edge Tradeable? (the honesty layer)",
+        "question": "Can a normal person actually enter this signal without moving the price?",
+        "routes": ["clob /spread", "clob /book", "gamma orderMinSize/orderPriceMinTickSize"],
+        "method": "Given a target $ size, walk the order book to compute realized slippage and effective entry price. Combine with spread to label edges 'tradeable' or 'illiquid'.",
+        "outputFields": ["conditionId", "spread", "depthUsd", "slippageFor1k", "slippageFor10k", "tradeable"],
+        "readerTakeaway": "Signal's real, but YES has $400 of depth - you'd move it 4c buying in. Skip.",
+        "powers": ["trust layer on every signal", "/markets/[slug]"]
+      },
+      {
+        "id": "near_lock_yield",
+        "rank": 9,
+        "title": "Near-Lock Yield (theta framing)",
+        "question": "Which soon-to-resolve markets offer low-risk short-duration return?",
+        "routes": ["gamma /markets endDate + lastTradePrice", "clob /spread"],
+        "method": "Filter markets resolving within N days priced > X cents; compute implied return = (1 - price)/price, annualized by days-to-resolution. Cross-check liquidity.",
+        "outputFields": ["conditionId", "price", "daysToResolve", "impliedReturn", "annualizedYield"],
+        "readerTakeaway": "11 markets resolving this week priced >95c - here's the implied annualized 'yield' if they hold.",
+        "powers": ["recurring segment", "/markets/[slug]"]
+      },
+      {
+        "id": "negrisk_arb",
+        "rank": 10,
+        "title": "Neg-Risk Arbitrage (where it exists)",
+        "question": "Do the outcomes of a multi-candidate event sum to more than 100%?",
+        "routes": ["gamma /events (negRisk multi-outcome)", "gamma outcomePrices per market"],
+        "method": "For negRisk events, sum the YES prices of all mutually-exclusive outcomes. Sum > 1 implies an overround that can be faded; flag the spread.",
+        "outputFields": ["eventSlug", "outcomeCount", "priceSum", "overroundPct"],
+        "readerTakeaway": "These 4 candidates sum to 1.08 - an 8% overround you can fade.",
+        "powers": ["special-issue posts", "/categories/[key]"]
+      },
+      {
+        "id": "hype_trap",
+        "rank": 11,
+        "title": "Hype Trap (social vs. smart money)",
+        "question": "Is this trending market backed by sharps or just retail noise?",
+        "routes": ["gamma commentCount + volume24hr", "/holders (sharp presence)"],
+        "method": "Flag markets with high commentCount and retail volume spikes but zero top-ranked traders in /holders.",
+        "outputFields": ["conditionId", "commentCount", "volume24hr", "sharpHolderCount", "isHypeTrap"],
+        "readerTakeaway": "Most-commented market of the week - and not a single top-50 trader is in it.",
+        "powers": ["contrarian_corner", "category_heat"]
+      }
+    ]
+  },
+
+  "workstreams": [
+    {
+      "id": "technical_seo_foundation",
+      "priority": 1,
+      "goal": "Make content server-rendered, well-described, and discoverable. Nothing ranks without this.",
+      "requirements": [
+        {
+          "id": "ssr_content",
+          "requirement": "Render headline content (top signals, top traders, weekly summary) in server-rendered HTML. Push interactive widgets into isolated client components.",
+          "acceptanceCriteria": "View-source (JS disabled) shows the primary content text and key data values, not an empty shell."
+        },
+        {
+          "id": "metadata",
+          "requirement": "Per-route metadata: unique title (with template), description, canonical URL, Open Graph + Twitter card tags.",
+          "acceptanceCriteria": "Every indexable route returns unique <title>, meta description, canonical, and og/twitter tags."
+        },
+        {
+          "id": "dynamic_og_images",
+          "requirement": "Auto-generate branded social share images per post/market/trader (e.g. '6 sharps are on YES @ 62c').",
+          "acceptanceCriteria": "Each post/market/trader URL exposes a unique og:image rendered from live data."
+        },
+        {
+          "id": "sitemap_robots",
+          "requirement": "Generate sitemap.xml (all posts, markets, traders, categories) and robots.txt.",
+          "acceptanceCriteria": "Sitemap submitted to Google Search Console; robots allows crawl of public content and points to sitemap."
+        },
+        {
+          "id": "structured_data",
+          "requirement": "JSON-LD: Article (posts), FAQPage (market explainers), BreadcrumbList (navigation), Dataset (leaderboard).",
+          "acceptanceCriteria": "Pages validate in Google Rich Results Test with no errors."
+        }
+      ]
+    },
+    {
+      "id": "blog_and_first_issue",
+      "priority": 2,
+      "goal": "Stand up the blog routes and publish one hand-tuned issue to lock the editorial voice.",
+      "requirements": [
+        { "id": "blog_routes", "requirement": "Indexable blog index + /blog/[slug] post routes, server-rendered.", "acceptanceCriteria": "Posts are crawlable, have full metadata, and interlink to related markets/traders." },
+        { "id": "post_storage", "requirement": "Posts stored as MDX files or a 'blog_posts' table (title, slug, body, published_at, segments, cited entity IDs).", "acceptanceCriteria": "A post can be created, rendered, and linked from sitemap." },
+        { "id": "voice_reference", "requirement": "Produce one fully hand-tuned issue from real data as the canonical voice/style reference.", "acceptanceCriteria": "Human-approved sample issue exists for the generator to emulate." }
+      ]
+    },
+    {
+      "id": "generation_engine",
+      "priority": 3,
+      "goal": "Automatically build weekly issues from stored data on a schedule.",
+      "requirements": [
+        { "id": "data_query", "requirement": "Query datastore for the week's standout data per segment (top consensus, reversals, whale moves, settled results).", "acceptanceCriteria": "A single job assembles all segment inputs without live API calls in the hot path." },
+        { "id": "templating", "requirement": "Deterministic templates per segment + optional LLM polish for narrative voice (guardrailed to the data).", "acceptanceCriteria": "Generated draft is factually grounded in queried data; numbers are never fabricated." },
+        { "id": "scheduling", "requirement": "Run on a schedule (cron / scheduled function / CI workflow). Fresh content shipped weekly.", "acceptanceCriteria": "A new post is created and published automatically each cycle." },
+        { "id": "email_push", "requirement": "Send the same content to the email list via the chosen ESP.", "acceptanceCriteria": "Published post triggers an email send to subscribers." }
+      ]
+    },
+    {
+      "id": "programmatic_seo",
+      "priority": 4,
+      "goal": "Scale to thousands of unique, indexable, interlinked pages from the data pipeline.",
+      "pageTemplates": [
+        { "route": "/markets/[slug]", "purpose": "Per-market page: question, live odds, smart-money positioning, price-history chart, plain-language explainer.", "targets": "long-tail 'will X happen' queries", "uniquenessRule": "Must include genuinely distinct per-market data (odds history, positioning) to avoid thin/doorway content." },
+        { "route": "/traders/[address]", "purpose": "Public trader profile: success score, category proficiency, recent calls, win rate.", "targets": "'[trader] polymarket' entity queries" },
+        { "route": "/categories/[key]", "purpose": "Category hub aggregating markets + signals (NBA, politics, crypto, etc.).", "targets": "'[category] prediction market odds' queries" }
+      ],
+      "requirements": [
+        { "id": "isr_rendering", "requirement": "Use static generation + incremental revalidation (or equivalent) so pages are server-rendered and refreshed on a sane interval.", "acceptanceCriteria": "Pages serve cached HTML, revalidate on schedule, and reflect updated data." },
+        { "id": "internal_linking", "requirement": "Dense interlinking: post -> markets -> traders -> categories -> back to posts.", "acceptanceCriteria": "Every template links to its related entities; orphan pages are minimized." },
+        { "id": "thin_content_guard", "requirement": "Suppress or noindex pages lacking sufficient unique data.", "acceptanceCriteria": "Pages below a data-richness threshold are not indexed." },
+        { "id": "lifecycle_handling", "requirement": "Handle resolved-market decay: consolidate/redirect old markets into a historical track record rather than letting them rot.", "acceptanceCriteria": "Resolved markets remain useful (track record) or redirect; no large set of dead thin pages." }
+      ]
+    },
+    {
+      "id": "distribution_and_growth",
+      "priority": 5,
+      "goal": "Build compounding growth loops and measurement.",
+      "requirements": [
+        { "id": "email_capture", "requirement": "Newsletter signup form on-site (homepage + post footers).", "acceptanceCriteria": "Visitors can subscribe; subscribers stored in ESP." },
+        { "id": "share_widgets", "requirement": "Shareable cards + 'embed this' widgets for the consensus board to earn backlinks.", "acceptanceCriteria": "Each signal/market has share link + OG image; an embeddable widget exists." },
+        { "id": "analytics", "requirement": "Wire up Google Search Console + lightweight analytics from day one.", "acceptanceCriteria": "Indexed pages, impressions, and scorecard accuracy are tracked." }
+      ]
+    }
+  ],
+
+  "searchIntentMap": {
+    "informational": { "examples": ["how do prediction markets work", "is Polymarket accurate", "what is smart money"], "contentType": "evergreen explainers, AI-overview bait", "funnel": "top" },
+    "navigationalEntity": { "examples": ["[market name] odds", "[trader] polymarket", "[event] prediction"], "contentType": "programmatic market/trader/category pages", "funnel": "middle" },
+    "transactionalDecision": { "examples": ["best prediction market strategy", "copy trading polymarket", "follow smart money predictions"], "contentType": "product-adjacent guides + newsletter CTA", "funnel": "bottom" }
+  },
+
+  "roadmap": [
+    { "phase": 1, "name": "SEO foundation", "workstream": "technical_seo_foundation", "estimate": "1-2 days" },
+    { "phase": 2, "name": "Blog + first issue", "workstream": "blog_and_first_issue", "estimate": "1-2 days" },
+    { "phase": 3, "name": "Generation engine", "workstream": "generation_engine", "estimate": "2-3 days" },
+    { "phase": 4, "name": "Programmatic pages", "workstream": "programmatic_seo", "estimate": "2-4 days" },
+    { "phase": 5, "name": "Distribution", "workstream": "distribution_and_growth", "estimate": "1-2 days" }
+  ],
+
+  "successMetrics": [
+    { "metric": "Indexed pages", "source": "Google Search Console", "direction": "up" },
+    { "metric": "Organic impressions & clicks", "source": "Google Search Console", "direction": "up" },
+    { "metric": "Newsletter subscribers", "source": "ESP", "direction": "up" },
+    { "metric": "Backlinks / referring domains", "source": "backlink tool", "direction": "up" },
+    { "metric": "Settled-scorecard accuracy", "source": "internal (resolutions vs. published calls)", "direction": "track + publish for trust" }
+  ],
+
+  "pitfalls": [
+    { "risk": "YMYL scrutiny (finance/gambling adjacency)", "mitigation": "Visible authorship, methodology pages, disclaimers." },
+    { "risk": "Thin programmatic pages flagged as doorway content", "mitigation": "Each page must carry genuinely distinct data; noindex insufficient ones." },
+    { "risk": "API rate limits / staleness", "mitigation": "Cache aggressively in datastore; never block render on live API." },
+    { "risk": "Resolved-market content decay", "mitigation": "Consolidate/redirect into historical track record." },
+    { "risk": "Client-side-rendered indexable content", "mitigation": "Force SSR/SSG/ISR for anything that must rank." },
+    { "risk": "LLM-fabricated numbers in generated posts", "mitigation": "Templates grounded in queried data; LLM only polishes prose, never invents figures." }
+  ],
+
+  "constraints": [
+    "No secrets or private keys in code; environment variables only.",
+    "Respect Polymarket API rate limits and 429 backoff.",
+    "Indexable content must be server-rendered.",
+    "Generated content must be factually grounded in stored data.",
+    "Adapt all framework-specific guidance to the target repo's actual stack."
+  ]
+}

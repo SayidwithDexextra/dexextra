@@ -388,6 +388,15 @@ export default function ShareModal({
     return promise;
   }, [variantImageUrl, marketData]);
 
+  // Pre-fetch the actual image File while the modal is open so a platform/Share
+  // tap can hand it to the native sheet immediately. Awaiting an already-resolved
+  // promise preserves the tap's user activation (iOS requires this for files).
+  useEffect(() => {
+    if (isOpen && canShareFiles && variantImageUrl) {
+      void getShareImageFile();
+    }
+  }, [isOpen, canShareFiles, variantImageUrl, getShareImageFile]);
+
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') handleClose();
@@ -423,12 +432,12 @@ export default function ShareModal({
   // The Kalshi / Polymarket-style action: push the actual image file + link into
   // the native OS share sheet so the user can send it straight to iMessage,
   // Instagram, Mail, etc. Falls back to link-only share, then clipboard.
-  const handleNativeShare = useCallback(async () => {
+  const handleNativeShare = useCallback(async (platform?: string) => {
     if (isSharing) return;
     setIsSharing(true);
     try {
       const platformText = marketShareData
-        ? getShareText('more', { ...marketShareData, url: shareUrl })
+        ? getShareText(platform || 'more', { ...marketShareData, url: shareUrl })
         : shareText || shareTitle;
       const file = await getShareImageFile();
 
@@ -469,36 +478,32 @@ export default function ShareModal({
   const handleShare = useCallback((platform: string) => {
     // Generate / cache the real social image on demand, right as the user shares.
     warmOgImage();
+
+    // On devices that can share files (i.e. mobile), every platform tap opens the
+    // native share sheet with the actual image attached — the web can't push a
+    // file to a specific app, so the user picks the target (WhatsApp, IG, …) from
+    // the sheet. 'more' always uses the sheet.
+    if (
+      platform === 'more' ||
+      (canShareFiles && typeof navigator !== 'undefined' && typeof navigator.share === 'function')
+    ) {
+      void handleNativeShare(platform === 'more' ? undefined : platform);
+      return;
+    }
+
+    // Desktop / no file-share: fall back to web intents. The shared link unfurls
+    // to the OG image preview via the page's meta tags.
     const encodedUrl = encodeURIComponent(shareUrl);
-    
-    const getPlatformText = () => {
-      if (marketShareData) {
-        const data = { ...marketShareData, url: shareUrl };
-        return getShareText(platform, data);
-      }
-      return shareText || shareTitle;
-    };
-    
-    const platformText = getPlatformText();
+    const platformText = marketShareData
+      ? getShareText(platform, { ...marketShareData, url: shareUrl })
+      : shareText || shareTitle;
     const encodedText = encodeURIComponent(platformText);
     const encodedTitle = encodeURIComponent(
-      marketShareData 
-        ? getShareSubject(marketShareData) 
-        : shareTitle
+      marketShareData ? getShareSubject(marketShareData) : shareTitle
     );
 
-    const shareUrls: Record<string, string> = {
-      twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedText}`,
-      facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
-      reddit: `https://reddit.com/submit?url=${encodedUrl}&title=${encodedTitle}`,
-      discord: shareUrl,
-      telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
-      whatsapp: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
-      email: `mailto:?subject=${encodedTitle}&body=${encodedText}%0A%0A${encodedUrl}`,
-    };
-
     if (platform === 'discord') {
-      const discordText = marketShareData 
+      const discordText = marketShareData
         ? `${getShareText('discord', { ...marketShareData, url: shareUrl })}\n${shareUrl}`
         : shareUrl;
       navigator.clipboard.writeText(discordText);
@@ -507,16 +512,20 @@ export default function ShareModal({
       return;
     }
 
-    if (platform === 'more') {
-      void handleNativeShare();
-      return;
-    }
+    const shareUrls: Record<string, string> = {
+      twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedText}`,
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+      reddit: `https://reddit.com/submit?url=${encodedUrl}&title=${encodedTitle}`,
+      telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
+      whatsapp: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
+      email: `mailto:?subject=${encodedTitle}&body=${encodedText}%0A%0A${encodedUrl}`,
+    };
 
     const targetUrl = shareUrls[platform];
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer,width=600,height=400');
     }
-  }, [shareUrl, shareTitle, shareText, marketShareData, warmOgImage, handleNativeShare]);
+  }, [shareUrl, shareTitle, shareText, marketShareData, warmOgImage, handleNativeShare, canShareFiles]);
 
   if (!isOpen || !mounted) return null;
 
@@ -596,7 +605,7 @@ export default function ShareModal({
             <div className={styles.primaryShareRow}>
               <button
                 className={styles.primaryShareBtn}
-                onClick={handleNativeShare}
+                onClick={() => handleNativeShare()}
                 disabled={isSharing}
                 aria-label="Share post with image"
               >
@@ -622,7 +631,7 @@ export default function ShareModal({
           {imageUrl && (
             <div className={styles.primaryShareHint}>
               {canShareFiles
-                ? 'Sends the card image + link straight to Messages, Instagram, Mail and more.'
+                ? 'Tap a platform (or “Share post”) to send the card image + link straight to Messages, Instagram, WhatsApp and more.'
                 : 'Save the card image, or use a platform below to post your link.'}
             </div>
           )}

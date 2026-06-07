@@ -12,9 +12,60 @@ const spaceGrotesk = Space_Grotesk({
   variable: '--font-space-grotesk',
 })
 
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org'
+
+const defaultTitle = 'Dexetera — Trade Any Metric'
+const defaultDescription =
+  'Dexetera is a decentralized trading platform for permissionless futures markets on any measurable metric. Create, trade, and settle markets on real-world data.'
+
 export const metadata: Metadata = {
-  title: 'Dexetera - DeFi Unlocked',
-  description: 'Advanced DeFi Trading Platform',
+  metadataBase: new URL(baseUrl),
+  title: {
+    default: defaultTitle,
+    template: '%s | Dexetera',
+  },
+  description: defaultDescription,
+  applicationName: 'Dexetera',
+  keywords: [
+    'Dexetera',
+    'decentralized trading',
+    'permissionless futures',
+    'prediction markets',
+    'trade any metric',
+    'DeFi',
+    'on-chain futures',
+    'metric markets',
+  ],
+  creator: 'Dexetera Labs',
+  publisher: 'Dexetera Labs',
+  alternates: {
+    canonical: '/',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
+  openGraph: {
+    type: 'website',
+    siteName: 'Dexetera',
+    title: defaultTitle,
+    description: defaultDescription,
+    url: baseUrl,
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: defaultTitle,
+    description: defaultDescription,
+    creator: '@dexeteralabs',
+    site: '@dexeteralabs',
+  },
   icons: {
     icon: [
       {

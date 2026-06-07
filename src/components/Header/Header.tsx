@@ -486,11 +486,11 @@ export default function Header() {
               aria-label="Go to Dexetera home"
             >
               <Image
-                src="/Dexicon/LOGO-Dexetera-02.svg"
+                src="/Dexicon/LOGO-Dexetera-square-black-white.svg"
                 alt="Dexetera"
-                width={28}
-                height={28}
-                className="w-7 h-7 drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
+                width={36}
+                height={36}
+                className="w-9 h-9 drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
                 priority
               />
               {/* Font Variation Preview - Cycle through options */}
@@ -703,11 +703,11 @@ export default function Header() {
             aria-label="Go to Dexetera home"
           >
             <Image
-              src="/Dexicon/LOGO-Dexetera-02.svg"
+              src="/Dexicon/LOGO-Dexetera-square-black-white.svg"
               alt="Dexetera"
-              width={22}
-              height={22}
-              className="w-5.5 h-5.5 min-w-[22px] min-h-[22px] drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
+              width={32}
+              height={32}
+              className="w-8 h-8 min-w-[32px] min-h-[32px] drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
               priority
             />
     
