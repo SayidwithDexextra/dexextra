@@ -241,12 +241,28 @@ export default function PitchDeck() {
   if (!mounted) return null;
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[200] flex flex-col overflow-hidden bg-[#0A0A0A] text-white select-none"
-      style={{ height: '100dvh', touchAction: 'pan-y' }}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-    >
+    <>
+      {/* Mobile: deck is desktop-only */}
+      <div
+        className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-[#0A0A0A] px-8 text-center text-white sm:hidden"
+        style={{ height: '100dvh' }}
+      >
+        <div className="mb-6 inline-flex items-center justify-center rounded-2xl border border-[#222222] bg-[#0F0F0F] p-3 shadow-[0_0_40px_rgba(0,212,255,0.15)]">
+          <Image src={LOGO_SRC} alt="Dexetera" width={48} height={48} className="h-12 w-12" />
+        </div>
+        <h1 className="text-xl font-semibold tracking-tight">Best viewed on desktop</h1>
+        <p className="mt-2 max-w-xs text-sm text-[#9CA3AF]">
+          Open this pitch deck on a larger screen for the full experience.
+        </p>
+      </div>
+
+      {/* Desktop / tablet: the deck */}
+      <div
+        className="fixed inset-0 z-[200] hidden flex-col overflow-hidden bg-[#0A0A0A] text-white select-none sm:flex"
+        style={{ height: '100dvh', touchAction: 'pan-y' }}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
       {/* Ambient gradient orbs */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -left-40 top-0 h-[28rem] w-[28rem] rounded-full bg-[#00D4FF]/10 blur-[140px]" />
@@ -318,7 +334,8 @@ export default function PitchDeck() {
           <span className="mr-1 hidden sm:inline">Next</span>→
         </button>
       </div>
-    </div>,
+      </div>
+    </>,
     document.body,
   );
 }
