@@ -72,12 +72,9 @@ export default function EnableTradingPrompt() {
     }
   }, [sessionActive, isConnected, isSessionKnown])
 
-  // Auto-close if session becomes active while modal is open
-  useEffect(() => {
-    if (sessionActive && open) {
-      setOpen(false)
-    }
-  }, [sessionActive, open])
+  // NOTE: We intentionally do NOT auto-close when sessionActive flips true.
+  // The modal plays its own success animation and then invokes onSuccess,
+  // which closes it. Closing here would cut the animation short.
 
   const handleClose = () => {
     setOpen(false)
@@ -86,7 +83,7 @@ export default function EnableTradingPrompt() {
     }
   }
 
-  if (sessionActive || !open) return null
+  if (!open) return null
 
   return (
     <EnableTradingModal

@@ -151,6 +151,12 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 20px 16px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.content::-webkit-scrollbar {
+  display: none;
 }
 
 .previewSection {

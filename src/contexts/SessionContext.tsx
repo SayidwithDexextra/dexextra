@@ -2,13 +2,15 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
-import { createGaslessSession } from '@/lib/gasless';
+import { createGaslessSession, type GaslessSessionPhase } from '@/lib/gasless';
 
 type SessionState = {
   sessionId: string | null;
   sessionActive: boolean | null; // null = unknown/not applicable
   loading: boolean;
-  enableTrading: () => Promise<{ success: boolean; sessionId?: string; error?: string }>;
+  enableTrading: (
+    onProgress?: (phase: GaslessSessionPhase) => void
+  ) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
   refresh: () => Promise<void>;
   clear: () => void;
 };
@@ -112,7 +114,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
 
-  const enableTrading = useCallback(async () => {
+  const enableTrading = useCallback(async (onProgress?: (phase: GaslessSessionPhase) => void) => {
     console.log('[SessionContext] enableTrading called', { GASLESS_ENABLED, address: address?.slice(0, 10) });
     
     if (!GASLESS_ENABLED) {
@@ -127,7 +129,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       setLoading(true);
       console.log('[SessionContext] Calling createGaslessSession...');
-      const created = await createGaslessSession({ trader: address });
+      const created = await createGaslessSession({ trader: address, onProgress });
       console.log('[SessionContext] createGaslessSession result:', { 
         success: created.success, 
         sessionId: created.sessionId?.slice(0, 18),

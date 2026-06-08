@@ -1,9 +1,13 @@
 'use client'
 
-import { useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import useWallet from '@/hooks/useWallet'
 import { useSession } from '@/contexts/SessionContext'
 import { ensureGaslessChain } from '@/lib/gasless'
+import EnableTradingActivation, { type ActivationPhase } from './EnableTradingActivation'
+
+type EnablePhase = 'idle' | ActivationPhase
 
 export interface EnableTradingModalProps {
   isOpen: boolean
@@ -12,6 +16,21 @@ export interface EnableTradingModalProps {
   onOpenWallets?: () => void
   // Optional success callback when trading gets enabled
   onSuccess?: (sessionId: string) => void
+  /**
+   * Debug/demo: run a simulated activation sequence (awaiting → finalizing →
+   * success) instead of calling the real wallet flow. Lets the modal be
+   * exercised on the debug page without a connected wallet.
+   */
+  simulate?: boolean
+  /**
+   * Debug/demo: force a specific activation phase. When set (non-null), the
+   * modal renders that phase directly so each visual state can be inspected.
+   */
+  forcePhase?: EnablePhase | null
+  /** Timings (ms) for the simulated sequence. */
+  simulateTimings?: { awaitingMs?: number; finalizingMs?: number }
+  /** How long the success state lingers before onSuccess fires (ms). */
+  successHoldMs?: number
 }
 
 function CircleCheckIcon({ className }: { className?: string }) {
@@ -53,12 +72,39 @@ export default function EnableTradingModal({
   onClose,
   onOpenWallets,
   onSuccess,
+  simulate = false,
+  forcePhase = null,
+  simulateTimings,
+  successHoldMs = 1600,
 }: EnableTradingModalProps) {
   const { walletData, providers, connect, formatAddress } = useWallet()
   const { sessionActive, loading, enableTrading, sessionId } = useSession()
   const [isWorking, setIsWorking] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [internalPhase, setInternalPhase] = useState<EnablePhase>('idle')
+  const timersRef = useRef<number[]>([])
+
+  // forcePhase (debug) takes precedence over the internal state machine.
+  const phase: EnablePhase = forcePhase ?? internalPhase
+  const isActivating = phase === 'awaiting' || phase === 'finalizing'
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach((id) => window.clearTimeout(id))
+    timersRef.current = []
+  }, [])
+
+  // Reset transient state whenever the modal closes.
+  useEffect(() => {
+    if (!isOpen) {
+      clearTimers()
+      setInternalPhase('idle')
+      setErrorMessage(null)
+      setIsWorking(false)
+    }
+  }, [isOpen, clearTimers])
+
+  useEffect(() => () => clearTimers(), [clearTimers])
 
   const isConnected = Boolean(walletData?.isConnected && walletData?.address)
   const addressShort = walletData?.address ? formatAddress(walletData.address) : null
@@ -69,9 +115,33 @@ export default function EnableTradingModal({
 
   const shouldRender = isOpen
 
+  const runSimulatedFlow = useCallback(() => {
+    clearTimers()
+    setErrorMessage(null)
+    setInternalPhase('awaiting')
+    const awaitingMs = simulateTimings?.awaitingMs ?? 1400
+    const finalizingMs = simulateTimings?.finalizingMs ?? 1600
+    timersRef.current.push(
+      window.setTimeout(() => setInternalPhase('finalizing'), awaitingMs)
+    )
+    timersRef.current.push(
+      window.setTimeout(() => setInternalPhase('success'), awaitingMs + finalizingMs)
+    )
+    timersRef.current.push(
+      window.setTimeout(() => {
+        onSuccess?.('0xsimulated-session-id')
+      }, awaitingMs + finalizingMs + successHoldMs)
+    )
+  }, [clearTimers, simulateTimings, successHoldMs, onSuccess])
+
   const handlePrimary = useCallback(async () => {
     setErrorMessage(null)
-    console.log('[EnableTradingModal] handlePrimary called', { isConnected, gaslessEnabled, sessionActive, retryCount });
+    console.log('[EnableTradingModal] handlePrimary called', { isConnected, gaslessEnabled, sessionActive, retryCount, simulate });
+
+    if (simulate) {
+      runSimulatedFlow()
+      return
+    }
 
     // If not connected, try to connect automatically to first installed provider
     if (!isConnected) {
@@ -120,25 +190,38 @@ export default function EnableTradingModal({
         return
       }
 
-      const res = await enableTrading()
+      // Enter the fluid activation flow: 'awaiting' the wallet signature, then
+      // 'finalizing' once the signature is captured and the session registers.
+      setInternalPhase('awaiting')
+      const res = await enableTrading((p) => {
+        if (p === 'finalizing') setInternalPhase('finalizing')
+      })
       console.log('[EnableTradingModal] enableTrading result:', res);
       
       if (res.success) {
         console.log('[EnableTradingModal] Trading enabled successfully:', res.sessionId);
-        if (res.sessionId && onSuccess) onSuccess(res.sessionId)
+        setInternalPhase('success')
+        clearTimers()
+        timersRef.current.push(
+          window.setTimeout(() => {
+            if (res.sessionId && onSuccess) onSuccess(res.sessionId)
+          }, successHoldMs)
+        )
       } else {
         const error = res.error || 'Failed to enable trading. Please try again.';
         console.error('[EnableTradingModal] enableTrading failed:', error);
+        setInternalPhase('idle')
         setErrorMessage(error)
       }
     } catch (e: any) {
       const error = e?.message || 'An unexpected error occurred. Please try again.';
       console.error('[EnableTradingModal] enableTrading exception:', e);
+      setInternalPhase('idle')
       setErrorMessage(error)
     } finally {
       setIsWorking(false)
     }
-  }, [isConnected, gaslessEnabled, sessionActive, providers, connect, onOpenWallets, enableTrading, onSuccess, retryCount])
+  }, [isConnected, gaslessEnabled, sessionActive, providers, connect, onOpenWallets, enableTrading, onSuccess, retryCount, simulate, runSimulatedFlow, clearTimers, successHoldMs])
 
   const handleRetry = useCallback(() => {
     console.log('[EnableTradingModal] Retry clicked, attempt:', retryCount + 1);
@@ -148,18 +231,20 @@ export default function EnableTradingModal({
   }, [handlePrimary, retryCount])
 
   const primaryCta = useMemo(() => {
+    if (simulate) return 'Sign to Activate'
     if (!isConnected) return 'Connect Wallet'
     if (!gaslessEnabled) return 'Gasless Disabled'
     if (loading || isWorking) return 'Signing...'
     if (sessionActive) return 'Activated'
     return 'Sign to Activate'
-  }, [isConnected, loading, isWorking, sessionActive])
+  }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled, simulate])
 
   const primaryDisabled = useMemo(() => {
+    if (simulate) return false
     if (!isConnected) return false
     if (!gaslessEnabled) return true
     return loading || isWorking || sessionActive
-  }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled])
+  }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled, simulate])
 
   // Ensure hooks above always run; decide rendering after hooks are declared
   if (!shouldRender) {
@@ -178,41 +263,83 @@ export default function EnableTradingModal({
     <CircleDotIcon className="h-5 w-5 text-[#404040]" />
   )
 
+  const headerSubtext =
+    phase === 'awaiting'
+      ? 'Awaiting wallet signature'
+      : phase === 'finalizing'
+        ? 'Registering session'
+        : phase === 'success'
+          ? 'Session active'
+          : isConnected
+            ? 'Wallet Connected'
+            : 'Wallet Not Connected'
+
+  // Block interruption while the signature is being registered on-chain.
+  const showCloseButton = phase !== 'finalizing'
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-200" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-200"
+        onClick={phase === 'finalizing' ? undefined : onClose}
+      />
 
       {/* Container */}
-      <div className="relative z-10 w-full max-w-[30rem] bg-[#0F0F0F] rounded-md border border-[#222222] shadow-2xl">
+      <motion.div
+        layout
+        className="relative z-10 w-full max-w-[34rem] bg-[#0F0F0F] rounded-md border border-[#222222] shadow-2xl"
+      >
         {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
-          aria-label="Close"
-        >
-          <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18 18 6M6 6l12 12" />
-          </svg>
-        </button>
+        {showCloseButton && (
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-4 group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 z-10"
+            aria-label="Close"
+          >
+            <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
 
         {/* Header */}
-        <div className="p-4 border-b border-[#1A1A1A]">
-          <div className="flex flex-col items-center justify-center gap-2">
-            <div className="w-12 h-12 rounded-xl bg-[#1A1A1A] border border-[#222222] flex items-center justify-center shadow-inner">
-              <img src="/Dexicon/LOGO-Dexetera-05.svg" alt="Dexetera" className="w-6 h-6 opacity-90" />
+        <div className="px-4 py-3 border-b border-[#1A1A1A]">
+          <div className="flex flex-col items-center justify-center gap-1.5">
+            <div className="w-10 h-10 rounded-full bg-[#141414] border border-[#2E2E2E] flex items-center justify-center">
+              <img src="/Dexicon/LOGO-Dexetera-05.svg" alt="Dexetera" className="w-5 h-5 opacity-90" />
             </div>
             <div className="flex flex-col items-center">
               <span className="text-sm font-medium text-white tracking-wide text-center">Activate Gasless Mode</span>
               <span className="text-[10px] text-[#606060] text-center">
-                {isConnected ? 'Wallet Connected' : 'Wallet Not Connected'}
+                {headerSubtext}
               </span>
             </div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="p-4">
+        <AnimatePresence mode="wait" initial={false}>
+          {phase !== 'idle' ? (
+            <motion.div
+              key="activation"
+              className="px-4 py-3 min-h-[13.5rem] flex flex-col items-center justify-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <EnableTradingActivation phase={phase} />
+            </motion.div>
+          ) : (
+        <motion.div
+          key="config"
+          className="px-4 py-3 min-h-[13.5rem]"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25 }}
+        >
           <div className="space-y-3">
             {/* Wallet row */}
             <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
@@ -334,8 +461,10 @@ export default function EnableTradingModal({
             </a>
             .
           </p>
-        </div>
-      </div>
+        </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   )
 }

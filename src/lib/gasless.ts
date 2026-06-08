@@ -464,7 +464,7 @@ export async function signAndSubmitGasless(params: {
   const types = buildTypes(method) as any;
   try {
     console.log('[GASLESS] client env', {
-      NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED,
+      NEXT_PUBLIC_GASLESS_ENABLED: process.env.NEXT_PUBLIC_GASLESS_ENABLED,
       chainId: (CHAIN_CONFIG as any)?.chainId,
     });
   } catch {}
@@ -633,6 +633,8 @@ export async function signAndSubmitGasless(params: {
 }
 
 // ----------------- Session-based helpers -----------------
+export type GaslessSessionPhase = 'signing' | 'finalizing';
+
 export async function createGaslessSession(params: {
   trader: string;
   expirySec?: number;
@@ -640,6 +642,10 @@ export async function createGaslessSession(params: {
   maxNotionalPerSession?: bigint;
   methodsBitmap?: `0x${string}`; // defaults to enabling limit/market/modify/cancel
   allowedMarkets?: `0x${string}`[]; // optional
+  // Optional progress hook so UI can render a fluid transition between the
+  // wallet-signature wait ('signing') and the on-chain registration
+  // ('finalizing') stage.
+  onProgress?: (phase: GaslessSessionPhase) => void;
 }): Promise<SessionCreateResponse> {
   const {
     trader,
@@ -648,6 +654,7 @@ export async function createGaslessSession(params: {
     maxNotionalPerSession = 0n,
     methodsBitmap,
     allowedMarkets = [],
+    onProgress,
   } = params;
 
   console.log('[Gasless] createGaslessSession started', { trader, expirySec });
@@ -696,11 +703,15 @@ export async function createGaslessSession(params: {
   console.log('[Gasless] Chain check passed');
 
   const now = Math.floor(Date.now() / 1000);
-  const defaultLifetime = Number((process as any)?.env?.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 432000);
+  // NOTE: Next.js only inlines NEXT_PUBLIC_* vars into the client bundle when
+  // accessed as a plain `process.env.X` member expression. Optional chaining
+  // (`process?.env?.X`) is NOT statically replaced and resolves to undefined in
+  // the browser, so these MUST stay as direct static reads.
+  const defaultLifetime = Number(process.env.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 432000);
   const expiry = BigInt(expirySec ?? (now + defaultLifetime));
   
   // Build domain for global session registry
-  const registryAddr = (process as any)?.env?.NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS as string | undefined;
+  const registryAddr = process.env.NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS as string | undefined;
   if (!registryAddr) {
     console.error('[Gasless] Missing SESSION_REGISTRY_ADDRESS config');
     return { success: false, error: 'Session registry not configured. Please contact support.' };
@@ -796,6 +807,7 @@ export async function createGaslessSession(params: {
   });
 
   console.log('[Gasless] Requesting wallet signature...');
+  try { onProgress?.('signing'); } catch {}
   let signature: string;
   try {
     signature = await ethereum.request({
@@ -803,6 +815,7 @@ export async function createGaslessSession(params: {
       params: [trader, payload],
     });
     console.log('[Gasless] Signature obtained');
+    try { onProgress?.('finalizing'); } catch {}
   } catch (err: any) {
     const normalizedError = normalizeProviderError(err);
     console.error('[Gasless] Wallet signature failed:', {
