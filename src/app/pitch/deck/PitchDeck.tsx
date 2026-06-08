@@ -107,11 +107,11 @@ const SLIDES: Slide[] = [
     eyebrow: 'PRODUCT',
     title: 'Professional-grade trading, permissionless plumbing',
     bullets: [
-      { text: 'Leveraged long / short in USDC on a real orderbook.' },
-      { text: 'Market & limit orders, mark price, liquidations.' },
+      { text: 'Long / short in USDC on a real on-chain orderbook.' },
+      { text: 'Market & limit orders with a live mark price for P&L.' },
       { text: 'Oracle-verified settlement price at expiry.' },
       { text: 'TradingView charts + real-time orderbook UI, mobile-responsive.' },
-      { text: 'A guided Market Creation Wizard.' },
+      { text: 'Permissionless market creation — list any metric in minutes, no gatekeepers.' },
     ],
   },
   {
@@ -189,7 +189,7 @@ const SLIDES: Slide[] = [
     eyebrow: 'DEXETERA',
     title: 'What do you want to trade?',
     body: 'Dexetera makes any measurable metric a permissionless, trustlessly-settled market.',
-    footer: 'dexetera.org · app.dexetera.org · @dexeteralabs',
+    footer: 'dexetera.org · dexetera.xyz · @dexeteralabs',
   },
 ];
 
@@ -262,9 +262,11 @@ export default function PitchDeck() {
       </div>
 
       {/* Slide content (scrollable per slide for small screens) */}
-      <div className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center px-5 py-12 sm:px-10 sm:py-16">
-          <SlideView slide={slide} />
+      <div className="scrollbar-none relative z-10 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-5 py-12 sm:px-10 sm:py-16">
+          <div className="my-auto w-full">
+            <SlideView slide={slide} />
+          </div>
         </div>
       </div>
 
