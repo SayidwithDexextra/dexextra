@@ -290,6 +290,19 @@ const NUM_USERS = 5; // Setup 5 trading accounts
 // Toggle: enable/disable placing initial orders and trades during deployment
 const ENABLE_INITIAL_TRADES = false; // set to true to place initial orders/trades
 
+// Toggle: seed the "50-match-per-order cap" demo. When enabled, a single maker
+// (User1) rests SEED_MAKER_ORDERS distinct 1-unit sell limits at $1.00 so a
+// different taker can try to sweep them and observe only 50 fill in one tx.
+// Usage: SEED_MATCH_CAP=true [SEED_MAKER_ORDERS=60] npm run deploy:localhost
+const SEED_MATCH_CAP =
+  String(process.env.SEED_MATCH_CAP || "false").toLowerCase() === "true";
+const SEED_MAKER_ORDERS = Number(process.env.SEED_MAKER_ORDERS || 60);
+// When true, after seeding the asks the script also runs the taker buy + heal
+// demonstration (consumes the book). Leave false to keep the SEED_MAKER_ORDERS
+// asks RESTING so you can reproduce the cap manually in the interactive trader.
+const SEED_RUN_DEMO =
+  String(process.env.SEED_RUN_DEMO || "false").toLowerCase() === "true";
+
 // Well-funded deployer for HyperLiquid Testnet
 const PREFUNDED_DEPLOYER_PRIVATE_KEY =
   process.env.PREFUNDED_DEPLOYER_PRIVATE_KEY;
@@ -599,6 +612,9 @@ async function main() {
     const OBBatchSettlementFacet = await ethers.getContractFactory(
       "OBBatchSettlementFacet"
     );
+    const OBCrossHealFacet = await ethers.getContractFactory(
+      "OBCrossHealFacet"
+    );
 
     const initFacet = await OrderBookInitFacet.deploy();
     await initFacet.waitForDeployment();
@@ -620,6 +636,8 @@ async function main() {
     await lifecycleFacet.waitForDeployment();
     const batchSettlementFacet = await OBBatchSettlementFacet.deploy();
     await batchSettlementFacet.waitForDeployment();
+    const healFacet = await OBCrossHealFacet.deploy();
+    await healFacet.waitForDeployment();
 
     const initAddr = await initFacet.getAddress();
     const adminAddr = await adminFacet.getAddress();
@@ -630,10 +648,12 @@ async function main() {
     const settlementAddr = await settlementFacet.getAddress();
     const lifecycleAddr = await lifecycleFacet.getAddress();
     const batchSettlementAddr = await batchSettlementFacet.getAddress();
+    const healAddr = await healFacet.getAddress();
 
     // Record lifecycle facet address for downstream config/env updates
     contracts.MARKET_LIFECYCLE_FACET = lifecycleAddr;
     contracts.OB_BATCH_SETTLEMENT_FACET = batchSettlementAddr;
+    contracts.OB_CROSS_HEAL_FACET = healAddr;
 
     console.log("     ✅ Facets deployed:");
     console.log("        init:", initAddr);
@@ -645,6 +665,7 @@ async function main() {
     console.log("        settlement:", settlementAddr);
     console.log("        lifecycle:", lifecycleAddr);
     console.log("        batchSettlement:", batchSettlementAddr);
+    console.log("        crossHeal:", healAddr);
 
     // Set conservative defaults: 100% margin, 0 bps trading fee (no fees)
     try {
@@ -893,6 +914,11 @@ async function main() {
       action: FacetCutAction.Add,
       functionSelectors: selectors(batchSettlementFacet.interface),
     });
+    cut.push({
+      facetAddress: healAddr,
+      action: FacetCutAction.Add,
+      functionSelectors: selectors(healFacet.interface),
+    });
 
     // If bonded market creation is enabled, ensure the creator has enough CoreVault available balance
     // BEFORE calling createFuturesMarketDiamond (bond is charged via CoreVault ledger).
@@ -915,9 +941,15 @@ async function main() {
               6
             )} → depositing ${ethers.formatUnits(needed, 6)}...`
           );
-          await mockUSDC.mint(deployer.address, needed);
-          await mockUSDC.approve(contracts.CORE_VAULT, needed);
-          await coreVault.depositCollateral(needed);
+          if (isLocalEnv) {
+            // Current CoreVault has no depositCollateral; credit simulated
+            // cross-chain collateral (deployer holds EXTERNAL_CREDITOR_ROLE).
+            await coreVault.creditExternal(deployer.address, needed);
+          } else {
+            await mockUSDC.mint(deployer.address, needed);
+            await mockUSDC.approve(contracts.CORE_VAULT, needed);
+            await coreVault.depositCollateral(needed);
+          }
           const afterAvail = await coreVault.getAvailableCollateral.staticCall(deployer.address);
           console.log(
             "     ✅ Deployer available collateral after top-up:",
@@ -1209,8 +1241,10 @@ async function main() {
           collateralAmountStr = USER3_COLLATERAL; // User 3 gets less for testing
         }
         const collateralAmount = ethers.parseUnits(collateralAmountStr, 6);
-        if (i === 0 && isLocalEnv) {
-          // Simulate a spoke-chain deposit by crediting cross-chain balance instead of on-vault deposit
+        if (isLocalEnv) {
+          // Local env: the current CoreVault has no depositCollateral; fund every
+          // user by crediting simulated cross-chain collateral (EXTERNAL_CREDITOR_ROLE,
+          // granted to the deployer above). This is the working local funding path.
           await coreVault.creditExternal(user.address, collateralAmount);
           console.log(
             `     ✅ Granted simulated spoke credit of ${collateralAmountStr} USDC (local-only)`
@@ -1243,6 +1277,125 @@ async function main() {
         );
       } catch (error) {
         console.log(`     ❌ Error: ${error.message}`);
+      }
+    }
+
+    // ============================================
+    // STEP 4b: SEED 50-MATCH-PER-ORDER CAP SCENARIO (optional)
+    // ============================================
+    if (SEED_MATCH_CAP) {
+      console.log("\n🌱 STEP 4b: SEEDING 50-MATCH-CAP SCENARIO");
+      console.log("─".repeat(60));
+      try {
+        const orderPlacement = await ethers.getContractAt(
+          "OBOrderPlacementFacet",
+          contracts.ALUMINUM_ORDERBOOK
+        );
+        const viewFacet = await ethers.getContractAt(
+          "OBViewFacet",
+          contracts.ALUMINUM_ORDERBOOK
+        );
+        // One funded maker (User1) rests many distinct 1-unit asks at $1.00.
+        // The book does not merge same-trader/same-price orders, so each is a
+        // separate counterparty order in the price-level linked list.
+        const maker = signers[1];
+        const price = ethers.parseUnits("1", 6); // $1.00
+        const unit = ethers.parseUnits("1", 18); // 1 ALU
+        console.log(
+          `  📚 Maker ${maker.address} placing ${SEED_MAKER_ORDERS} sell limits (1 ALU @ $1.00 each)...`
+        );
+        for (let k = 0; k < SEED_MAKER_ORDERS; k++) {
+          const tx = await orderPlacement
+            .connect(maker)
+            .placeMarginLimitOrder(price, unit, false);
+          await tx.wait();
+        }
+        const bestAsk = await viewFacet.bestAsk();
+        console.log(
+          `     ✅ ${SEED_MAKER_ORDERS} resting asks placed. bestAsk=$${ethers.formatUnits(
+            bestAsk,
+            6
+          )}`
+        );
+
+        if (!SEED_RUN_DEMO) {
+          console.log(
+            `  👉 ${SEED_MAKER_ORDERS} asks are RESTING on the book at $1.00. To reproduce the cap:`
+          );
+          console.log(
+            `     in the trader, have a DIFFERENT user (e.g. User 2) BUY ${SEED_MAKER_ORDERS} ALU @ $1.00.`
+          );
+          console.log(
+            `     Only 50 fill in that tx (MAX_MATCHES_PER_ORDER); the rest rests as a crossed bid,`
+          );
+          console.log(
+            `     and the next order (or sweepCrossedBook) auto-heals it. Set SEED_RUN_DEMO=true to`
+          );
+          console.log(`     run that taker + heal demonstration automatically.`);
+        } else {
+        // ── Demonstrate the 50-match cap and the crossed-book self-heal ────────
+        // A DIFFERENT user (User2) tries to sweep all SEED_MAKER_ORDERS in one tx.
+        // Only 50 fill (MAX_MATCHES_PER_ORDER); the remainder rests as a crossed
+        // bid. We then prove OBCrossHealFacet clears that cross permissionlessly.
+        const fmt18 = (x) => ethers.formatUnits(x, 18);
+        const fmt6 = (x) => ethers.formatUnits(x, 6);
+        const taker = signers[2];
+        const totalBuy = unit * BigInt(SEED_MAKER_ORDERS);
+        console.log(
+          `\n  🛒 Taker ${taker.address} buys ${SEED_MAKER_ORDERS} ALU @ $1.00 in ONE order...`
+        );
+        const buyTx = await orderPlacement
+          .connect(taker)
+          .placeMarginLimitOrder(price, totalBuy, true);
+        await buyTx.wait();
+
+        let [takerSize] = await coreVault.getPositionSummary.staticCall(
+          taker.address,
+          actualMarketId
+        );
+        let bb = await viewFacet.bestBid();
+        let ba = await viewFacet.bestAsk();
+        const crossedNow = ba !== 0n && bb >= ba;
+        console.log(
+          `     📊 After taker order: filled=${fmt18(takerSize)} ALU (cap should be 50), ` +
+            `bestBid=$${fmt6(bb)} bestAsk=$${fmt6(ba)} ${crossedNow ? "→ CROSSED ⚠️" : ""}`
+        );
+
+        // Heal the crossed book via the permissionless sweep (same code path the
+        // auto-heal hot-path hook invokes on the next order placement).
+        const crossHeal = await ethers.getContractAt(
+          "OBCrossHealFacet",
+          contracts.ALUMINUM_ORDERBOOK
+        );
+        console.log(
+          "  🩹 Calling sweepCrossedBook() to self-heal the crossed book..."
+        );
+        const healTx = await crossHeal.connect(deployer).sweepCrossedBook(64);
+        await healTx.wait();
+
+        [takerSize] = await coreVault.getPositionSummary.staticCall(
+          taker.address,
+          actualMarketId
+        );
+        bb = await viewFacet.bestBid();
+        ba = await viewFacet.bestAsk();
+        const stillCrossed = await crossHeal.sweepCrossedBook.staticCall(0);
+        console.log(
+          `     ✅ After heal: filled=${fmt18(takerSize)} ALU, ` +
+            `bestBid=$${fmt6(bb)} bestAsk=$${fmt6(ba)}, stillCrossed=${stillCrossed}`
+        );
+        if (takerSize === totalBuy && !stillCrossed) {
+          console.log(
+            `  🎉 FIX VERIFIED: all ${SEED_MAKER_ORDERS} units filled and the book is no longer crossed.`
+          );
+        } else {
+          console.log(
+            `  ❌ Unexpected: taker not fully filled or book still crossed.`
+          );
+        }
+        } // end SEED_RUN_DEMO demonstration
+      } catch (e) {
+        console.log(`     ⚠️  Seeding/heal demo failed: ${e?.message || e}`);
       }
     }
 
@@ -1571,8 +1724,148 @@ async function main() {
   }
 }
 
+function generateContractsFile(configPath, contracts) {
+  const networkName = process.env.HARDHAT_NETWORK || "localhost";
+  const aluMarketId = contracts.ALUMINUM_MARKET_ID || "0x";
+  const aluOrderBook = contracts.ALUMINUM_ORDERBOOK || "";
+
+  const initialAddresses = {
+    MOCK_USDC: contracts.MOCK_USDC || "",
+    CORE_VAULT: contracts.CORE_VAULT || "",
+    VAULT_ANALYTICS: contracts.VAULT_ANALYTICS || "",
+    POSITION_MANAGER: contracts.POSITION_MANAGER || "",
+    FUTURES_MARKET_FACTORY: contracts.FUTURES_MARKET_FACTORY || "",
+    LIQUIDATION_MANAGER: contracts.LIQUIDATION_MANAGER || "",
+    ALUMINUM_ORDERBOOK: aluOrderBook,
+    ORDERBOOK: aluOrderBook,
+  };
+
+  const fileContent = `// AUTO-GENERATED by scripts/deploy.js — safe to delete; it will be regenerated.
+// Provides the contract registry consumed by interactive-trader.js and tests.
+const { ethers } = require("hardhat");
+const fs = require("fs");
+const path = require("path");
+
+const NETWORK = process.env.HARDHAT_NETWORK || ${JSON.stringify(networkName)};
+
+let ADDRESSES = ${JSON.stringify(initialAddresses, null, 2)};
+
+let MARKET_INFO = {
+  "ALU-USD": {
+    symbol: "ALU-USD",
+    name: "Aluminum Futures",
+    marketId: ${JSON.stringify(aluMarketId)},
+    orderBook: ${JSON.stringify(aluOrderBook)},
+  },
+};
+
+// config key -> compiled contract name (for ethers.getContractFactory)
+const CONTRACT_NAMES = {
+  MOCK_USDC: "MockUSDC",
+  CORE_VAULT: "CoreVault",
+  FUTURES_MARKET_FACTORY: "FuturesMarketFactory",
+  LIQUIDATION_MANAGER: "LiquidationManager",
+};
+
+function getAddress(name) {
+  return ADDRESSES[name];
+}
+
+function _librariesFor(contractName) {
+  if (contractName === "CoreVault") {
+    return { PositionManager: ADDRESSES.POSITION_MANAGER };
+  }
+  if (contractName === "LiquidationManager") {
+    return {
+      VaultAnalytics: ADDRESSES.VAULT_ANALYTICS,
+      PositionManager: ADDRESSES.POSITION_MANAGER,
+    };
+  }
+  return null;
+}
+
+async function getContract(name) {
+  const addr = ADDRESSES[name];
+  if (!addr) throw new Error(\`No address configured for \${name}\`);
+  const contractName = CONTRACT_NAMES[name] || name;
+  const libraries = _librariesFor(contractName);
+  const factory = libraries
+    ? await ethers.getContractFactory(contractName, { libraries })
+    : await ethers.getContractFactory(contractName);
+  return factory.attach(addr);
+}
+
+getContract.refreshAddresses = async function refreshAddresses() {
+  try {
+    const p = path.join(__dirname, \`../deployments/\${NETWORK}-deployment.json\`);
+    if (fs.existsSync(p)) {
+      const d = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (d.contracts) {
+        ADDRESSES = {
+          ...ADDRESSES,
+          ...d.contracts,
+          ORDERBOOK: d.contracts.ALUMINUM_ORDERBOOK || ADDRESSES.ORDERBOOK,
+        };
+      }
+      if (d.aluminumMarket) {
+        MARKET_INFO["ALU-USD"] = {
+          symbol: d.aluminumMarket.symbol || "ALU-USD",
+          name: "Aluminum Futures",
+          marketId: d.aluminumMarket.marketId,
+          orderBook: d.aluminumMarket.orderBook,
+        };
+      }
+    }
+  } catch (_) {}
+  return ADDRESSES;
+};
+
+function displayConfig() {
+  console.log("\\n📋 Contract addresses (" + NETWORK + "):");
+  for (const [k, v] of Object.entries(ADDRESSES)) {
+    console.log("  " + k.padEnd(24) + v);
+  }
+}
+
+const displayFullConfig = displayConfig;
+
+function getNetworkConfig() {
+  return { name: NETWORK, addresses: ADDRESSES, markets: MARKET_INFO };
+}
+
+function validateAddresses() {
+  return Object.values(ADDRESSES).every(
+    (a) => a && a !== ethers.ZeroAddress
+  );
+}
+
+module.exports = {
+  getContract,
+  getAddress,
+  MARKET_INFO,
+  CONTRACT_NAMES,
+  displayConfig,
+  displayFullConfig,
+  getNetworkConfig,
+  validateAddresses,
+};
+`;
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, fileContent);
+  console.log("  ✅ Generated config/contracts.js (was missing)");
+}
+
 async function updateContractsFile(contracts) {
   const configPath = path.join(__dirname, "../config/contracts.js");
+
+  // The interactive trader and tests require ../config/contracts.js, but it is
+  // gitignored and nothing else generates it. If it's missing, write a complete,
+  // self-contained module so the localhost trading environment is fully usable.
+  if (!fs.existsSync(configPath)) {
+    generateContractsFile(configPath, contracts);
+    return;
+  }
 
   try {
     let content = fs.readFileSync(configPath, "utf8");

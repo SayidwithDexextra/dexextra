@@ -90,6 +90,101 @@ function shortErr(e: any): string {
   return String(e?.reason || e?.shortMessage || e?.message || e || "").slice(0, 800);
 }
 
+// 4-byte selector for SpokeInboxAdapter's `error SuspiciousActivity();`.
+// The live AnomalyDetector has a known false-positive in its concentration
+// check that reverts the 2nd+ withdrawal by the same address within one UTC
+// hour. When that happens we must NOT burn a retry attempt (which would push
+// the job to the `requires_manual` dead-end) — instead we defer the job to the
+// next hour boundary, where the hourly window resets and delivery succeeds.
+const SUSPICIOUS_ACTIVITY_SELECTOR = ethers.id("SuspiciousActivity()").slice(0, 10).toLowerCase();
+
+// Best-effort detection of a SuspiciousActivity() revert across the various
+// shapes ethers/RPC providers surface custom-error data in.
+function isAnomalyRevert(err: any): boolean {
+  const sel = SUSPICIOUS_ACTIVITY_SELECTOR;
+  const selBody = sel.slice(2);
+  const candidates = [
+    err?.data,
+    err?.info?.error?.data,
+    err?.error?.data,
+    err?.revert?.data,
+    err?.receipt?.revertData,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.toLowerCase().startsWith(sel)) return true;
+  }
+  try {
+    const blob = JSON.stringify(err).toLowerCase();
+    if (blob.includes(selBody)) return true;
+  } catch {
+    /* circular / non-serialisable error object */
+  }
+  return shortErr(err).toLowerCase().includes("suspiciousactivity");
+}
+
+// ISO timestamp for the next UTC hour boundary plus a small buffer, so a
+// deferred job runs as the FIRST withdrawal of a fresh hourly window.
+function nextHourBoundaryIso(bufferSeconds = 20): string {
+  const d = new Date();
+  d.setUTCMinutes(0, 0, 0);
+  d.setUTCHours(d.getUTCHours() + 1);
+  return new Date(d.getTime() + bufferSeconds * 1000).toISOString();
+}
+
+// Reschedule a job to the next hour boundary WITHOUT incrementing attempts.
+// Uses a direct service-role update (RLS-bypassing) because the saga RPCs all
+// either consume an attempt (fail_or_requeue) or mark terminal states.
+async function deferToNextHour(
+  supabase: any,
+  jobId: string,
+  note: string,
+): Promise<string> {
+  const runAt = nextHourBoundaryIso(20);
+  await supabase
+    .from("withdrawal_jobs")
+    .update({ status: "spoke_failed", earliest_run_at: runAt, last_error: note })
+    .eq("id", jobId);
+  return runAt;
+}
+
+// One-time-per-tick self-heal: resurrect jobs that were pushed to
+// `requires_manual` solely by the anomaly false-positive (or by the old
+// split-brain gas failures) and never delivered. They re-enter the queue
+// scheduled for the next hour boundary; the proactive guard in
+// processStepSpokeDeliver then delivers or re-defers them safely.
+async function resurrectAnomalyStuckJobs(supabase: any, traceId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("withdrawal_jobs")
+    .select("id,last_error")
+    .eq("status", "requires_manual")
+    .is("spoke_deliver_tx", null)
+    .limit(50);
+  if (error || !data || data.length === 0) return 0;
+  const runAt = nextHourBoundaryIso(25);
+  let n = 0;
+  for (const j of data as Array<{ id: string; last_error: string | null }>) {
+    const e = (j.last_error || "").toLowerCase();
+    const anomaly =
+      e.includes("unknown custom error") ||
+      e.includes("suspiciousactivity") ||
+      e.includes("insufficient funds for intrinsic transaction cost");
+    if (!anomaly) continue;
+    await supabase
+      .from("withdrawal_jobs")
+      .update({
+        status: "spoke_failed",
+        attempts: 0,
+        earliest_run_at: runAt,
+        last_error: "self-heal: resurrected from requires_manual (anomaly/gas false-positive)",
+      })
+      .eq("id", j.id)
+      .eq("status", "requires_manual");
+    n++;
+  }
+  if (n) logStep(traceId, "anomaly_resurrect", { count: n, runAt });
+  return n;
+}
+
 function toBytes32Address(addr: string): string {
   const hex = addr.toLowerCase().replace(/^0x/, "");
   return "0x" + "0".repeat(24) + hex;
@@ -386,6 +481,41 @@ async function processStepSpokeDeliver(
   );
   const remoteApp = getHubRemoteApp(cfg.name);
 
+  // Proactive anomaly guard: ask the live AnomalyDetector whether this exact
+  // withdrawal would be flagged. The concentration heuristic false-positives on
+  // any 2nd+ withdrawal by the same address within a UTC hour. Rather than send
+  // a tx that reverts (and, with autoPause on, would pause the whole adapter),
+  // we defer to the next hour boundary without consuming a retry attempt.
+  try {
+    const inboxRead = new ethers.Contract(
+      cfg.inbox,
+      ["function anomalyDetector() view returns (address)"],
+      spokeProvider,
+    );
+    const detAddr: string = await inboxRead.anomalyDetector();
+    if (detAddr && detAddr !== ethers.ZeroAddress) {
+      const detector = new ethers.Contract(
+        detAddr,
+        ["function isSuspicious(address user, uint256 amount) view returns (bool)"],
+        spokeProvider,
+      );
+      const flagged: boolean = await detector.isSuspicious(job.user_address, BigInt(job.amount_wei));
+      if (flagged) {
+        const runAt = await deferToNextHour(
+          supabase,
+          job.id,
+          "deferred: anomaly concentration false-positive (2nd+ withdrawal this UTC hour); rescheduled to next hour without burning an attempt",
+        );
+        logStep(traceId, "spoke_deferred_anomaly", { jobId: job.id, runAt });
+        return "deferred_anomaly_next_hour";
+      }
+    }
+  } catch (guardErr) {
+    // Guard is best-effort; if the detector read fails we fall through to the
+    // staticCall, which still protects us from sending a reverting tx.
+    logStep(traceId, "anomaly_guard_skip", { jobId: job.id, reason: shortErr(guardErr) });
+  }
+
   try {
     await inbox.receiveMessage.staticCall(HUB_DOMAIN, remoteApp, payload);
 
@@ -435,6 +565,18 @@ async function processStepSpokeDeliver(
       });
       return "completed_via_revert_signal";
     }
+    // Anomaly false-positive that slipped past the proactive guard (e.g. a
+    // concurrent withdrawal landed between the guard read and this send).
+    // Defer to the next hour boundary instead of burning a retry attempt.
+    if (isAnomalyRevert(err)) {
+      const runAt = await deferToNextHour(
+        supabase,
+        job.id,
+        "deferred: SuspiciousActivity() revert (anomaly concentration false-positive); rescheduled to next hour without burning an attempt",
+      );
+      logStep(traceId, "spoke_deferred_anomaly_revert", { jobId: job.id, runAt });
+      return "deferred_anomaly_next_hour";
+    }
     const out = await supabase.rpc("fail_or_requeue_withdrawal_job", {
       p_id: job.id,
       p_error: msg,
@@ -472,6 +614,14 @@ Deno.serve(async () => {
   const hubWallet = new ethers.Wallet(pk, hubProvider);
 
   logStep(traceId, "worker_start", { batch: BATCH_SIZE, hub: hubWallet.address });
+
+  // Self-heal: pull any anomaly/gas false-positive jobs back out of the
+  // `requires_manual` dead-end before claiming this tick's batch.
+  try {
+    await resurrectAnomalyStuckJobs(supabase, traceId);
+  } catch (e) {
+    logStep(traceId, "anomaly_resurrect_error", { reason: shortErr(e) });
+  }
 
   const { data: jobs, error: claimErr } = await supabase.rpc("claim_withdrawal_jobs", {
     p_limit: BATCH_SIZE,

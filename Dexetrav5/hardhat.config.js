@@ -84,7 +84,10 @@ const config = {
       url: "http://127.0.0.1:8545",
       allowUnlimitedContractSize: true,
       blockGasLimit: 100000000,
-      gas: 20000000,
+      // A single order matching the full 50-order cap costs ~24M gas; 20M was
+      // too low and made large sweeps fail with "reverted without a reason
+      // string" (out of gas). 50M leaves headroom under the 100M block limit.
+      gas: 50000000,
       timeout: 120000,
     },
     ganache: {

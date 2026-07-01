@@ -17,14 +17,39 @@ export async function generateMetadata({
   const { symbol } = await params;
   const data = await getMarketSeoData(symbol);
 
-  const title = `${data.name} | Dexetera`;
+  const primaryCategory = data.category[0];
+  const categoryPhrase = primaryCategory ? `${primaryCategory} ` : '';
+
+  const title = `Trade ${data.name} (${data.symbol}) Futures`;
   const description = data.found
-    ? `${data.name} at ${data.priceFormatted}. Settlement ${data.settlementDateFormatted}. Trade any metric on Dexetera.`
-    : `Trade ${data.symbol} on Dexetera's decentralized trading platform. View real-time prices, charts, and trading data.`;
+    ? `Trade ${data.name} (${data.symbol}) futures on Dexetera — a permissionless ${categoryPhrase}prediction market currently at ${data.priceFormatted}, settling ${data.settlementDateFormatted}. View live ${data.symbol} odds, price charts, and settlement details.`
+    : `Trade ${data.symbol} futures on Dexetera — a permissionless prediction market on any measurable metric. View live ${data.symbol} odds, price charts, and settlement details.`;
+
+  const keywords = Array.from(
+    new Set(
+      [
+        data.name,
+        data.symbol,
+        `trade ${data.symbol} futures`,
+        `${data.symbol} futures`,
+        `${data.symbol} prediction market`,
+        `${data.symbol} odds`,
+        `${data.symbol} settlement odds`,
+        `${data.symbol} price`,
+        'permissionless futures',
+        'prediction market',
+        'trade any metric',
+        'Dexetera',
+        ...data.category,
+        ...data.category.map((c) => `${c} prediction market`),
+      ].filter((k): k is string => Boolean(k && k.trim()))
+    )
+  );
 
   return {
     title,
     description,
+    keywords,
     alternates: {
       canonical: `/token/${data.symbolParam}`,
     },

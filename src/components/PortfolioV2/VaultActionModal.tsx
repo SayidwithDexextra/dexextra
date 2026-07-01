@@ -148,10 +148,13 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 							setTxHash('')
 							try {
 								const amtStr = amount.trim()
-								const tx = action === 'deposit'
-									? await depositCollateral(amtStr)
-									: await withdrawCollateral(amtStr)
-								setTxHash(tx)
+								if (action === 'deposit') {
+									const tx = await depositCollateral(amtStr)
+									setTxHash(tx)
+								} else {
+									const result = await withdrawCollateral(amtStr)
+									setTxHash(result.spokeTxHash || result.withdrawId || '')
+								}
 								setTimeout(() => {
 									onClose()
 								}, 600)

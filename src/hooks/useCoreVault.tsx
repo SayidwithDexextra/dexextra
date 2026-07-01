@@ -18,6 +18,32 @@ let coreVaultWatchersAttached = false;
 let coreVaultLastEventTs = 0;
 const ENABLE_VAULT_POLLING = false;
 
+// Result of a cross-chain withdrawal. `spokeTxHash` is the real, explorer-
+// findable transaction on the spoke chain (Arbitrum) that released the USDC.
+// `withdrawId` is the internal hub saga identifier (NOT an on-chain tx hash).
+export interface WithdrawResult {
+  withdrawId: string | null;
+  spokeTxHash: string | null;
+  targetChainId: number;
+  explorerTxUrl: string | null;
+  // 'completed' = USDC released on spoke; 'pending' = hub steps done, spoke
+  // delivery is still in flight / queued for retry.
+  status: 'completed' | 'pending';
+}
+
+// Block explorer base URLs keyed by chain id (tx path appended at use site).
+const EXPLORER_TX_BASE: Record<number, string> = {
+  42161: 'https://arbiscan.io/tx/',
+  1: 'https://etherscan.io/tx/',
+  137: 'https://polygonscan.com/tx/',
+};
+
+function buildExplorerTxUrl(chainId: number, txHash?: string | null): string | null {
+  if (!txHash) return null;
+  const base = EXPLORER_TX_BASE[chainId];
+  return base ? `${base}${txHash}` : null;
+}
+
 export interface VaultBalances {
   usdcBalance: string;
   collateralDeposited: string;
@@ -797,7 +823,7 @@ export function useCoreVault(walletAddress?: string) {
 
   // Withdraw collateral — all withdrawals route through cross-chain to Arbitrum
   // Hub direct withdrawals removed (all liquidity is on Arbitrum spoke)
-  const withdrawCollateral = useCallback(async (amount: string, preferredSpokeChainId?: number): Promise<string> => {
+  const withdrawCollateral = useCallback(async (amount: string, preferredSpokeChainId?: number): Promise<WithdrawResult> => {
     if (!userAddress) throw new Error('Wallet address not available');
 
     try {
@@ -828,18 +854,30 @@ export function useCoreVault(walletAddress?: string) {
       }
       console.log(`[withdraw] Cross-chain withdrawal complete`, data);
 
+      const spokeTxHash: string | null = data.spokeTxHash || null;
+      const withdrawId: string | null = data.withdrawId || null;
+      const explorerTxUrl = buildExplorerTxUrl(targetChain, spokeTxHash);
+
       recordVaultTransaction({
         wallet_address: userAddress,
         tx_type: 'withdraw',
         amount: requestedAmount,
         chain_id: targetChain,
-        tx_hash: data.withdrawId || undefined,
+        // Prefer the real on-chain spoke tx; fall back to the saga id so the
+        // transaction is still traceable in our own records.
+        tx_hash: spokeTxHash || withdrawId || undefined,
         method: 'cross_chain',
-        metadata: { targetChainId: targetChain, withdrawId: data.withdrawId },
+        metadata: { targetChainId: targetChain, withdrawId, spokeTxHash },
       });
 
       fetchBalances();
-      return data.withdrawId || 'cross-chain-complete';
+      return {
+        withdrawId,
+        spokeTxHash,
+        targetChainId: targetChain,
+        explorerTxUrl,
+        status: spokeTxHash ? 'completed' : 'pending',
+      };
     } catch (err) {
       console.error('Withdrawal failed:', err);
       throw err;

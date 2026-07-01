@@ -12,12 +12,24 @@ interface MarketTickerItem {
   description?: string;
   price: number;
   price_change_percentage_24h: number;
+  href?: string;
+  external?: boolean;
+  iconUrl?: string;
 }
+
+export type { MarketTickerItem };
 
 interface CryptoMarketTickerProps {
   className?: string;
   speed?: number;
   pauseOnHover?: boolean;
+  /**
+   * Controlled mode: when provided, the ticker renders exactly these items and
+   * performs NO internal fetching. This lets callers spin up a new instance fed
+   * a different data source (e.g. live CoinGecko prices) without touching the
+   * default in-house-markets behavior used on the home page.
+   */
+  externalItems?: MarketTickerItem[];
 }
 
 // Old CoinGecko ticker used ~20 symbols; now we render ALL in-house markets (even if 0% change).
@@ -31,7 +43,8 @@ const CACHE_DURATION = 60 * 1000; // 60 seconds
 export default function CryptoMarketTicker({ 
   className = '', 
   speed = 60,
-  pauseOnHover = true 
+  pauseOnHover = true,
+  externalItems,
 }: CryptoMarketTickerProps) {
   // State management
   const [isLoading, setIsLoading] = useState(true);
@@ -244,6 +257,14 @@ export default function CryptoMarketTicker({
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    // Controlled mode: the caller owns the data. Mirror it in and skip all
+    // internal fetching/caching/polling entirely.
+    if (externalItems) {
+      setItems(externalItems);
+      setIsLoading(false);
+      return;
+    }
+
     const cached = loadFromCache();
     if (cached && cached.length > 0) {
       setItems(cached);
@@ -261,7 +282,7 @@ export default function CryptoMarketTicker({
       ctrl.abort();
       clearInterval(interval);
     };
-  }, [loadFromCache, refresh]);
+  }, [loadFromCache, refresh, externalItems]);
 
   // Handle hover events for pause on hover
   const handleMouseEnter = () => {
@@ -342,7 +363,9 @@ export default function CryptoMarketTicker({
         aria-label="Dexextra market ticker"
       >
         {validItems.concat(validItems).map((m, index) => {
-          const href = (m.market_identifier || m.symbol) ? `/token/${encodeURIComponent(m.market_identifier || m.symbol)}` : '#';
+          const href = m.href
+            ? m.href
+            : (m.market_identifier || m.symbol) ? `/token/${encodeURIComponent(m.market_identifier || m.symbol)}` : '#';
           const tooltipTitle = m.symbol || 'Market';
           const tooltipDescription =
             typeof m.description === 'string' && m.description.trim()
@@ -379,6 +402,8 @@ export default function CryptoMarketTicker({
             >
               <a
                 href={href}
+                target={m.external ? '_blank' : undefined}
+                rel={m.external ? 'noopener noreferrer' : undefined}
                 className={styles.tickerItem}
                 aria-disabled={!m.symbol}
                 tabIndex={m.symbol ? 0 : -1}
@@ -387,6 +412,15 @@ export default function CryptoMarketTicker({
                 }}
                 aria-label={`${m.symbol} ${formatPrice(m.price)} ${formatPercentage(m.price_change_percentage_24h)}`}
               >
+                {m.iconUrl ? (
+                  <img
+                    src={m.iconUrl}
+                    alt=""
+                    aria-hidden="true"
+                    loading="lazy"
+                    className={styles.icon}
+                  />
+                ) : null}
                 <span className={styles.symbol}>{m.symbol}</span>
                 <span className={styles.separator}>•</span>
                 <span className={styles.price}>{formatPrice(m.price)}</span>

@@ -358,6 +358,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const [withdrawSubmitting, setWithdrawSubmitting] = useState(false)
 	const [withdrawNotice, setWithdrawNotice] = useState<{ kind: 'none' | 'cancelled' | 'error' | 'success'; message: string }>({ kind: 'none', message: '' })
 	const [withdrawTxHash, setWithdrawTxHash] = useState('')
+	const [withdrawExplorerUrl, setWithdrawExplorerUrl] = useState('')
+	const [withdrawPending, setWithdrawPending] = useState(false)
 	const [showWithdrawalSuccessModal, setShowWithdrawalSuccessModal] = useState(false)
 	const [withdrawnAmountForModal, setWithdrawnAmountForModal] = useState('')
 
@@ -422,10 +424,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		setWithdrawSubmitting(true)
 		setWithdrawNotice({ kind: 'none', message: '' })
 		setWithdrawTxHash('')
+		setWithdrawExplorerUrl('')
+		setWithdrawPending(false)
 		const amountToWithdraw = withdrawAmount.trim()
 		try {
-			const tx = await coreVault.withdrawCollateral(amountToWithdraw)
-			setWithdrawTxHash(tx)
+			const result = await coreVault.withdrawCollateral(amountToWithdraw)
+			// Show the real on-chain spoke (Arbitrum) tx when available; otherwise
+			// fall back to the hub saga id while spoke delivery is still in flight.
+			setWithdrawTxHash(result.spokeTxHash || result.withdrawId || '')
+			setWithdrawExplorerUrl(result.explorerTxUrl || '')
+			setWithdrawPending(result.status === 'pending')
 			setWithdrawNotice({ kind: 'success', message: 'Withdrawal submitted successfully.' })
 			setWithdrawnAmountForModal(parseFloat(amountToWithdraw).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 			setWithdrawAmount('')
@@ -455,6 +463,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 				amount={withdrawnAmountForModal}
 				currency="USDC"
 				txHash={withdrawTxHash}
+				explorerUrl={withdrawExplorerUrl || undefined}
+				explorerName="Arbiscan"
+				pending={withdrawPending}
 			/>
 		)
 	}
@@ -1413,9 +1424,20 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									) : null}
 
 									{withdrawTxHash ? (
-										<div className="mt-2 text-[10px] text-green-400 font-mono truncate">
-											Tx: {withdrawTxHash}
-										</div>
+										withdrawExplorerUrl ? (
+											<a
+												href={withdrawExplorerUrl}
+												target="_blank"
+												rel="noopener noreferrer"
+												className="mt-2 block text-[10px] text-[#2AC4FC] hover:text-[#5fd4fd] font-mono truncate transition-colors duration-200"
+											>
+												Tx: {withdrawTxHash} ↗
+											</a>
+										) : (
+											<div className="mt-2 text-[10px] text-green-400 font-mono truncate">
+												{withdrawPending ? 'Ref: ' : 'Tx: '}{withdrawTxHash}
+											</div>
+										)
 									) : null}
 
 									<button
@@ -1514,6 +1536,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 				amount={withdrawnAmountForModal}
 				currency="USDC"
 				txHash={withdrawTxHash}
+				explorerUrl={withdrawExplorerUrl || undefined}
+				explorerName="Arbiscan"
+				pending={withdrawPending}
 			/>
 		</div>
 	)

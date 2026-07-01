@@ -9,6 +9,7 @@ import "../interfaces/IOBTradeExecutionFacet.sol";
 import "../interfaces/IOBLiquidationFacet.sol";
 import "../libraries/LibDiamond.sol";
 import "../interfaces/IFeeRegistry.sol";
+import "../interfaces/IOBCrossHealFacet.sol";
 
 contract OBOrderPlacementFacet {
     using Math for uint256;
@@ -89,6 +90,23 @@ contract OBOrderPlacementFacet {
         if (lvl.exists && lvl.totalAmount > 0 && lvl.firstOrderId != 0) {
             s.bestBid = head;
         }
+    }
+
+    // Auto-heal hook: if the book is crossed (a remainder rested across the spread after an order hit
+    // MAX_MATCHES_PER_ORDER), opportunistically clear ONE crossing order before the incoming order
+    // matches, so normal trade flow self-heals the book with no external keeper. Heavy logic lives in
+    // OBCrossHealFacet (kept off this size-constrained facet). The crossHealInProgress flag prevents
+    // re-entry when the heal re-submits via placeMarginLimitOrderBy -> _placeLimitOrder. Best prices are
+    // read from the authoritative linked-list heads. Any heal failure is swallowed so it can never block
+    // a user's order.
+    function _maybeHeal(OrderBookStorage.State storage s) private {
+        if (s.crossHealInProgress) return;
+        uint256 bid = s.buyPriceHead;
+        uint256 ask = s.sellPriceHead;
+        if (bid == 0 || ask == 0 || bid < ask) return; // healthy book (cheap common path)
+        s.crossHealInProgress = true;
+        try IOBCrossHealFacet(address(this)).sweepCrossedBook(1) { } catch { }
+        s.crossHealInProgress = false;
     }
 
     function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy)
@@ -714,6 +732,7 @@ contract OBOrderPlacementFacet {
     }
     function _placeMarket(address trader, uint256 amount, bool isBuy, bool isMarginOrder, uint256 maxPrice, uint256 minPrice) private returns (uint256 filledAmount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
+        _maybeHeal(s);
         if (s.nextOrderId == 0) s.nextOrderId = 1;
         uint256 orderId = s.nextOrderId++;
         // Do not reserve zero amount; margin sufficiency is prechecked for market orders
@@ -746,6 +765,7 @@ contract OBOrderPlacementFacet {
         uint256 marginRequired
     ) private returns (uint256 orderId) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
+        _maybeHeal(s);
         if (s.nextOrderId == 0) s.nextOrderId = 1;
         orderId = s.nextOrderId++;
 
@@ -786,6 +806,10 @@ contract OBOrderPlacementFacet {
             emit OrderRested(orderId, trader, price, remaining, isBuy, isMarginOrder);
             // Charge gas fee for order placement when order rests on book
             _chargeGasFee(s, trader);
+            // Self-heal: if matching stopped at the per-order cap and this order
+            // rested at a price that still crosses the opposing side, clear the
+            // cross now (same tx) so the book is never left bid >= ask.
+            _maybeHeal(s);
         } else {
             if (isMarginOrder) {
                 bytes32 rid4 = _reservationId(s, trader, orderId);

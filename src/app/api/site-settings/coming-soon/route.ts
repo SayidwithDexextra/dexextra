@@ -97,9 +97,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.warn('[coming-soon] rate-limit check failed:', e);
   }
 
-  let body: { code?: unknown } = {};
+  let body: { code?: unknown; mode?: unknown } = {};
   try {
-    body = (await req.json()) as { code?: unknown };
+    body = (await req.json()) as { code?: unknown; mode?: unknown };
   } catch {
     return NextResponse.json(
       { error: 'Invalid JSON body.' },
@@ -110,10 +110,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const submitted = typeof body.code === 'string' ? body.code.trim() : '';
   const expected = getServerPassword();
 
-  // If somebody already unlocked it, treat any POST as success — saves a Supabase
-  // round-trip turning into a confusing "invalid code" UX after the fact.
+  // Two modes:
+  //   - 'verify' (whitelist "Gain access"): validate the code and grant access
+  //     to THIS device only. The client persists the unlock locally; the global
+  //     gate stays up so the public remains blocked.
+  //   - 'unlock' (default, legacy): flip the global flag so EVERY browser
+  //     reveals the site (launch-day reveal).
+  const mode = body.mode === 'verify' ? 'verify' : 'unlock';
+
+  // If somebody already unlocked it globally, treat any POST as success — saves
+  // a Supabase round-trip turning into a confusing "invalid code" UX after.
   const current = await readUnlockState();
   if (current.unlocked) {
+    if (mode === 'verify') {
+      return NextResponse.json({ valid: true }, { headers: NO_STORE_HEADERS });
+    }
     return NextResponse.json(
       { unlocked: true, unlocked_at: current.unlocked_at },
       { headers: NO_STORE_HEADERS },
@@ -125,6 +136,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       { error: 'Invalid access code.' },
       { status: 401, headers: NO_STORE_HEADERS },
     );
+  }
+
+  // Correct code + verify mode → per-device access only. Do NOT touch the
+  // global flag, so the public-facing coming-soon page stays up for everyone
+  // else.
+  if (mode === 'verify') {
+    return NextResponse.json({ valid: true }, { headers: NO_STORE_HEADERS });
   }
 
   const supabase = getSupabaseServer();

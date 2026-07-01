@@ -169,6 +169,9 @@ export async function POST(request: NextRequest) {
   const hubProvider = new ethers.JsonRpcProvider(getHubRpc())
   const hubDomain = Number(process.env.BRIDGE_DOMAIN_HUB || '999')
   let withdrawId: string = ''
+  // The real, explorer-findable transaction that releases USDC to the user on
+  // the spoke chain (Arbitrum). Captured in step 3 and returned to the client.
+  let spokeDeliverTx: string = ''
 
   // ─────────── STEP 1: requestWithdraw on hub ───────────
   // This is the ONLY irreversible step from a user-credit POV. If this
@@ -355,6 +358,7 @@ export async function POST(request: NextRequest) {
           label: `withdraw:spoke:${spokeCfg.name}`,
         })
         const rc = await tx.wait()
+        spokeDeliverTx = tx.hash
         console.log(`${tag} job ${jobId} step3 confirmed`, { txHash: tx.hash })
         await completeWithdrawalJob(jobId, tx.hash, rc?.blockNumber ?? undefined)
       },
@@ -375,6 +379,14 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  console.log(`${tag} job ${jobId} complete`, { user, targetChainId, withdrawId })
-  return NextResponse.json({ success: true, jobId, withdrawId, targetChainId, amount })
+  console.log(`${tag} job ${jobId} complete`, { user, targetChainId, withdrawId, spokeDeliverTx })
+  return NextResponse.json({
+    success: true,
+    jobId,
+    withdrawId,
+    targetChainId,
+    amount,
+    // Real on-chain tx on the spoke chain (Arbitrum) that released the USDC.
+    spokeTxHash: spokeDeliverTx || null,
+  })
 }

@@ -10,6 +10,14 @@ interface WithdrawalSuccessModalProps {
   amount?: string;
   currency?: string;
   txHash?: string;
+  // Full block-explorer URL for the on-chain spoke (Arbitrum) tx. When present,
+  // the transaction row links out to the explorer.
+  explorerUrl?: string;
+  // Human-readable explorer name (e.g. "Arbiscan") for the link label.
+  explorerName?: string;
+  // When true, the spoke delivery is still in flight (hub steps done, USDC not
+  // yet released). Shows a "Processing" status instead of "Confirmed".
+  pending?: boolean;
   autoClose?: boolean;
   autoCloseDelay?: number;
 }
@@ -116,6 +124,9 @@ export default function WithdrawalSuccessModal({
   amount = '0.00',
   currency = 'USDC',
   txHash,
+  explorerUrl,
+  explorerName = 'Explorer',
+  pending = false,
   autoClose = false, 
   autoCloseDelay = 5000 
 }: WithdrawalSuccessModalProps) {
@@ -283,9 +294,24 @@ export default function WithdrawalSuccessModal({
                   <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded border border-[#1A1A1A]">
                     <span className="text-[10px] text-[#606060]">Transaction</span>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-white font-mono">
-                        {truncateTxHash(txHash)}
-                      </span>
+                      {explorerUrl ? (
+                        <a
+                          href={explorerUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-[#2AC4FC] hover:text-[#5fd4fd] font-mono transition-colors duration-200 inline-flex items-center gap-1"
+                          title={`View on ${explorerName}`}
+                        >
+                          {truncateTxHash(txHash)}
+                          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14 5h5m0 0v5m0-5L10 14M9 5H5a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-4" />
+                          </svg>
+                        </a>
+                      ) : (
+                        <span className="text-[10px] text-white font-mono">
+                          {truncateTxHash(txHash)}
+                        </span>
+                      )}
                       <button
                         onClick={() => navigator.clipboard.writeText(txHash)}
                         className="p-1 hover:bg-[#1A1A1A] rounded transition-all duration-200"
@@ -302,8 +328,10 @@ export default function WithdrawalSuccessModal({
                   <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded border border-[#1A1A1A]">
                     <span className="text-[10px] text-[#606060]">Status</span>
                     <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                      <span className="text-[10px] text-green-400">Confirmed</span>
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${pending ? 'bg-amber-400 animate-pulse' : 'bg-green-400'}`} />
+                      <span className={`text-[10px] ${pending ? 'text-amber-400' : 'text-green-400'}`}>
+                        {pending ? 'Processing' : 'Confirmed'}
+                      </span>
                     </div>
                   </div>
                 </motion.div>

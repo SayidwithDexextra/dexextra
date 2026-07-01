@@ -171,6 +171,11 @@ library OrderBookStorage {
         // ============ DEFERRED LIQUIDATION TRACKING ============
         uint256 liquidationDirtyCount;    // Counter for deferred liquidation checks
         uint256 lastLiquidationTriggerBlock; // Block when last liquidation check was triggered
+
+        // ============ CROSSED-BOOK SELF-HEAL ============
+        // Recursion guard: set while a crossed-book heal is re-submitting an order so the
+        // hot-path hook does not re-trigger itself during the nested placeMarginLimitOrderBy.
+        bool crossHealInProgress;
     }
 
     function state() internal pure returns (State storage s) {
