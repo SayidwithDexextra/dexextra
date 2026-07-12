@@ -11,6 +11,7 @@ export const STEP_ORDER = [
   'description',
   'select_source',
   'icon',
+  'market_type',
   'complete',
 ] as const;
 

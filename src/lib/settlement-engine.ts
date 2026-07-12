@@ -3,6 +3,8 @@ import { ethers } from 'ethers';
 import { getMetricAIWorkerBaseUrl } from './metricAiWorker';
 import { loadRelayerPoolFromEnv } from './relayerKeys';
 import { calculateAndInsertUserSettlements } from './user-settlements';
+import { readMarketTypeConfig, isTwoLegMarket, type MarketTypeConfig } from './ipfs/marketTypeConfig';
+import { pinJson } from './ipfs/pinata';
 
 // ── Types ──
 
@@ -181,7 +183,7 @@ function nextMarketConfig(
  */
 export async function getAIPriceDetermination(
   market: MarketRow,
-): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null; screenshotUrl: string | null } | null> {
+): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null; screenshotUrl: string | null; result?: any } | null> {
   const { metricAiWorkerUrl } = getConfig();
   if (!metricAiWorkerUrl) {
     console.warn('[settlement-engine] metricAiWorkerUrl is empty, cannot determine AI price');
@@ -195,19 +197,57 @@ export async function getAIPriceDetermination(
 
   const maxRetries = parsePositiveInt(process.env.SETTLEMENT_AI_MAX_RETRIES, 3);
 
+  // Detect ratio / indexed markets. For these, settlement resolves BOTH legs and
+  // the worker returns the derived value (A/B or base-100 index) in
+  // asset_price_suggestion, so the polling logic below is unchanged.
+  const typeCfg = readMarketTypeConfig({
+    market_type: (market as any).market_type,
+    market_config: market.market_config,
+  });
+  const twoLeg = isTwoLegMarket(typeCfg.market_type) && !!typeCfg.legs?.numerator && !!typeCfg.legs?.denominator;
+  const twoLegBody = twoLeg
+    ? {
+        metric_type: typeCfg.market_type,
+        base_value: typeCfg.base_value ?? (typeCfg.market_type === 'indexed' ? 100 : undefined),
+        baseline: typeCfg.baseline
+          ? { A0: typeCfg.baseline.A0, B0: typeCfg.baseline.B0, V0: typeCfg.baseline.V0, asOf: typeCfg.baseline.asOf }
+          : undefined,
+        legs: [
+          {
+            role: 'numerator' as const,
+            name: typeCfg.legs!.numerator.label,
+            urls: typeCfg.legs!.numerator.sources,
+          },
+          {
+            role: 'denominator' as const,
+            name: typeCfg.legs!.denominator!.label,
+            urls: typeCfg.legs!.denominator!.sources,
+          },
+        ],
+      }
+    : {};
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     if (attempt > 1) {
       console.log(`[settlement-engine] retrying AI price for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
     }
 
-    const richDescription = [
-      `Settlement price determination for "${market.name || market.market_identifier}".`,
-      market.description ? `Market description: ${market.description}.` : '',
-      `Metric source URL(s): ${urls.join(', ')}.`,
-      `Find the current numeric value of this metric from the source page(s).`,
-    ].filter(Boolean).join(' ');
+    const richDescription = twoLeg
+      ? [
+          `Settlement of ${typeCfg.market_type} market "${market.name || market.market_identifier}".`,
+          `Resolve leg A (${typeCfg.legs!.numerator.label}) and leg B (${typeCfg.legs!.denominator!.label}) independently;`,
+          typeCfg.market_type === 'indexed'
+            ? `settlement = 100 * (A/B) / V0 with V0=${typeCfg.baseline?.V0}.`
+            : `settlement = A/B.`,
+        ].filter(Boolean).join(' ')
+      : [
+          `Settlement price determination for "${market.name || market.market_identifier}".`,
+          market.description ? `Market description: ${market.description}.` : '',
+          `Metric source URL(s): ${urls.join(', ')}.`,
+          `Find the current numeric value of this metric from the source page(s).`,
+        ].filter(Boolean).join(' ');
 
-    console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls, attempt });
+    console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls, attempt, twoLeg });
     const startRes = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -218,6 +258,7 @@ export async function getAIPriceDetermination(
         related_market_id: market.id,
         related_market_identifier: market.market_identifier,
         context: 'settlement',
+        ...twoLegBody,
       }),
     });
 
@@ -262,7 +303,7 @@ export async function getAIPriceDetermination(
           const screenshotUrl: string | null =
             pollJson.result?.sources?.[0]?.screenshot_url
             || null;
-          return { price: candidate, jobId, waybackUrl, waybackPageUrl, screenshotUrl };
+          return { price: candidate, jobId, waybackUrl, waybackPageUrl, screenshotUrl, result: pollJson.result };
         }
         console.warn(`[settlement-engine] AI returned zero/invalid price for ${market.market_identifier} (attempt ${attempt}/${maxRetries}): ${candidate}`);
         shouldRetry = true;
@@ -282,6 +323,51 @@ export async function getAIPriceDetermination(
 
   console.error(`[settlement-engine] all ${maxRetries} AI price attempts exhausted for ${market.market_identifier}, not proposing settlement`);
   return null;
+}
+
+/**
+ * For ratio/indexed markets, pin a content-addressed settlement-evidence JSON
+ * (both legs' sources + readings + formula + baseline + derived value) and
+ * return its ipfs:// URL to commit on-chain via commitEvidence. Returns null on
+ * failure or for single-metric markets so callers fall back to the wayback URL.
+ */
+async function pinSettlementEvidence(
+  market: MarketRow,
+  ai: { price: number; jobId: string; result?: any },
+  typeCfg: MarketTypeConfig,
+): Promise<string | null> {
+  if (!isTwoLegMarket(typeCfg.market_type)) return null;
+  try {
+    const derived = ai.result?.derived || {};
+    const legReadings = ai.result?.legs || null;
+    const evidence = {
+      kind: 'dexetera-settlement-evidence',
+      schemaVersion: '1.0',
+      market: {
+        identifier: market.market_identifier,
+        address: market.market_address,
+        marketType: typeCfg.market_type,
+      },
+      formula: derived.formula || (typeCfg.market_type === 'indexed' ? '100 * (A/B) / V0' : 'A/B'),
+      baseValue: typeCfg.base_value ?? (typeCfg.market_type === 'indexed' ? 100 : undefined),
+      baseline: typeCfg.baseline || derived.baseline || null,
+      legs: {
+        numerator: typeCfg.legs?.numerator || null,
+        denominator: typeCfg.legs?.denominator || null,
+      },
+      legReadings,
+      legValues: derived.leg_values || null,
+      settlementValue: ai.price,
+      asOf: new Date().toISOString(),
+      aiJobId: ai.jobId,
+    };
+    const pin = await pinJson(evidence, { name: `settlement-${market.market_identifier}.json` });
+    console.log(`[settlement-engine] pinned settlement evidence for ${market.market_identifier}: ${pin.uri}`);
+    return pin.uri;
+  } catch (err) {
+    console.warn(`[settlement-engine] settlement evidence pin failed for ${market.market_identifier}: ${String(err).slice(0, 200)}`);
+    return null;
+  }
 }
 
 // ── On-chain helpers ──
@@ -844,7 +930,11 @@ async function maybeStartSettlementWindow(
   // Use waybackUrl (the archived screenshot) as the PRIMARY evidence source — this is the exact
   // image the AI analyzed, ensuring congruence between evidence, snapshot, and AI analysis.
   // Fall back to waybackPageUrl (archived live page) only if screenshot archive is unavailable.
-  const evidenceUrl = ai.waybackUrl || ai.waybackPageUrl;
+  // For ratio/indexed markets, pin a content-addressed evidence manifest and
+  // prefer it over the wayback URL (single-metric markets keep wayback).
+  const proposeTypeCfg = readMarketTypeConfig({ market_type: (market as any).market_type, market_config: market.market_config });
+  const pinnedEvidenceUrl = await pinSettlementEvidence(market, ai, proposeTypeCfg);
+  const evidenceUrl = pinnedEvidenceUrl || ai.waybackUrl || ai.waybackPageUrl;
   let evidenceHash: string | null = null;
   let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {
@@ -1500,7 +1590,10 @@ export async function completeSettlementFromAIResult(
   // Use waybackUrl (screenshot archive) as PRIMARY evidence — this is the exact image the AI analyzed,
   // ensuring congruence between the on-chain evidence, the archived snapshot, and the AI analysis.
   // Fall back to waybackPageUrl (archived live page) only if screenshot archive is unavailable.
-  const evidenceUrl = ai.waybackUrl || ai.waybackPageUrl;
+  // Ratio/indexed markets pin a content-addressed evidence manifest and prefer it.
+  const proposeTypeCfg = readMarketTypeConfig({ market_type: (market as any).market_type, market_config: market.market_config });
+  const pinnedEvidenceUrl = await pinSettlementEvidence(market, ai, proposeTypeCfg);
+  const evidenceUrl = pinnedEvidenceUrl || ai.waybackUrl || ai.waybackPageUrl;
   let evidenceHash: string | null = null;
   let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {

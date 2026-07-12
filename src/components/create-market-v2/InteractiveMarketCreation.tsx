@@ -14,13 +14,15 @@ import type { MetricResolutionResponse } from '@/components/MetricResolutionModa
 import { runMetricAIWithPolling, getMetricAIWorkerBaseUrl, type MetricAIResult } from '@/lib/metricAiWorker';
 import type { CreateMarketAssistantResponse } from '@/types/createMarketAssistant';
 import { createMarketOnChain, prefetchCutData, type PrefetchedCutData } from '@/lib/createMarketOnChain';
+import { toFixedPoint6 } from '@/lib/ipfs/computeDerived';
+import { buildMarketTypeConfig } from '@/lib/ipfs/marketTypeConfig';
 import { uploadImageToSupabase } from '@/lib/imageUpload';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
 import { ErrorModal } from '@/components/StatusModals';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'clarify' | 'rejected' | 'error';
-export type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'complete';
+export type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'market_type' | 'complete';
 
 const PROMPT_EXAMPLE_SUGGESTIONS = [
   'Current price of Bitcoin in USD',
@@ -439,6 +441,17 @@ function StepPanel({
   iconPreviewUrl,
   onConfirmIcon,
   isIconSaving,
+  marketMode,
+  onChangeMarketMode,
+  legBLabel,
+  onChangeLegBLabel,
+  legBUrl,
+  onChangeLegBUrl,
+  legASourceLabel,
+  isLegBValidating,
+  legBValidationError,
+  legBVerified,
+  onConfirmMarketType,
   onStartOver,
   devTools,
 }: {
@@ -459,6 +472,17 @@ function StepPanel({
   iconPreviewUrl: string | null;
   onConfirmIcon: () => void | Promise<void>;
   isIconSaving: boolean;
+  marketMode: 'single' | 'ratio' | 'indexed';
+  onChangeMarketMode: (m: 'single' | 'ratio' | 'indexed') => void;
+  legBLabel: string;
+  onChangeLegBLabel: (v: string) => void;
+  legBUrl: string;
+  onChangeLegBUrl: (v: string) => void;
+  legASourceLabel: string;
+  isLegBValidating: boolean;
+  legBValidationError: string | null;
+  legBVerified: boolean;
+  onConfirmMarketType: () => void;
   onStartOver: () => void;
   devTools?: React.ReactNode;
 }) {
@@ -632,6 +656,109 @@ function StepPanel({
                 </div>
               ) : null}
 
+              {step === 'market_type' ? (
+                <div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { id: 'single', label: 'Single', desc: 'One metric' },
+                      { id: 'ratio', label: 'Ratio', desc: 'Raw A / B' },
+                      { id: 'indexed', label: 'Indexed', desc: 'Base-100 A/B' },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onChangeMarketMode(opt.id)}
+                        className={[
+                          'rounded-xl border px-3 py-2 text-left transition-colors',
+                          marketMode === opt.id
+                            ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
+                            : 'border-white/8 bg-white/[0.02] hover:border-white/20',
+                        ].join(' ')}
+                      >
+                        <div className="text-[13px] font-medium text-white/90">{opt.label}</div>
+                        <div className="text-[10px] text-white/45">{opt.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {marketMode !== 'single' ? (
+                    <div className="mt-3 space-y-2.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                      <div className="rounded-lg border border-white/8 bg-white/[0.02] px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-white/40">Leg A · numerator</div>
+                        <div className="truncate text-[12px] text-white/80">{legASourceLabel || 'Primary source'}</div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] text-white/50">Leg B label · denominator</label>
+                        <input
+                          value={legBLabel}
+                          onChange={(e) => onChangeLegBLabel(e.target.value)}
+                          placeholder="e.g. BTC market cap"
+                          className="w-full rounded-lg border border-white/8 bg-black/40 px-3 py-2 text-[13px] text-white/90 placeholder:text-white/30 outline-none focus:border-emerald-500/40 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] text-white/50">Leg B source URL · denominator</label>
+                        <input
+                          type="url"
+                          value={legBUrl}
+                          onChange={(e) => onChangeLegBUrl(e.target.value)}
+                          placeholder="https://…"
+                          className="w-full rounded-lg border border-white/8 bg-black/40 px-3 py-2 text-[13px] text-white/90 placeholder:text-white/30 outline-none focus:border-emerald-500/40 transition-colors"
+                        />
+                      </div>
+                      <p className="text-[10px] text-white/40">
+                        {marketMode === 'indexed'
+                          ? 'Launches at 100. The baseline ratio A₀/B₀ is locked at creation and pinned to IPFS.'
+                          : 'Trades the raw A/B ratio. Both sources are pinned to an immutable IPFS manifest.'}
+                      </p>
+
+                      {/* Leg B validation status — mirrors the primary source verification. */}
+                      {isLegBValidating ? (
+                        <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                          <div className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                          <span className="text-[11px] text-white/50">Validating Leg B source…</span>
+                        </div>
+                      ) : legBVerified ? (
+                        <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                          <svg className="h-3 w-3 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          <span className="text-[11px] text-emerald-400/80">Leg B source verified</span>
+                        </div>
+                      ) : legBValidationError ? (
+                        <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                          <svg className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="8" x2="12" y2="12" />
+                            <line x1="12" y1="16" x2="12.01" y2="16" />
+                          </svg>
+                          <span className="text-[11px] text-amber-400/80">{legBValidationError}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-[11px] text-white/40">
+                      Tracks a single metric from your selected source.
+                    </p>
+                  )}
+
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={onConfirmMarketType}
+                      disabled={(marketMode !== 'single' && !legBUrl.trim()) || isLegBValidating}
+                      className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition-opacity disabled:opacity-50"
+                    >
+                      {isLegBValidating
+                        ? 'Validating…'
+                        : marketMode !== 'single' && !legBVerified
+                          ? 'Validate & continue'
+                          : 'Continue'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {step === 'complete' ? (
                 <div className="text-[12px] text-white/55">
                   Review your market configuration below. When ready, confirm to generate the market parameters.
@@ -660,6 +787,9 @@ function MarketDetailsReview({
   selectedSource,
   iconPreviewUrl,
   metricDefinition,
+  marketMode,
+  legBLabel,
+  legBUrl,
   onEdit,
   onStartOver,
   onCreateMarket,
@@ -676,6 +806,9 @@ function MarketDetailsReview({
     time_basis?: string;
     measurement_method?: string;
   } | null;
+  marketMode: 'single' | 'ratio' | 'indexed';
+  legBLabel: string;
+  legBUrl: string;
   onEdit: (step: CreationStep) => void;
   onStartOver: () => void;
   onCreateMarket: () => void;
@@ -965,6 +1098,36 @@ function MarketDetailsReview({
 
           <div className="mx-5 sm:mx-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
 
+          {/* Market type — full width row */}
+          <div className="p-5 sm:p-6">
+            <button
+              type="button"
+              onClick={() => onEdit('market_type')}
+              className="group w-full text-left"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[10px] font-medium text-white/30 uppercase tracking-[0.08em]">Market Type</div>
+                <span className="text-[10px] text-white/25 opacity-0 group-hover:opacity-100 transition-opacity">Edit</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                  marketMode === 'single'
+                    ? 'bg-white/[0.06] border border-white/[0.06] text-white/70'
+                    : 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-300/90'
+                }`}>
+                  {marketMode === 'single' ? 'Single metric' : marketMode === 'ratio' ? 'Ratio (A / B)' : 'Indexed (base-100)'}
+                </span>
+                {marketMode !== 'single' && (
+                  <span className="text-[11px] text-white/40 truncate">
+                    vs {legBLabel?.trim() || legBUrl || 'Leg B'}
+                  </span>
+                )}
+              </div>
+            </button>
+          </div>
+
+          <div className="mx-5 sm:mx-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+
           {/* Bond section — full width footer */}
           <div className="p-5 sm:p-6">
             <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between mb-3">
@@ -1031,12 +1194,20 @@ export interface InteractiveMarketCreationProps {
   initialState?: CreationStateSnapshot | null;
   onStateChange?: (snap: CreationStateSnapshot) => void;
   onDeploySuccess?: (symbol: string, marketId: string) => void;
+  /**
+   * Design-only preview. When true, "Create market" simulates the deployment
+   * pipeline overlay for visual review and does NOT hit the network, sign,
+   * pin to IPFS, deploy on-chain, or navigate away. Everything else in the
+   * flow behaves identically so you can walk the whole UX.
+   */
+  previewMode?: boolean;
 }
 
 export function InteractiveMarketCreation({
   initialState,
   onStateChange,
   onDeploySuccess,
+  previewMode = false,
 }: InteractiveMarketCreationProps = {}) {
   const devToolsEnabled = true; // TEMP: forced on for production testing
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
@@ -1057,6 +1228,51 @@ export function InteractiveMarketCreation({
     sourceDomain: 'fred.stlouisfed.org',
     sourceLabel: 'FRED',
     sourceAuthority: 'Federal Reserve Bank of St. Louis (FRED)',
+  } as const;
+
+  // Two-leg (ratio / indexed) review presets so you can jump straight to the
+  // market-type panel + review without running discovery.
+  const DEV_TWO_LEG_PRESETS = {
+    ratio: {
+      mode: 'ratio' as const,
+      marketName: 'ETH-BTC-MARKET-CAP-RATIO',
+      marketDescription:
+        'Raw ratio of Ethereum market cap (A) to Bitcoin market cap (B). Rises when ETH gains value relative to BTC. Settles as A/B.',
+      startPrice: '0.42',
+      iconUrl: 'https://images.unsplash.com/photo-1622790698141-94e30457ef12?w=256&h=256&fit=crop&auto=format',
+      legA: {
+        label: 'ETH market cap',
+        url: 'https://api.coingecko.com/api/v3/coins/ethereum',
+        domain: 'coingecko.com',
+        authority: 'CoinGecko',
+      },
+      legB: {
+        label: 'BTC market cap',
+        url: 'https://api.coingecko.com/api/v3/coins/bitcoin',
+        domain: 'coingecko.com',
+        authority: 'CoinGecko',
+      },
+    },
+    indexed: {
+      mode: 'indexed' as const,
+      marketName: 'CHINA-INDIA-POPULATION-INDEX',
+      marketDescription:
+        'Base-100 index of China population (A) relative to India population (B). Launches at 100; above 100 means China is gaining relative to India. Settles as 100 × (A/B) / V0.',
+      startPrice: '100',
+      iconUrl: 'https://images.unsplash.com/photo-1508062878650-88b52897f298?w=256&h=256&fit=crop&auto=format',
+      legA: {
+        label: 'China population',
+        url: 'https://www.worldometers.info/world-population/china-population/',
+        domain: 'worldometers.info',
+        authority: 'Worldometers',
+      },
+      legB: {
+        label: 'India population',
+        url: 'https://www.worldometers.info/world-population/india-population/',
+        domain: 'worldometers.info',
+        authority: 'Worldometers',
+      },
+    },
   } as const;
 
   const DEV_SELECT_SOURCE_PRESET: NonNullable<MetricDiscoveryResponse['sources']> = {
@@ -1226,6 +1442,17 @@ export function InteractiveMarketCreation({
   const [selectedSource, setSelectedSource] = React.useState<MetricSourceOption | null>(initialState?.selectedSource ?? null);
   const [marketName, setMarketName] = React.useState(initialState?.marketName ?? '');
   const [marketDescription, setMarketDescription] = React.useState(initialState?.marketDescription ?? '');
+  // Market metric-tracking mode. 'single' = one metric (default), 'ratio' = raw A/B,
+  // 'indexed' = base-100 index of A/B. Leg A is the primary selected source; leg B
+  // is the second source below.
+  const [marketMode, setMarketMode] = React.useState<'single' | 'ratio' | 'indexed'>(((initialState as any)?.marketMode) ?? 'single');
+  const [legBUrl, setLegBUrl] = React.useState<string>(((initialState as any)?.legBUrl) ?? '');
+  const [legBLabel, setLegBLabel] = React.useState<string>(((initialState as any)?.legBLabel) ?? '');
+  const [isMarketTypeConfirmed, setIsMarketTypeConfirmed] = React.useState<boolean>(((initialState as any)?.isMarketTypeConfirmed) ?? false);
+  // Leg B (denominator) validation — mirrors the primary/Leg A source validation.
+  const [isLegBValidating, setIsLegBValidating] = React.useState(false);
+  const [legBValidationError, setLegBValidationError] = React.useState<string | null>(null);
+  const [legBValidationResult, setLegBValidationResult] = React.useState<MetricResolutionResponse | null>(((initialState as any)?.legBValidationResult) ?? null);
   const [isNameConfirmed, setIsNameConfirmed] = React.useState(initialState?.isNameConfirmed ?? false);
   const [isDescriptionConfirmed, setIsDescriptionConfirmed] = React.useState(initialState?.isDescriptionConfirmed ?? false);
   const [iconFile, setIconFile] = React.useState<File | null>(null);
@@ -1592,12 +1819,23 @@ export function InteractiveMarketCreation({
         return;
       }
 
+      if (step === 'market_type') {
+        setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(true);
+        setIsDescriptionConfirmed(true);
+        devEnsureSelectedSource();
+        setIsIconConfirmed(true);
+        setIsMarketTypeConfirmed(false);
+        return;
+      }
+
       if (step === 'complete') {
         setIsNameConfirmed(true);
         setSimilarMarketsAcknowledged(true);
         setIsDescriptionConfirmed(true);
         devEnsureSelectedSource();
         setIsIconConfirmed(true);
+        setIsMarketTypeConfirmed(true);
         setIsValidationAccepted(true);
       }
     },
@@ -1631,6 +1869,12 @@ export function InteractiveMarketCreation({
     setIconPreviewUrl(DEV_REVIEW_PRESET.iconUrl);
     setIsIconConfirmed(true);
     setIsValidationAccepted(true);
+
+    // Single-metric market type (confirmed so review renders).
+    setMarketMode('single');
+    setLegBLabel('');
+    setLegBUrl('');
+    setIsMarketTypeConfirmed(true);
 
     // Preselect a source immediately
     const devSource: MetricSourceOption = {
@@ -1744,6 +1988,135 @@ export function InteractiveMarketCreation({
     setDevToolsOpen(false);
   }, [DEV_REVIEW_PRESET]);
 
+  const devApplyTwoLegPreset = React.useCallback((which: 'ratio' | 'indexed') => {
+    const preset = DEV_TWO_LEG_PRESETS[which];
+    setErrorMessage(null);
+    setDiscoveryState('success');
+
+    // Core form fields (confirmed so review renders).
+    setMarketName(preset.marketName);
+    setMarketDescription(preset.marketDescription);
+    setNameTouched(true);
+    setDescriptionTouched(true);
+    setIsNameConfirmed(true);
+    setSimilarMarketsAcknowledged(true);
+    setIsDescriptionConfirmed(true);
+
+    // Icon.
+    setIconFile(null);
+    setIconPreviewUrl(preset.iconUrl);
+    setIsIconConfirmed(true);
+    setIsValidationAccepted(true);
+
+    // Leg A becomes the primary selected source.
+    const legASource: MetricSourceOption = {
+      id: `dev-${which}-legA`,
+      icon: (
+        <div className="relative h-7 w-7">
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/15 text-white/90">
+            <span className="text-[14px] font-semibold">A</span>
+          </div>
+        </div>
+      ),
+      label: preset.legA.label,
+      sublabel: preset.legA.domain,
+      url: preset.legA.url,
+      confidence: 0.9,
+      authority: preset.legA.authority,
+      badge: 'Dev',
+      iconBg: 'bg-gradient-to-br from-indigo-400 to-purple-500',
+      tooltip: {
+        name: preset.legA.label,
+        description: `Leg A (numerator) source for the ${which} market.`,
+        reliability: 'High (Dev preset)',
+        updateFrequency: 'Live',
+        dataType: 'API',
+      },
+    };
+    setSelectedSource(legASource);
+    setSourcesFetchState('success');
+
+    // Market type + leg B (pre-verified for the dev preset).
+    setMarketMode(preset.mode);
+    setLegBLabel(preset.legB.label);
+    setLegBUrl(preset.legB.url);
+    setIsLegBValidating(false);
+    setLegBValidationError(null);
+    setLegBValidationResult({
+      status: 'completed',
+      processingTime: '0ms',
+      cached: true,
+      data: {
+        metric: preset.legB.label,
+        value: preset.startPrice,
+        unit: which === 'indexed' ? 'index' : 'ratio',
+        as_of: new Date().toISOString(),
+        confidence: 0.9,
+        asset_price_suggestion: preset.startPrice,
+        reasoning: `Dev preset Leg B (denominator) value for ${preset.legB.label}.`,
+        sources: [{ url: preset.legB.url, screenshot_url: '', quote: preset.legB.label, match_score: 0.9 }],
+      },
+      performance: { totalTime: 0, breakdown: { cacheCheck: '0ms', scraping: '0ms', processing: '0ms', aiAnalysis: '0ms' } },
+    } as MetricResolutionResponse);
+    setIsMarketTypeConfirmed(true);
+
+    // Align discoveryResult so downstream UI/assistant context is coherent.
+    setDiscoveryResult((prev) => {
+      const base: MetricDiscoveryResponse = prev?.metric_definition
+        ? prev
+        : {
+            measurable: true,
+            metric_definition: {
+              metric_name: preset.marketName,
+              unit: which === 'indexed' ? 'index (base 100)' : 'ratio',
+              scope: 'Global',
+              time_basis: 'Continuous',
+              measurement_method: `${preset.legA.label} (A) divided by ${preset.legB.label} (B).`,
+            },
+            search_query: null,
+            sources: null,
+            rejection_reason: null,
+            search_results: [],
+            processing_time_ms: 0,
+          };
+      return { ...base, measurable: true, rejection_reason: null };
+    });
+
+    // Pre-fill a derived start price so the review + preview create can proceed.
+    const nowIso = new Date().toISOString();
+    setValidationResult({
+      status: 'completed',
+      processingTime: '0ms',
+      cached: true,
+      data: {
+        metric: preset.marketName,
+        value: preset.startPrice,
+        unit: which === 'indexed' ? 'index' : 'ratio',
+        as_of: nowIso,
+        confidence: 0.9,
+        asset_price_suggestion: preset.startPrice,
+        reasoning: `Dev preset derived value for a ${which} market (${preset.legA.label} / ${preset.legB.label}).`,
+        sources: [
+          { url: preset.legA.url, screenshot_url: '', quote: preset.legA.label, match_score: 0.9 },
+          { url: preset.legB.url, screenshot_url: '', quote: preset.legB.label, match_score: 0.9 },
+        ],
+      },
+      performance: {
+        totalTime: 0,
+        breakdown: { cacheCheck: '0ms', scraping: '0ms', processing: '0ms', aiAnalysis: '0ms' },
+      },
+    });
+
+    // Jump to review.
+    if (stepTimerRef.current) {
+      window.clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+    setIsStepAnimating(false);
+    setVisibleStep('complete');
+    setDevToolsOpen(false);
+  }, [DEV_TWO_LEG_PRESETS]);
+
   const devQuickFillTestMarket = React.useCallback(() => {
     const code = randomDevCode4();
     setErrorMessage(null);
@@ -1765,6 +2138,11 @@ export function InteractiveMarketCreation({
     setIsIconConfirmed(true);
     setIsValidationAccepted(true);
 
+    setMarketMode('single');
+    setLegBLabel('');
+    setLegBUrl('');
+    setIsMarketTypeConfirmed(true);
+
     const devSource: MetricSourceOption = {
       id: `dev-quick-${code.toLowerCase()}`,
       icon: (
@@ -1781,6 +2159,13 @@ export function InteractiveMarketCreation({
       authority: 'Development',
       badge: 'Dev',
       iconBg: 'bg-gradient-to-br from-indigo-400 to-cyan-500',
+      tooltip: {
+        name: 'Dev Source',
+        description: 'Development quick-fill source.',
+        reliability: 'Development',
+        updateFrequency: 'N/A',
+        dataType: 'Web',
+      },
     };
     setSelectedSource(devSource);
     setSourcesFetchState('success');
@@ -1870,6 +2255,11 @@ export function InteractiveMarketCreation({
     setIsIconConfirmed(true);
     setIsValidationAccepted(true);
 
+    setMarketMode('single');
+    setLegBLabel('');
+    setLegBUrl('');
+    setIsMarketTypeConfirmed(true);
+
     const devSource: MetricSourceOption = {
       id: `dev-speedrun-${code.toLowerCase()}`,
       icon: (
@@ -1886,6 +2276,13 @@ export function InteractiveMarketCreation({
       authority: sourceUrl === 'https://example.com' ? 'Development' : hostname,
       badge: 'Speed Run',
       iconBg: 'bg-gradient-to-br from-amber-400 to-orange-500',
+      tooltip: {
+        name: sourceUrl === 'https://example.com' ? 'Dev Source' : hostname,
+        description: 'Development speed-run source.',
+        reliability: 'Development',
+        updateFrequency: 'N/A',
+        dataType: 'Web',
+      },
     };
     setSelectedSource(devSource);
     setSourcesFetchState('success');
@@ -2022,6 +2419,14 @@ export function InteractiveMarketCreation({
     setIsIconConfirmed(false);
     setNameTouched(false);
     setDescriptionTouched(false);
+    // Reset market type state for a fresh run
+    setMarketMode('single');
+    setLegBLabel('');
+    setLegBUrl('');
+    setIsMarketTypeConfirmed(false);
+    setIsLegBValidating(false);
+    setLegBValidationError(null);
+    setLegBValidationResult(null);
     // Reset assistant state
     setAssistantMessage('');
     setAssistantIsLoading(false);
@@ -2056,6 +2461,14 @@ export function InteractiveMarketCreation({
     setNameTouched(false);
     setDescriptionTouched(false);
     setMetricClarification('');
+    // Reset market type state
+    setMarketMode('single');
+    setLegBLabel('');
+    setLegBUrl('');
+    setIsMarketTypeConfirmed(false);
+    setIsLegBValidating(false);
+    setLegBValidationError(null);
+    setLegBValidationResult(null);
     // Reset validation state
     setIsValidating(false);
     setValidationResult(null);
@@ -2244,6 +2657,38 @@ export function InteractiveMarketCreation({
   const handleCreateMarket = React.useCallback(async () => {
     if (!selectedSource || !marketName.trim()) return;
 
+    // ── Design-only preview: simulate the deployment pipeline overlay without
+    //    any network / signing / IPFS / on-chain deploy / navigation. ────────
+    if (previewMode) {
+      const symbol = toConciseMarketIdentifier(marketName, { maxLen: 28 });
+      maxOverlayIndexRef.current = 0;
+      setIsCreatingMarket(true);
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      try {
+        deploymentOverlay.open({
+          title: 'Deployment Pipeline (Preview)',
+          subtitle: `Design preview for ${marketMode} market — no market will be created`,
+          messages: pipelineMessages,
+          splashMs: 900,
+          meta: { pipelineId: 'preview', marketSymbol: symbol },
+        });
+        await sleep(900);
+        for (let i = 0; i < pipelineMessages.length; i++) {
+          updateOverlayIndex(i);
+          if (i === Math.floor(pipelineMessages.length / 2)) {
+            deploymentOverlay.update({ transactionSigned: true });
+          }
+          await sleep(420);
+        }
+        deploymentOverlay.update({ transactionSigned: true });
+        await sleep(700);
+        deploymentOverlay.fadeOutAndClose(450);
+      } finally {
+        setIsCreatingMarket(false);
+      }
+      return;
+    }
+
     maxOverlayIndexRef.current = 0;
     setIsCreatingMarket(true);
     let unsubscribePusher: (() => void) | null = null;
@@ -2276,7 +2721,99 @@ export function InteractiveMarketCreation({
       const workerUrl = getMetricAIWorkerBaseUrl();
       const hasValidatedPrice = startPrice !== '1';
 
-      if (!hasValidatedPrice && workerUrl && metricUrl) {
+      // ── Ratio / indexed markets: resolve both legs, derive the value, and pin
+      //    an immutable IPFS manifest. metricUrl becomes ipfs://<cid>. ─────────
+      const isTwoLeg = marketMode !== 'single';
+      let effectiveMetricUrl = metricUrl;
+      let marketTypeConfig: Record<string, unknown> | undefined;
+      let manifestCid: string | undefined;
+
+      if (isTwoLeg) {
+        const legBUrlTrim = legBUrl.trim();
+        if (!legBUrlTrim) {
+          throw new Error('A second source (leg B) is required for ratio/indexed markets.');
+        }
+        const legAName = selectedSource.label || `${symbol} (A)`;
+        const legBName = legBLabel.trim() || 'Leg B';
+        const legs = [
+          { role: 'numerator' as const, name: legAName, urls: [metricUrl], description: selectedSource.authority },
+          { role: 'denominator' as const, name: legBName, urls: [legBUrlTrim] },
+        ];
+
+        const ai = await runMetricAIWithPolling(
+          {
+            metric: symbol,
+            urls: [metricUrl, legBUrlTrim],
+            related_market_identifier: symbol,
+            context: 'create',
+            metric_type: marketMode,
+            base_value: marketMode === 'indexed' ? 100 : undefined,
+            legs,
+          },
+          { intervalMs: 2500, timeoutMs: 150000 },
+        );
+        if (!ai || !ai.derived) {
+          throw new Error('Could not resolve both metric legs. Check the two sources and try again.');
+        }
+
+        const derivedValue = ai.derived.value;
+        const baseline = ai.baseline || ai.derived.baseline || undefined;
+        startPrice = marketMode === 'indexed' ? '100' : String(derivedValue);
+
+        const legConfig = {
+          numerator: { label: legAName, sources: [metricUrl], valueAtCreation: ai.derived.leg_values?.A },
+          denominator: { label: legBName, sources: [legBUrlTrim], valueAtCreation: ai.derived.leg_values?.B },
+        };
+        const baselineConfig =
+          marketMode === 'indexed' && baseline
+            ? { A0: baseline.A0, B0: baseline.B0, V0: baseline.V0, asOf: baseline.asOf || new Date().toISOString() }
+            : undefined;
+
+        const manifestRes = await fetch('/api/markets/manifest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            marketType: marketMode,
+            baseValue: marketMode === 'indexed' ? 100 : undefined,
+            legs: legConfig,
+            baseline: baselineConfig,
+            startPrice: {
+              value: toFixedPoint6(Number(startPrice)),
+              humanValue: Number(startPrice),
+              derivation:
+                marketMode === 'indexed'
+                  ? 'Indexed market launches at 100; baseline ratio V0 = A0/B0 locked at creation.'
+                  : `Raw ratio A/B = ${derivedValue} at creation.`,
+              aiResolution: {
+                confidence: ai.confidence,
+                reasoning: ai.reasoning,
+                sources: Array.isArray(ai.sources) ? ai.sources.map((s: any) => s?.url).filter(Boolean) : [],
+              },
+            },
+            settlementRule:
+              marketMode === 'indexed'
+                ? 'settlement = round(100 * (A/B) / V0, 6dp) using the two leg sources at the settlement as-of time'
+                : 'settlement = round(A/B, 6dp) using the two leg sources at the settlement as-of time',
+          }),
+        });
+        const mani = await manifestRes.json();
+        if (!manifestRes.ok || !mani?.cid) {
+          throw new Error(mani?.error || 'Failed to pin market manifest to IPFS.');
+        }
+        manifestCid = mani.cid;
+        effectiveMetricUrl = mani.uri;
+        marketTypeConfig = buildMarketTypeConfig({
+          marketType: marketMode,
+          baseValue: marketMode === 'indexed' ? 100 : undefined,
+          manifestCid: mani.cid,
+          manifestUrl: mani.uri,
+          manifestSha256: mani.sha256,
+          legs: legConfig,
+          baseline: baselineConfig,
+        }) as Record<string, unknown>;
+      }
+
+      if (!isTwoLeg && !hasValidatedPrice && workerUrl && metricUrl) {
         try {
           const ai = await runMetricAIWithPolling(
             {
@@ -2375,7 +2912,7 @@ export function InteractiveMarketCreation({
       // Create market on chain
       const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
         symbol,
-        metricUrl,
+        metricUrl: effectiveMetricUrl,
         startPrice: String(startPrice),
         dataSource,
         tags,
@@ -2388,6 +2925,9 @@ export function InteractiveMarketCreation({
         speedRunConfig,
         pipelineId,
         prefetchedCut: resolvedPrefetch,
+        marketType: marketMode,
+        marketTypeConfig,
+        manifestCid,
         onProgress: ({ step, status }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
@@ -2550,6 +3090,8 @@ export function InteractiveMarketCreation({
     updateOverlayIndex,
     gaslessEnabled,
     onDeploySuccess,
+    previewMode,
+    marketMode,
   ]);
 
   React.useEffect(() => {
@@ -2793,11 +3335,12 @@ export function InteractiveMarketCreation({
       if (!isDescriptionConfirmed) return 'description' as const;
       if (!selectedSource) return 'select_source' as const;
       if (!isIconConfirmed) return 'icon' as const;
+      if (!isMarketTypeConfirmed) return 'market_type' as const;
       return 'complete' as const;
     })();
     console.log('[DesiredStep]', step, { isNameConfirmed, similarMarketsCount: similarMarkets.length, similarMarketsAcknowledged, similarMarketsLoading, isDescriptionConfirmed });
     return step;
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged]);
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isMarketTypeConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged]);
 
   // Pre-fetch diamond cut data as soon as the user passes step 1
   React.useEffect(() => {
@@ -2981,11 +3524,15 @@ export function InteractiveMarketCreation({
     }
 
     if (!isIconConfirmed) {
-      return `Last step — upload an icon image for your market.`;
+      return `Next, upload an icon image for your market.`;
+    }
+
+    if (!isMarketTypeConfirmed) {
+      return `Almost there choose how this market tracks its metric: a single metric, or the relationship between two (a raw ratio, or a base-100 index).`;
     }
 
     return `Perfect. Your market setup is ready.`;
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged, sourcesFetchState, visibleStep]);
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isMarketTypeConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged, sourcesFetchState, visibleStep]);
 
   return (
     <div
@@ -3053,6 +3600,85 @@ export function InteractiveMarketCreation({
                     setIsIconConfirmed(true);
                   } catch (e: any) {
                     setErrorMessage(e?.message || 'Icon upload failed');
+                  }
+                }}
+                marketMode={marketMode}
+                onChangeMarketMode={(m) => {
+                  setMarketMode(m);
+                  // Switching type invalidates any prior Leg B validation.
+                  setLegBValidationError(null);
+                  setLegBValidationResult(null);
+                  setIsLegBValidating(false);
+                  if (m === 'single') {
+                    setLegBLabel('');
+                    setLegBUrl('');
+                  }
+                }}
+                legBLabel={legBLabel}
+                onChangeLegBLabel={setLegBLabel}
+                legBUrl={legBUrl}
+                onChangeLegBUrl={(v) => {
+                  setLegBUrl(v);
+                  // Changing the URL requires re-validating Leg B.
+                  setLegBValidationError(null);
+                  setLegBValidationResult(null);
+                }}
+                legASourceLabel={selectedSource?.label || selectedSource?.url || ''}
+                isLegBValidating={isLegBValidating}
+                legBValidationError={legBValidationError}
+                legBVerified={Boolean(legBValidationResult) && !legBValidationError}
+                onConfirmMarketType={async () => {
+                  if (marketMode === 'single') {
+                    setIsMarketTypeConfirmed(true);
+                    return;
+                  }
+                  const url = legBUrl.trim();
+                  if (!url) return;
+                  // Already validated this exact URL — proceed without re-running.
+                  if (legBValidationResult && !legBValidationError) {
+                    setIsMarketTypeConfirmed(true);
+                    return;
+                  }
+                  // Validate Leg B the same way the primary (Leg A) source is validated:
+                  // resolve the URL via the metric-ai worker and require a positive numeric value.
+                  setIsLegBValidating(true);
+                  setLegBValidationError(null);
+                  try {
+                    const legBMetric = legBLabel.trim() || 'Leg B metric';
+                    const started = Date.now();
+                    const ai = await runMetricAIWithPolling(
+                      {
+                        metric: legBMetric,
+                        description: `Resolve current value for ${legBMetric}`,
+                        urls: [url],
+                        context: 'create',
+                      },
+                      { intervalMs: 2000, timeoutMs: 60000 }
+                    );
+                    if (!ai) throw new Error('AI analysis did not return a result in time');
+
+                    const processingMs = Math.max(0, Date.now() - started);
+                    const result = toModalResponse(ai, legBMetric, processingMs);
+                    const numericCandidate = String(
+                      result?.data?.asset_price_suggestion || result?.data?.value || ''
+                    )
+                      .trim()
+                      .replace(/,/g, '')
+                      .replace(/[^0-9.]/g, '');
+                    const parsed = Number(numericCandidate);
+                    if (!numericCandidate || !Number.isFinite(parsed) || parsed <= 0) {
+                      throw new Error(
+                        "We couldn’t extract a numeric value from the Leg B URL. Paste a different public endpoint that exposes a numeric metric."
+                      );
+                    }
+
+                    setLegBValidationResult(result);
+                    setIsLegBValidating(false);
+                    setIsMarketTypeConfirmed(true);
+                  } catch (error) {
+                    console.error('Leg B Validation Error:', error);
+                    setLegBValidationError(error instanceof Error ? error.message : 'Leg B validation failed');
+                    setIsLegBValidating(false);
                   }
                 }}
                 onStartOver={handleReset}
@@ -3672,6 +4298,9 @@ export function InteractiveMarketCreation({
           selectedSource={selectedSource}
           iconPreviewUrl={iconPreviewUrl}
           metricDefinition={discoveryResult.metric_definition}
+          marketMode={marketMode}
+          legBLabel={legBLabel}
+          legBUrl={legBUrl}
           onEdit={(step) => {
             if (step === 'name') {
               setIsNameConfirmed(false);
@@ -3687,6 +4316,8 @@ export function InteractiveMarketCreation({
               setSelectedSource(null);
             } else if (step === 'icon') {
               setIsIconConfirmed(false);
+            } else if (step === 'market_type') {
+              setIsMarketTypeConfirmed(false);
             } else if (step === 'clarify_metric') {
               setIsNameConfirmed(false);
               setSimilarMarketsAcknowledged(false);
@@ -3770,6 +4401,21 @@ export function InteractiveMarketCreation({
       />
 
       {/* Fixed dev tools panel — portalled to body to escape ancestor transforms / overflow clips */}
+      {devToolsEnabled && previewMode && !devToolsOpen && createPortal(
+        <button
+          type="button"
+          onClick={() => setDevToolsOpen(true)}
+          className="fixed bottom-4 left-4 z-[9999] flex items-center gap-2 rounded-full border border-purple-500/30 bg-[#111] px-3.5 py-2 text-[12px] font-medium text-purple-200 shadow-2xl shadow-purple-900/20 ring-1 ring-black hover:bg-[#191919] transition-colors"
+          aria-label="Open dev tools"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+          </svg>
+          Dev tools
+        </button>,
+        document.body,
+      )}
+
       {devToolsEnabled && devToolsOpen && createPortal(
         <div className="fixed bottom-4 left-4 z-[9999] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-purple-500/25 bg-[#111] shadow-2xl shadow-purple-900/20 ring-1 ring-black">
           <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
@@ -3840,7 +4486,7 @@ export function InteractiveMarketCreation({
 
             <div className="px-1.5 pt-2 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Jump to step</div>
             <div className="flex flex-wrap gap-1 px-1">
-              {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
+              {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'market_type', 'complete'] as CreationStep[]).map(
                 (s) => (
                   <button
                     key={s}
@@ -3874,6 +4520,20 @@ export function InteractiveMarketCreation({
                 className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-white/60 hover:bg-white/[0.07] hover:text-white/80 transition-colors"
               >
                 10 sources
+              </button>
+              <button
+                type="button"
+                onClick={() => devApplyTwoLegPreset('ratio')}
+                className="rounded-md border border-emerald-500/25 bg-emerald-500/[0.06] px-2 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/[0.12] transition-colors"
+              >
+                Ratio preset (ETH/BTC)
+              </button>
+              <button
+                type="button"
+                onClick={() => devApplyTwoLegPreset('indexed')}
+                className="rounded-md border border-emerald-500/25 bg-emerald-500/[0.06] px-2 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/[0.12] transition-colors"
+              >
+                Indexed preset (China/India)
               </button>
             </div>
 

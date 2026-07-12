@@ -23,6 +23,14 @@ const pipelineLog = (phase: string, data: Record<string, unknown>) => {
   console.log(`${PIPELINE_PREFIX} [${ts}] ${phase}`, JSON.stringify(data, null, 2));
 };
 
+// A single leg of a two-leg (ratio/indexed) market.
+const LegInputSchema = z.object({
+  role: z.enum(['numerator', 'denominator']),
+  name: z.string().min(1).max(500),
+  urls: z.array(z.string().url()).min(1).max(10),
+  description: z.string().optional(),
+});
+
 const InputSchema = z.object({
   metric: z.string().min(1).max(500),
   description: z.string().optional(),
@@ -34,6 +42,22 @@ const InputSchema = z.object({
   callbackUrl: z.string().url().optional(),
   callbackSecret: z.string().optional(),
   callbackMeta: z.record(z.unknown()).optional(),
+
+  // ── Two-leg (ratio / indexed) market support ──────────────────────────────
+  // When `legs` is present with exactly two entries, the job resolves each leg
+  // independently (reusing the single-metric pipeline) and returns a derived
+  // value: ratio = A/B, indexed = base_value * (A/B) / baseline.V0.
+  metric_type: z.enum(['single', 'ratio', 'indexed']).optional(),
+  base_value: z.number().positive().optional(),
+  baseline: z
+    .object({
+      A0: z.number(),
+      B0: z.number(),
+      V0: z.number(),
+      asOf: z.string().optional(),
+    })
+    .optional(),
+  legs: z.array(LegInputSchema).length(2).optional(),
 });
 
 const MAX_RAW_HTML_CHARS = Number(process.env.METRIC_AI_MAX_RAW_HTML_CHARS || 250_000);
@@ -387,6 +411,220 @@ async function deliverCallback(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TWO-LEG (RATIO / INDEXED) MARKET SUPPORT
+// Resolves each leg via the single-metric pipeline, then derives A/B or a
+// base-100 index. Keeps the single-metric path completely unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+const TWOLEG_PREFIX = '🧮 [TWO-LEG]';
+const DEFAULT_BASE_VALUE = 100;
+
+/** Loosely parse a numeric value out of an AI leg result string. */
+function parseNumericLoose(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  const cleaned = String(raw ?? '').replace(/,/g, '').replace(/[^0-9.+\-eE]/g, '');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+interface LegResolution {
+  role: 'numerator' | 'denominator';
+  name: string;
+  value: number;
+  confidence: number;
+  sources: any[];
+  raw: Record<string, unknown>;
+}
+
+/**
+ * Resolve one leg by calling this worker's own single-metric endpoint and
+ * polling for completion. We deliberately omit related_market_id so leg
+ * sub-jobs do NOT post their own series to ClickHouse (the coordinator posts
+ * the derived series instead).
+ */
+async function resolveLegViaSelf(
+  selfOrigin: string,
+  leg: { role: 'numerator' | 'denominator'; name: string; urls: string[]; description?: string },
+  context: 'create' | 'settlement' | undefined,
+  opts: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<LegResolution> {
+  const endpoint = `${selfOrigin}/api/metric-ai`;
+  const startRes = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      metric: leg.name,
+      description: leg.description,
+      urls: leg.urls,
+      context: context || 'create',
+    }),
+  });
+  if (!startRes.ok) {
+    const t = await startRes.text().catch(() => '');
+    throw new Error(`leg "${leg.role}" start failed (${startRes.status}): ${t.slice(0, 200)}`);
+  }
+  const { jobId } = (await startRes.json()) as { jobId?: string };
+  if (!jobId) throw new Error(`leg "${leg.role}" start returned no jobId`);
+
+  const intervalMs = opts.intervalMs ?? 2500;
+  const timeoutMs = opts.timeoutMs ?? 100_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const pollRes = await fetch(`${endpoint}?jobId=${encodeURIComponent(jobId)}`);
+    if (!pollRes.ok) continue;
+    const job = (await pollRes.json()) as { status?: string; result?: Record<string, unknown> };
+    if (job.status === 'completed' && job.result) {
+      const r = job.result;
+      const value = parseNumericLoose(r.asset_price_suggestion) ?? parseNumericLoose(r.value);
+      if (value == null || value <= 0) {
+        throw new Error(`leg "${leg.role}" resolved to non-positive value`);
+      }
+      return {
+        role: leg.role,
+        name: leg.name,
+        value,
+        confidence: typeof r.confidence === 'number' ? r.confidence : 0,
+        sources: Array.isArray(r.sources) ? r.sources : [],
+        raw: r,
+      };
+    }
+    if (job.status === 'failed') {
+      throw new Error(`leg "${leg.role}" resolution failed`);
+    }
+  }
+  throw new Error(`leg "${leg.role}" resolution timed out`);
+}
+
+/** Compute the derived value for a two-leg market. */
+function computeDerivedWorker(
+  marketType: 'ratio' | 'indexed',
+  a: number,
+  b: number,
+  baseValue: number,
+  baselineV0: number | undefined,
+): { value: number; formula: string } {
+  if (b === 0) throw new Error('denominator (B) is zero');
+  if (marketType === 'ratio') {
+    return { value: a / b, formula: 'A/B' };
+  }
+  if (!baselineV0 || baselineV0 === 0) throw new Error('indexed market missing baseline V0');
+  return { value: (baseValue * (a / b)) / baselineV0, formula: `${baseValue} * (A/B) / V0` };
+}
+
+/**
+ * Handle a two-leg ratio/indexed job end-to-end: resolve both legs, compute the
+ * derived value (establishing the indexed baseline at creation when absent),
+ * write the combined result, and post the derived series to ClickHouse.
+ */
+async function handleTwoLegJob(params: {
+  selfOrigin: string;
+  jobId: string;
+  input: z.infer<typeof InputSchema>;
+  supabase: ReturnType<typeof getSupabase>;
+  started: number;
+}): Promise<void> {
+  const { selfOrigin, jobId, input, supabase, started } = params;
+  const legsInput = input.legs!;
+  const marketType = (input.metric_type === 'indexed' ? 'indexed' : 'ratio') as 'ratio' | 'indexed';
+  const baseValue = input.base_value ?? DEFAULT_BASE_VALUE;
+  const marketId = input.related_market_id || null;
+
+  console.log(`${TWOLEG_PREFIX} ▶ Resolving two legs`, { jobId, marketType, baseValue });
+
+  const numeratorLeg = legsInput.find((l) => l.role === 'numerator') || legsInput[0];
+  const denominatorLeg = legsInput.find((l) => l.role === 'denominator') || legsInput[1];
+
+  // Resolve both legs in parallel.
+  const [legA, legB] = await Promise.all([
+    resolveLegViaSelf(selfOrigin, numeratorLeg, input.context),
+    resolveLegViaSelf(selfOrigin, denominatorLeg, input.context),
+  ]);
+
+  // Establish or reuse the indexed baseline.
+  let baseline = input.baseline;
+  if (marketType === 'indexed' && (!baseline || !baseline.V0)) {
+    const V0 = legA.value / legB.value;
+    baseline = { A0: legA.value, B0: legB.value, V0, asOf: new Date().toISOString() };
+    console.log(`${TWOLEG_PREFIX} 🔒 Established indexed baseline`, { jobId, V0 });
+  }
+
+  const derived = computeDerivedWorker(marketType, legA.value, legB.value, baseValue, baseline?.V0);
+
+  const resolution: Record<string, unknown> = {
+    metric: input.metric,
+    metric_type: marketType,
+    value: String(derived.value),
+    unit: marketType === 'indexed' ? 'index' : 'ratio',
+    as_of: new Date().toISOString(),
+    confidence: Math.min(legA.confidence || 0, legB.confidence || 0),
+    asset_price_suggestion: String(derived.value),
+    reasoning: `Derived ${marketType} value ${derived.formula} = ${derived.value} from ` +
+      `A=${legA.value} (${legA.name}), B=${legB.value} (${legB.name}).`,
+    sources: [...legA.sources, ...legB.sources],
+    legs: [
+      { role: 'numerator', name: legA.name, value: legA.value, confidence: legA.confidence, sources: legA.sources },
+      { role: 'denominator', name: legB.name, value: legB.value, confidence: legB.confidence, sources: legB.sources },
+    ],
+    derived: {
+      formula: derived.formula,
+      value: derived.value,
+      base_value: baseValue,
+      leg_values: { A: legA.value, B: legB.value },
+      baseline: baseline || null,
+    },
+    baseline: baseline || null,
+    pipeline: { path: 'TWO_LEG', marketType },
+  };
+
+  const totalProcessingTimeMs = Date.now() - started;
+
+  // Persist a resolution row (best-effort) and complete the job.
+  try {
+    await supabase.from('metric_oracle_resolutions').insert([{
+      metric_name: input.metric,
+      metric_description: input.description || null,
+      source_urls: [...numeratorLeg.urls, ...denominatorLeg.urls],
+      resolution_data: resolution,
+      confidence_score: resolution.confidence as number,
+      processing_time_ms: totalProcessingTimeMs,
+      user_address: input.user_address || null,
+      related_market_id: marketId,
+    }]);
+  } catch (e: any) {
+    console.warn(`${TWOLEG_PREFIX} resolution insert failed (non-fatal)`, e?.message);
+  }
+
+  await supabase.from('metric_oracle_jobs').update({
+    status: 'completed',
+    progress: 100,
+    result: resolution,
+    processing_time_ms: totalProcessingTimeMs,
+    completed_at: new Date(),
+  }).eq('job_id', jobId);
+
+  // Post the DERIVED value under the market's primary metric name, plus each
+  // leg as a companion series for optional overlays.
+  await postToClickHouse({
+    marketId,
+    metricName: input.metric,
+    value: derived.value,
+    confidence: resolution.confidence as number,
+    source: 'full_pipeline',
+    jobId,
+  });
+  await Promise.all([
+    postToClickHouse({ marketId, metricName: `${input.metric}::A`, value: legA.value, confidence: legA.confidence, source: 'full_pipeline', jobId }),
+    postToClickHouse({ marketId, metricName: `${input.metric}::B`, value: legB.value, confidence: legB.confidence, source: 'full_pipeline', jobId }),
+  ]);
+
+  await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', resolution);
+
+  console.log(`${TWOLEG_PREFIX} ✅ Two-leg job completed`, { jobId, derived: derived.value, formula: derived.formula });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CLICKHOUSE METRIC SERIES - Post extracted values for charting
 // ═══════════════════════════════════════════════════════════════════════════
 const CLICKHOUSE_PREFIX = '📊 [CLICKHOUSE]';
@@ -533,6 +771,7 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabase();
     const jobId = `metric_ai_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const selfOrigin = new URL(req.url).origin;
 
     console.log('[Metric-AI] 📝 Creating job in database', { jobId });
 
@@ -565,6 +804,25 @@ export async function POST(req: NextRequest) {
         marketId: input.related_market_id || 'none',
         isNewMetric: input.context === 'create',
       });
+
+      // ── Two-leg (ratio / indexed) markets short-circuit the single-metric
+      //    pipeline: resolve each leg independently and derive A/B or an index.
+      if (input.legs && input.legs.length === 2) {
+        try {
+          await handleTwoLegJob({ selfOrigin, jobId, input, supabase, started });
+        } catch (err: any) {
+          const totalProcessingTimeMs = Date.now() - started;
+          console.error(`${TWOLEG_PREFIX} ❌ Two-leg job failed`, { jobId, error: err?.message });
+          await supabase.from('metric_oracle_jobs').update({
+            status: 'failed',
+            progress: 100,
+            error: err?.message || 'two-leg resolution failed',
+            completed_at: new Date(),
+          }).eq('job_id', jobId);
+          await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'failed', null, err?.message || 'two-leg resolution failed');
+        }
+        return;
+      }
       
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

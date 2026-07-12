@@ -57,6 +57,15 @@ export function getMetricAIWorkerBaseUrl(): string {
   return localDefault;
 }
 
+export type MetricAILeg = {
+  role: 'numerator' | 'denominator';
+  name: string;
+  urls: string[];
+  description?: string;
+};
+
+export type MetricAIBaseline = { A0: number; B0: number; V0: number; asOf?: string };
+
 type JobStartInput = {
   metric: string;
   urls: string[];
@@ -65,6 +74,11 @@ type JobStartInput = {
   related_market_identifier?: string;
   user_address?: string;
   context?: 'create' | 'settlement';
+  // Two-leg (ratio / indexed) market fields
+  metric_type?: 'single' | 'ratio' | 'indexed';
+  base_value?: number;
+  baseline?: MetricAIBaseline;
+  legs?: MetricAILeg[];
 };
 
 export type MetricAIResult = {
@@ -72,10 +86,20 @@ export type MetricAIResult = {
   as_of?: string;
   value?: string;
   metric?: string;
+  metric_type?: 'single' | 'ratio' | 'indexed';
   sources?: Array<any>;
   reasoning?: string;
   confidence?: number;
   asset_price_suggestion?: string;
+  legs?: Array<{ role: string; name: string; value: number; confidence: number; sources: any[] }>;
+  derived?: {
+    formula: string;
+    value: number;
+    base_value?: number;
+    leg_values?: { A: number; B: number };
+    baseline?: MetricAIBaseline | null;
+  };
+  baseline?: MetricAIBaseline | null;
 };
 
 export async function startMetricAIJob(input: JobStartInput): Promise<{ jobId: string }> {

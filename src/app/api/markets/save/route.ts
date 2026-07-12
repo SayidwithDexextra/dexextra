@@ -232,6 +232,14 @@ export async function POST(req: Request) {
       speedRunConfig: rawSpeedRunConfig,
     } = body || {};
 
+    const marketType = ['single', 'ratio', 'indexed'].includes(String(body?.marketType))
+      ? String(body.marketType)
+      : 'single';
+    const marketTypeConfig = (body?.marketTypeConfig && typeof body.marketTypeConfig === 'object')
+      ? body.marketTypeConfig as Record<string, unknown>
+      : null;
+    const manifestCid = typeof body?.manifestCid === 'string' && body.manifestCid ? String(body.manifestCid) : null;
+
     const speedRunConfig = (rawSpeedRunConfig && typeof rawSpeedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(rawSpeedRunConfig.rolloverLeadSeconds) || 0,
@@ -365,6 +373,7 @@ export async function POST(req: Request) {
           lifecycle_duration_seconds: speedRunConfig.lifecycleDurationSeconds,
         } : {}),
       } : {}),
+      ...(marketTypeConfig ? marketTypeConfig : {}),
     };
 
     // Seed ai_source_locator in the dedicated column (auto-discovery enriches this later)
@@ -422,6 +431,8 @@ export async function POST(req: Request) {
         },
         ai_source_locator: aiSourceLocatorSeed,
         metric_resolution_id: resolutionId,
+        market_type: marketType,
+        manifest_cid: manifestCid,
         chain_id: chainId,
         network: networkStr.length > 50 ? networkStr.slice(0, 50) : networkStr,
         creator_wallet_address: creatorWalletAddress ? String(creatorWalletAddress).toLowerCase() : null,
@@ -475,6 +486,8 @@ export async function POST(req: Request) {
           ...(archivedWaybackUrl ? { wayback_snapshot: { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: (initialOrder as any)?.metricUrl || null } } : {}),
         },
         metric_resolution_id: resolutionId,
+        market_type: marketType,
+        ...(manifestCid ? { manifest_cid: manifestCid } : {}),
       };
       if (aiSourceLocatorSeed) updatePayload.ai_source_locator = aiSourceLocatorSeed;
       const { error: updErr } = await supabase.from('markets').update(updatePayload).eq('id', marketIdUuid);

@@ -6,6 +6,22 @@ export interface MetricSource {
   match_score: number;
 }
 
+export interface MetricLegResolution {
+  role: 'numerator' | 'denominator';
+  name: string;
+  value: number;
+  confidence: number;
+  sources: MetricSource[];
+}
+
+export interface MetricDerived {
+  formula: string;
+  value: number;
+  base_value?: number;
+  leg_values?: { A: number; B: number };
+  baseline?: { A0: number; B0: number; V0: number; asOf?: string } | null;
+}
+
 export interface MetricResolutionData {
   metric: string;
   value: string;
@@ -15,6 +31,11 @@ export interface MetricResolutionData {
   asset_price_suggestion: string;
   reasoning: string;
   sources: MetricSource[];
+  // Two-leg (ratio / indexed) markets
+  metric_type?: 'single' | 'ratio' | 'indexed';
+  legs?: MetricLegResolution[];
+  derived?: MetricDerived;
+  derived_value?: number;
 }
 
 export interface MetricResolutionState {

@@ -191,6 +191,12 @@ export async function createMarketOnChain(params: {
   draftId?: string;
   resumeState?: PipelineResumeState;
   prefetchedCut?: PrefetchedCutData;
+  // Ratio / indexed market metadata. For these types `metricUrl` is already an
+  // ipfs://<CID> pointer to the pinned manifest; this config is persisted into
+  // markets.market_type + market_config at finalize.
+  marketType?: 'single' | 'ratio' | 'indexed';
+  marketTypeConfig?: Record<string, unknown>;
+  manifestCid?: string;
 }) {
   if (typeof window === 'undefined' || !(window as any).ethereum) {
     throw new Error('No injected wallet found. Please install MetaMask or a compatible wallet.');
@@ -215,6 +221,9 @@ export async function createMarketOnChain(params: {
     draftId: paramDraftId,
     resumeState,
     prefetchedCut,
+    marketType = 'single',
+    marketTypeConfig,
+    manifestCid,
   } = params;
 
   const draftId = resumeState?.draftId || paramDraftId || '';
@@ -596,6 +605,9 @@ export async function createMarketOnChain(params: {
         speedRunConfig: speedRunConfig || undefined,
         pipelineId: pipelineId || null,
         draftId: deployResult.draftId || draftId || null,
+        marketType,
+        marketTypeConfig: marketTypeConfig || null,
+        manifestCid: manifestCid || null,
       }),
     });
     if (!finalizeRes.ok) {

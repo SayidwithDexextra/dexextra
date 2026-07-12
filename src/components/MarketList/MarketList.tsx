@@ -504,6 +504,11 @@ function MarketRow({ market, rank }: { market: ExploreMarket; rank: number }) {
               <div className="flex items-center gap-1 min-w-0">
                 <span className="text-[13px] font-medium text-t-fg truncate group-hover:text-[#a78bfa] transition-colors duration-200" style={{ fontFamily: 'var(--font-space-grotesk, sans-serif)' }}>{market.symbol}</span>
                 <span className="text-[10px] text-t-dot flex-shrink-0 font-mono">/USDC</span>
+                {(market.market_type === 'ratio' || market.market_type === 'indexed') && (
+                  <span className="flex-shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+                    {market.market_type === 'indexed' ? 'Index' : 'Ratio'}
+                  </span>
+                )}
               </div>
               <span className="text-[10px] text-t-fg-muted truncate block">{market.name}</span>
             </div>

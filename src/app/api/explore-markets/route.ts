@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
          is_active, market_status, total_volume, total_trades,
          open_interest_long, open_interest_short,
          settlement_date, trading_end_date, created_at, deployed_at,
-         creator_wallet_address`,
+         creator_wallet_address, market_type`,
         { count: 'exact' }
       )
       .eq('is_active', true);
@@ -166,6 +166,7 @@ export async function GET(req: NextRequest) {
         chain_id: m.chain_id,
         network: m.network,
         market_status: m.market_status,
+        market_type: m.market_type || 'single',
         created_at: m.created_at,
         deployed_at: m.deployed_at,
         settlement_date: m.settlement_date || null,

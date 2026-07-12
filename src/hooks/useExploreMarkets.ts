@@ -17,6 +17,7 @@ export interface ExploreMarket {
   chain_id: number;
   network: string;
   market_status: string;
+  market_type?: 'single' | 'ratio' | 'indexed';
   created_at: string;
   deployed_at: string | null;
   settlement_date: string | null;

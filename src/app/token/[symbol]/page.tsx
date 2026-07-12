@@ -31,6 +31,7 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 import { MetricLivePrice } from '@/components';
 import { useActivePairByMarketId, useSeriesMarkets, useSeriesSlug } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
+import MarketTypeProvenance from '@/components/MarketTypeProvenance/MarketTypeProvenance';
 import { SettlementTransitionOverlay } from '@/components/SettlementTransitionOverlay';
 import { useMarketSettlementRealtime } from '@/hooks/useMarketSettlementRealtime';
 import { useSettlementContractEvents } from '@/hooks/useSettlementContractEvents';
@@ -2044,6 +2045,15 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   Back
                 </button>
               </div>
+              <MarketTypeProvenance
+                marketType={(md.market as any)?.market_type || (md.market as any)?.market_config?.market_type}
+                baseValue={(md.market as any)?.market_config?.base_value}
+                legs={(md.market as any)?.market_config?.legs}
+                baseline={(md.market as any)?.market_config?.baseline}
+                manifestUrl={(md.market as any)?.market_config?.manifest_url}
+                manifestCid={(md.market as any)?.manifest_cid || (md.market as any)?.market_config?.manifest_cid}
+                className="mb-3"
+              />
               <SettlementInterface
                 market={md.market as any}
                 onChallengeSaved={async () => {

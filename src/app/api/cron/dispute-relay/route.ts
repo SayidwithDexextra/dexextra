@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getRelayerConfig, relayTick, type RelayTickResult, type ChallengerEvidence, type EscalationMeta } from '@/lib/dispute-relayer';
+import { readMarketTypeConfig, isTwoLegMarket } from '@/lib/ipfs/marketTypeConfig';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -75,11 +76,22 @@ export async function POST(request: Request) {
       const chalEvidence = marketConfig.challenger_evidence as ChallengerEvidence | undefined;
 
       const settlementDate = marketConfig.expires_at || marketConfig.settlement_requested_at;
+      const typeCfg = readMarketTypeConfig({ market_type: (market as any).market_type, market_config: marketConfig });
       const meta: EscalationMeta = {
         marketName: market.symbol || `Market ${market.market_address.slice(0, 10)}…`,
         settlementDate: settlementDate
           ? new Date(settlementDate as string).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
           : new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+        ...(isTwoLegMarket(typeCfg.market_type)
+          ? {
+              marketType: typeCfg.market_type,
+              formula: typeCfg.market_type === 'indexed' ? '100 * (A/B) / V0' : 'A/B',
+              legSources: {
+                numerator: typeCfg.legs?.numerator?.sources,
+                denominator: typeCfg.legs?.denominator?.sources,
+              },
+            }
+          : {}),
       };
 
       const result = await relayTick(

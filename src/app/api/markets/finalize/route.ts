@@ -92,6 +92,13 @@ export async function POST(req: Request) {
     let iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
     let bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
+    const marketType = ['single', 'ratio', 'indexed'].includes(String(body?.marketType))
+      ? String(body.marketType)
+      : 'single';
+    const marketTypeConfig = (body?.marketTypeConfig && typeof body.marketTypeConfig === 'object')
+      ? body.marketTypeConfig as Record<string, unknown>
+      : null;
+    const manifestCid = typeof body?.manifestCid === 'string' && body.manifestCid ? String(body.manifestCid) : null;
     const isRollover = body?.isRollover === true;
     const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
     const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
@@ -296,10 +303,13 @@ export async function POST(req: Request) {
             lifecycle_duration_seconds: speedRunConfig.lifecycleDurationSeconds,
           } : {}),
         } : {}),
+        ...(marketTypeConfig ? marketTypeConfig : {}),
       },
       ai_source_locator: aiSourceLocator
         ? { url: aiSourceLocator.url || aiSourceLocator.primary_source_url || '', selectors: [], discovered_at: new Date().toISOString(), last_successful_at: null, success_count: 0, failure_count: 0, version: 1 }
         : null,
+      market_type: marketType,
+      manifest_cid: manifestCid,
       chain_id: chainId,
       network: networkNameRaw.length > 50 ? networkNameRaw.slice(0, 50) : networkNameRaw,
       creator_wallet_address: creatorWalletAddress,

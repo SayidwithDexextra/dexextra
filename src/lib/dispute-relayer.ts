@@ -96,6 +96,10 @@ export interface PendingChallenge {
 export interface EscalationMeta {
   marketName: string;
   settlementDate: string;
+  /** Ratio/indexed markets: how the settlement value is derived, for DVM voters. */
+  marketType?: 'single' | 'ratio' | 'indexed';
+  formula?: string;
+  legSources?: { numerator?: string[]; denominator?: string[] };
 }
 
 /**
@@ -156,6 +160,9 @@ export async function escalateToUMA(
     challengedPrice: challenge.alternativePrice,
     proposerEvidenceUrl: challenge.evidenceUrl,
     challengerEvidence,
+    marketType: meta.marketType,
+    formula: meta.formula,
+    legSources: meta.legSources,
   });
   const claimBytes = ethers.toUtf8Bytes(claimText);
 
@@ -262,12 +269,25 @@ function buildUMAClaim(params: {
   challengedPrice: bigint;
   proposerEvidenceUrl: string;
   challengerEvidence?: ChallengerEvidence;
+  marketType?: 'single' | 'ratio' | 'indexed';
+  formula?: string;
+  legSources?: { numerator?: string[]; denominator?: string[] };
 }): string {
   const proposed = formatPrice6dec(params.proposedPrice);
   const challenged = formatPrice6dec(params.challengedPrice);
 
   let claim = `The settlement price for ${params.marketName} as of ${params.settlementDate} is ${proposed}.`;
   claim += ` Challenger proposes ${challenged}.`;
+
+  // For ratio/indexed markets, spell out the derivation so DVM voters can
+  // reproduce the number from the two leg sources.
+  if (params.marketType === 'ratio' || params.marketType === 'indexed') {
+    if (params.formula) claim += ` This is a ${params.marketType} market: value = ${params.formula}.`;
+    const numSrc = params.legSources?.numerator?.[0];
+    const denSrc = params.legSources?.denominator?.[0];
+    if (numSrc) claim += ` Leg A (numerator) source: ${numSrc}.`;
+    if (denSrc) claim += ` Leg B (denominator) source: ${denSrc}.`;
+  }
 
   const evidence: string[] = [];
   if (params.proposerEvidenceUrl) {
