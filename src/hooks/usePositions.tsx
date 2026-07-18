@@ -7,6 +7,8 @@ import { ensureHyperliquidWallet, getReadProvider } from '@/lib/network';
 import { getActiveEthereumProvider } from '@/lib/wallet';
 import type { Address } from 'viem';
 import { useMarket } from './useMarket';
+import { overlayCache } from '@/lib/overlay/clientCache';
+import { isOverlayEnabledClient } from '@/lib/overlay/config';
 
 // Debug logging for portfolio positions (dev on by default; enable in prod via NEXT_PUBLIC_DEBUG_PORTFOLIO=true)
 const DEBUG_PORTFOLIO_LOGS = process.env.NEXT_PUBLIC_DEBUG_PORTFOLIO === 'true' || process.env.NODE_ENV !== 'production';
@@ -37,6 +39,30 @@ interface PositionState {
   positions: Position[];
   isLoading: boolean;
   error: string | null;
+}
+
+/**
+ * Liquidity overlay (visual-only): when enabled, override each position's mark
+ * price with the overlaid mark and recompute P&L so the numbers stay internally
+ * consistent with what the user sees elsewhere. Never touches on-chain state.
+ */
+function applyOverlayToPositions(positions: Position[]): Position[] {
+  if (!isOverlayEnabledClient()) return positions;
+  return positions.map((p) => {
+    const overlayPrice =
+      overlayCache.getMarkPrice(p.symbol) ?? overlayCache.getMarkPrice(p.marketId);
+    if (overlayPrice == null || !(overlayPrice > 0)) return p;
+    const signedSize = p.side === 'LONG' ? p.size : -p.size;
+    const pnl = (overlayPrice - p.entryPrice) * signedSize;
+    const notional = p.entryPrice * p.size;
+    const pnlPercent = notional > 0 ? (pnl / notional) * 100 : 0;
+    return {
+      ...p,
+      markPrice: overlayPrice,
+      pnl: parseFloat(pnl.toFixed(2)),
+      pnlPercent: parseFloat(pnlPercent.toFixed(2)),
+    };
+  });
 }
 
 // Normalize a Position struct (named fields or tuple array) like the script
@@ -93,6 +119,25 @@ export function usePositions(
       unmountedRef.current = true;
     };
   }, []);
+
+  // Liquidity overlay: keep P&L in sync with the overlaid mark price as it ticks.
+  // Recomputes from existing position fields only (no on-chain refetch).
+  useEffect(() => {
+    if (!isOverlayEnabledClient()) return;
+    const unsub = overlayCache.subscribe(() => {
+      setState((prev) => {
+        if (!prev.positions.length) return prev;
+        return { ...prev, positions: applyOverlayToPositions(prev.positions) };
+      });
+    });
+    return unsub;
+  }, []);
+
+  // Register batch-interest so the overlay cache fetches prices for held markets.
+  useEffect(() => {
+    if (!isOverlayEnabledClient()) return;
+    for (const p of state.positions) overlayCache.registerInterest(p.symbol);
+  }, [state.positions]);
 
   // Clear stale positions immediately when the wallet address changes so
   // consumers (PortfolioSnapshotContext) never see data from a previous wallet.
@@ -525,7 +570,7 @@ export function usePositions(
             if (retried.length > 0) {
               pfLog('Retry successful with positions', { count: retried.length });
               setState({
-                positions: retried,
+                positions: applyOverlayToPositions(retried),
                 isLoading: false,
                 error: null
               });
@@ -537,7 +582,7 @@ export function usePositions(
         try { console.log('[ALTKN][usePositions] processedPositions:', processedPositions); } catch {}
         pfLog('Processed positions computed', { count: processedPositions.length });
         setState({
-          positions: processedPositions,
+          positions: applyOverlayToPositions(processedPositions),
           isLoading: false,
           error: processedPositions.length === 0 ? 'No open positions found' : null
         });

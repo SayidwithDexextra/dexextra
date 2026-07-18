@@ -472,6 +472,9 @@ export default function DebugSearchPage() {
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/lightweight-orderbook">
               Lightweight OrderBook
             </a>
+            <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/coming-soon">
+              Coming Soon Overlay
+            </a>
             <a className="rounded border border-[#10B981] bg-[#141414] px-3 py-2 text-[#10B981] hover:bg-[#10B981]/10" href="/analytics">
               Analytics Dashboard
             </a>

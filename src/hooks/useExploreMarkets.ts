@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useReducer } from 'react';
+import { overlayCache } from '@/lib/overlay/clientCache';
+import { isOverlayEnabledClient } from '@/lib/overlay/config';
 
 export type SortMode = 'trending' | 'volume' | 'gainers' | 'losers' | 'newest';
 
@@ -115,5 +117,32 @@ export function useExploreMarkets(options: UseExploreMarketsOptions = {}) {
     return () => clearInterval(id);
   }, [autoRefresh, refreshInterval, fetchMarkets]);
 
-  return { data, isLoading, error, refetch: fetchMarkets };
+  // ---- Liquidity overlay (platform-wide, visual-only) ----
+  // Register interest so the overlay cache batch-fetches these markets' prices,
+  // subscribe to updates, and expose the overlaid mark price when enabled.
+  const [overlayVersion, bumpOverlay] = useReducer((x: number) => x + 1, 0);
+
+  useEffect(() => {
+    if (!isOverlayEnabledClient()) return;
+    for (const m of data) overlayCache.registerInterest(m.symbol || m.market_identifier);
+  }, [data]);
+
+  useEffect(() => {
+    if (!isOverlayEnabledClient()) return;
+    return overlayCache.subscribe(bumpOverlay);
+  }, []);
+
+  const displayData = useMemo(() => {
+    if (!isOverlayEnabledClient()) return data;
+    return data.map((m) => {
+      const overlayPrice =
+        overlayCache.getMarkPrice(m.symbol) ??
+        overlayCache.getMarkPrice(m.market_identifier) ??
+        overlayCache.getMarkPrice(m.market_id);
+      return overlayPrice != null && overlayPrice > 0 ? { ...m, mark_price: overlayPrice } : m;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, overlayVersion]);
+
+  return { data: displayData, isLoading, error, refetch: fetchMarkets };
 }

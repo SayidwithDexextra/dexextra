@@ -657,6 +657,31 @@ body::-webkit-scrollbar {
   }
 }
 
+/* ─── Early Access hero — floating orbit of in-market asset icons ─── */
+@keyframes dexOrbitFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-9px); }
+}
+.dex-orbit-tile {
+  animation: dexOrbitFloat 6.5s ease-in-out infinite;
+  will-change: transform;
+}
+/* Soft focal glow behind the central logo — the "radiating" effect. */
+@keyframes dexHeroGlowPulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.06); }
+}
+.dex-hero-glow {
+  animation: dexHeroGlowPulse 6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dex-orbit-tile,
+  .dex-hero-glow {
+    animation: none;
+  }
+}
+
 /* ─── Slot-machine digit roller ─── */
 
 .dex-slot-wrapper {

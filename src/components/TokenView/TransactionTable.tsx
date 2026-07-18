@@ -5,6 +5,7 @@ import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useOrderBook as useLightweightOrderBookDirect } from '@/stores/lightweightOrderBookStore';
 import { useAllTrades, type OnChainTrade } from '@/hooks/useAllTrades';
+import { mergeOverlayTrades } from '@/lib/overlay/merge';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
@@ -501,6 +502,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     }
   }, [view, allTradesHook, md.orderBookAddress]);
 
+  // Fold synthetic liquidity-overlay trades into the on-chain tape (visual-only).
+  const displayTrades = useMemo(
+    () => mergeOverlayTrades(allTradesHook.trades, (md as any).overlay) as OnChainTrade[],
+    [allTradesHook.trades, (md as any).overlay]
+  );
+
   const isLoading = view === 'orderbook' ? obLoading : allTradesHook.isLoading;
   const error = view === 'orderbook' 
     ? (obError ? ((obError as any).message || String(obError)) : null)
@@ -968,14 +975,14 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                   Retry
                 </button>
               </div>
-            ) : allTradesHook.trades.length === 0 && !allTradesHook.isLoading ? (
+            ) : displayTrades.length === 0 && !allTradesHook.isLoading ? (
               <div className="text-[10px] text-t-fg text-center py-4">
                 No trades recorded on chain
               </div>
             ) : (
               <div className="space-y-0">
                 {(() => {
-                  const allTrades = allTradesHook.trades;
+                  const allTrades = displayTrades;
                   const maxAmount = allTrades.reduce((max, t) => Math.max(max, t.amount), 0) || 1;
                   return allTrades.map((trade, index) => {
                     const fillPercentage = (trade.amount / maxAmount) * 100;
@@ -1032,9 +1039,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                   >
                     Load more trades...
                   </button>
-                ) : allTradesHook.trades.length > 0 ? (
+                ) : displayTrades.length > 0 ? (
                   <div className="text-[9px] text-t-fg-muted text-center py-2">
-                    All {allTradesHook.trades.length} trades loaded
+                    All {displayTrades.length} trades loaded
                   </div>
                 ) : null}
               </div>

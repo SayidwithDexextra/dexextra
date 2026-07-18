@@ -8,6 +8,9 @@ import { useOrderBook } from '@/hooks/useOrderBook';
 import { usePositions as usePositionsHook } from '@/hooks/usePositions';
 import { useLightweightOrderBookStore, useOrderBook as useLightweightOB } from '@/stores/lightweightOrderBookStore';
 import { usePusher } from '@/lib/pusher-client';
+import { useMarketOverlay } from '@/hooks/useMarketOverlay';
+import { mergeOverlayDepth } from '@/lib/overlay/merge';
+import type { MarketOverlayPayload } from '@/lib/overlay/types';
 import type { Market } from '@/hooks/useMarkets';
 import type { TokenData } from '@/types/token';
 import type { Address } from 'viem';
@@ -55,6 +58,10 @@ interface MarketDataContextValue {
 
   // Resolved display price
   resolvedPrice: number;
+
+  // Liquidity overlay (visual-only synthetic mark price + book + trades).
+  // Null/disabled payload when the overlay feature flag is off.
+  overlay: MarketOverlayPayload | null;
 
   // OrderBook actions/state (single shared instance)
   orderBookState: ReturnType<typeof useOrderBook>[0];
@@ -116,6 +123,39 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   const lightweightStore = useLightweightOrderBookStore();
   const lightweightOrderBook = useLightweightOB(symbol);
 
+  // ============================================================================
+  // LIQUIDITY OVERLAY (visual-only): synthetic mark price + book + trade tape.
+  // Server-shared source of truth; disabled/no-op unless the feature flag is on.
+  // ============================================================================
+  // Best REAL price known so far (no overlay), used to anchor the instant
+  // provisional overlay so synthetic liquidity appears with no gap on nav.
+  //
+  // IMPORTANT: prefer the DB ticker mark price because that is the exact source
+  // the SERVER seeds the overlay from — matching it makes the provisional book
+  // reconcile seamlessly. We deliberately do NOT fall back to `tick_size`: it is
+  // not a price (e.g. silver's tick is ~$0.10 while its price is ~$76), so
+  // anchoring to it produced wildly oversized liquidity that then snapped. When
+  // no trusted price is known yet we return 0 and simply wait (a brief gap is
+  // far better than showing a wrong-scale book).
+  const realPriceHint = useMemo(() => {
+    if (dbTicker?.mark_price && dbTicker.mark_price > 0) return dbTicker.mark_price / 1_000_000;
+    // OB mark of exactly 1.0 is the empty-book default sentinel — ignore it.
+    if (obLive?.markPrice && obLive.markPrice > 0 && obLive.markPrice !== 1) return obLive.markPrice;
+    if (obLive?.bestBid && obLive?.bestAsk && obLive.bestBid > 0 && obLive.bestAsk > 0) {
+      return (obLive.bestBid + obLive.bestAsk) / 2;
+    }
+    if (obLive?.lastTradePrice && obLive.lastTradePrice > 0) return obLive.lastTradePrice;
+    return 0;
+  }, [dbTicker?.mark_price, obLive?.markPrice, obLive?.bestBid, obLive?.bestAsk, obLive?.lastTradePrice]);
+
+  const overlay = useMarketOverlay(symbol, (market as any)?.id || null, realPriceHint);
+  const overlayEnabled = !!overlay?.enabled;
+  const overlayRef = useRef<MarketOverlayPayload | null>(null);
+  overlayRef.current = overlayEnabled ? overlay : null;
+  // Most recent REAL depth snapshot from polling, kept so overlay-only ticks
+  // can re-merge without waiting for the next poll.
+  const lastRealDepthRef = useRef<{ bidPrices: number[]; bidAmounts: number[]; askPrices: number[]; askAmounts: number[] } | null>(null);
+
   // Function to record that we placed a trade as taker (called from TradingPanel via context)
   // This is a simple no-op now since we rely on polling for updates
   const recordTakerTrade = useCallback((_price: number) => {
@@ -169,15 +209,21 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           return;
         }
 
-        const bidCount = depth.bidPrices?.length || 0;
-        const askCount = depth.askPrices?.length || 0;
+        // Remember the latest REAL depth so overlay-only ticks can re-merge.
+        lastRealDepthRef.current = depth;
+
+        // Fold in synthetic overlay liquidity (visual-only; no-op when disabled).
+        const merged = mergeOverlayDepth(depth, overlayRef.current);
+
+        const bidCount = merged.bidPrices?.length || 0;
+        const askCount = merged.askPrices?.length || 0;
 
         if (bidCount === 0 && askCount === 0) {
           return;
         }
 
         // Update the zustand store - this triggers React re-renders
-        lightweightStore.initializeOrderBook(symbol, depth, 'api');
+        lightweightStore.initializeOrderBook(symbol, merged, 'api');
         lastPollTimeRef.current = now;
 
         // Log every 5th poll to avoid spam
@@ -304,9 +350,20 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     if (hash === lastDepthHashRef.current) return;
     lastDepthHashRef.current = hash;
 
-    lightweightStore.initializeOrderBook(symbol, depth, 'api');
+    lastRealDepthRef.current = depth;
+    const merged = mergeOverlayDepth(depth, overlayRef.current);
+    lightweightStore.initializeOrderBook(symbol, merged, 'api');
     console.log(`[MarketDataContext] Lightweight order book initialized for ${symbol}`);
   }, [symbol, obLive?.depth, lightweightStore]);
+
+  // Re-merge overlay liquidity into the book when the overlay ticks, using the
+  // last known REAL depth as the base. Visual-only; no-op when disabled.
+  useEffect(() => {
+    if (!overlayEnabled) return;
+    const merged = mergeOverlayDepth(lastRealDepthRef.current, overlay);
+    if ((merged.bidPrices?.length || 0) === 0 && (merged.askPrices?.length || 0) === 0) return;
+    lightweightStore.initializeOrderBook(symbol, merged, 'api');
+  }, [symbol, overlayEnabled, overlay?.updatedAt, lightweightStore]);
 
   // Optimistic trade simulation wrapper
   const simulateOptimisticTrade = useMemo(() => {
@@ -322,6 +379,10 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
 
   // Compute resolved price (same strategy used in page previously)
   const resolvedPrice = useMemo(() => {
+    // 0) Liquidity overlay takes priority when enabled (visual-only)
+    if (overlayEnabled && overlay?.markPrice && overlay.markPrice > 0) {
+      return overlay.markPrice;
+    }
     // 1) Use real-time OB spread mid if available
     if (obLive?.bestBid && obLive?.bestAsk && obLive.bestBid > 0 && obLive.bestAsk > 0) {
       return (obLive.bestBid + obLive.bestAsk) / 2;
@@ -340,13 +401,19 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       return (market as any).tick_size as number;
     }
     return 1.0;
-  }, [obLive?.bestBid, obLive?.bestAsk, obLive?.lastTradePrice, dbTicker?.mark_price, (market as any)?.tick_size]);
+  }, [overlayEnabled, overlay?.markPrice, obLive?.bestBid, obLive?.bestAsk, obLive?.lastTradePrice, dbTicker?.mark_price, (market as any)?.tick_size]);
+
+  // Effective mark price: overlay wins when enabled, else on-chain, else resolved.
+  const effectiveMarkPrice = useMemo(() => {
+    if (overlayEnabled && overlay?.markPrice && overlay.markPrice > 0) return overlay.markPrice;
+    return (obLive?.markPrice ?? resolvedPrice) || 0;
+  }, [overlayEnabled, overlay?.markPrice, obLive?.markPrice, resolvedPrice]);
 
   // Compose token data
   const tokenData: TokenData | null = useMemo(() => {
     if (!market) return null;
     const name = (market as any)?.metric_id || symbol;
-    const finalPrice = (obLive?.markPrice ?? resolvedPrice) || 1;
+    const finalPrice = effectiveMarkPrice || 1;
     const volume24h = obLive?.volume24h || (market as any)?.total_volume || 0;
     const priceChange24hAbs = obLive?.priceChange24h || 0;
     const priceChangePct = finalPrice > 0 ? (priceChange24hAbs / finalPrice) * 100 : 0;
@@ -363,12 +430,12 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       description: (market as any)?.description,
       created_at: (market as any)?.created_at
     };
-  }, [symbol, market, obLive?.markPrice, resolvedPrice, obLive?.volume24h, obLive?.priceChange24h]);
+  }, [symbol, market, effectiveMarkPrice, obLive?.volume24h, obLive?.priceChange24h]);
 
   // Dispatch marketMarkPrice for LightweightChart
   const lastPriceRef = useRef<number | null>(null);
   useEffect(() => {
-    const price = Number((obLive?.markPrice ?? resolvedPrice) || 0);
+    const price = Number(effectiveMarkPrice || 0);
     if (!Number.isFinite(price)) return;
     if (lastPriceRef.current === price) return;
     lastPriceRef.current = price;
@@ -377,7 +444,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       const evt = new CustomEvent('marketMarkPrice', { detail });
       if (typeof window !== 'undefined') window.dispatchEvent(evt);
     } catch {}
-  }, [symbol, obLive?.markPrice, resolvedPrice]);
+  }, [symbol, effectiveMarkPrice]);
 
   const isLoading = isLoadingMarket || obLoading;
   const error = (marketError as any) || (obError as any) || null;
@@ -402,7 +469,9 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     orderBookAddress: (obLive as any)?.orderBookAddress ?? null,
     bestBid: obLive?.bestBid ?? null,
     bestAsk: obLive?.bestAsk ?? null,
-    markPrice: obLive?.markPrice ?? null,
+    markPrice: (overlayEnabled && overlay?.markPrice && overlay.markPrice > 0)
+      ? overlay.markPrice
+      : (obLive?.markPrice ?? null),
     lastTradePrice: obLive?.lastTradePrice ?? null,
     volume24h: obLive?.volume24h ?? null,
     totalTrades: obLive?.totalTrades ?? null,
@@ -414,6 +483,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
 
     tokenData,
     resolvedPrice,
+    overlay: overlayEnabled ? overlay : null,
 
     orderBookState,
     orderBookActions,

@@ -7,6 +7,7 @@ import { makeGetStartedWalkthrough } from '@/walkthroughs/getStarted';
 import { tokenPageWalkthrough } from '@/walkthroughs/tokenPage';
 import { useWallet } from '@/hooks/useWallet';
 import WalkthroughStartPrompt from './WalkthroughStartPrompt';
+import { MVP_ACK_EVENT, isMvpNoticeAcknowledged } from '@/components/EarlyAccessWarningModal';
 
 const HOME_TOUR_ID = 'home';
 const TOKEN_TOUR_ID = 'token';
@@ -50,8 +51,24 @@ export default function WalkthroughAutoStart() {
 
   const [pendingTour, setPendingTour] = useState<PendingTour | null>(null);
 
+  // The MVP notice owns the screen on landing. The product tour must never
+  // coexist with it, so we gate all auto-prompting behind acknowledgment and
+  // only unblock once the visitor clicks "I understand, continue".
+  const [mvpAcknowledged, setMvpAcknowledged] = useState(false);
+
   const isConnected = walletData.isConnected;
   const isDisabledByRegion = walkthrough.isDisabledByRegion;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (isMvpNoticeAcknowledged()) {
+      setMvpAcknowledged(true);
+      return;
+    }
+    const onAck = () => setMvpAcknowledged(true);
+    window.addEventListener(MVP_ACK_EVENT, onAck);
+    return () => window.removeEventListener(MVP_ACK_EVENT, onAck);
+  }, []);
 
   // If the user becomes geo-restricted while the prompt is showing, hide
   // the prompt — the geo-block modal owns the screen at that point.
@@ -78,6 +95,11 @@ export default function WalkthroughAutoStart() {
     // tour timer entirely so we don't queue an overlay that races the
     // restriction modal.
     if (isDisabledByRegion) return;
+
+    // The MVP notice is shown on top and must be dismissed first. Bail before
+    // touching `attemptedRef` so the effect re-runs and schedules the tour the
+    // moment acknowledgment flips true.
+    if (!mvpAcknowledged) return;
 
     const isHome = pathname === '/';
     const isTokenPage = pathname.startsWith('/token/') && pathname !== '/token';
@@ -132,7 +154,7 @@ export default function WalkthroughAutoStart() {
     }, PROMPT_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [pathname, isConnected, isDisabledByRegion]);
+  }, [pathname, isConnected, isDisabledByRegion, mvpAcknowledged]);
 
   const handleAccept = useCallback(() => {
     if (!pendingTour) return;

@@ -142,6 +142,12 @@ export default function Header() {
   const { isRestricted: isGeoRestricted } = useGeoRestriction()
   const isTokenPage = pathname?.startsWith('/token/')
   const collapsedNavbarWidth = isTokenPage ? 52 : 60
+  // On the Early Access landing page the header should melt into the hero's
+  // black background instead of showing the chrome surface + divider.
+  const isEarlyAccess = pathname === '/early-access'
+  const headerBg = isEarlyAccess ? '#000000' : 'var(--t-chrome)'
+  const headerBorderColor = isEarlyAccess ? 'transparent' : 'var(--t-chrome-border)'
+  const headerBorderColorSub = isEarlyAccess ? 'transparent' : 'var(--t-chrome-border-sub)'
   const [hasMounted, setHasMounted] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
@@ -456,9 +462,9 @@ export default function Header() {
           className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between"
           style={{
             height: '56px',
-            backgroundColor: 'var(--t-chrome)',
+            backgroundColor: headerBg,
             padding: '0 12px',
-            borderBottom: '1px solid var(--t-chrome-border-sub)',
+            borderBottom: `1px solid ${headerBorderColorSub}`,
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           }}
         >
@@ -687,9 +693,9 @@ export default function Header() {
         className="fixed top-0 right-0 z-40 flex items-center justify-between transition-all duration-300 ease-in-out"
         style={{
           height: '48px',
-          backgroundColor: 'var(--t-chrome)',
+          backgroundColor: headerBg,
           padding: '0 16px',
-          borderBottom: '1px solid var(--t-chrome-border)',
+          borderBottom: `1px solid ${headerBorderColor}`,
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           left: `${collapsedNavbarWidth}px`,
           width: `calc(100vw - ${collapsedNavbarWidth}px)`

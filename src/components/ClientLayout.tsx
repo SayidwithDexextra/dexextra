@@ -22,6 +22,7 @@ import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
 import EarlyAccessWarningModal from "@/components/EarlyAccessWarningModal";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { useReferralCapture } from "@/hooks/useReferralCapture";
+import OverlayBootstrap from "@/components/overlay/OverlayBootstrap";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -77,6 +78,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
               <WalkthroughProvider>
                 <PortfolioSnapshotProvider>
                   <NotificationProvider>
+                  <OverlayBootstrap />
                   <ExternalAppOpenGuard />
                   <GeoBlockWarningModal />
                   <EarlyAccessWarningModal />

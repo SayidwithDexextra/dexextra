@@ -260,6 +260,16 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const [orderBookMarkPrice, setOrderBookMarkPrice] = useState<number>(0);
   const [coreVaultMarkPrice, setCoreVaultMarkPrice] = useState<number>(0);
   const [markPricesLoading, setMarkPricesLoading] = useState<boolean>(true);
+
+  // Liquidity overlay (visual-only): when enabled, the header must show the same
+  // overlaid mark price as MarketInfoHeader (which reads it from context). We
+  // derive a display value here rather than fighting the on-chain setters, so
+  // both headers stay perfectly in sync.
+  const overlayMarkPrice =
+    md.overlay?.enabled && md.overlay.markPrice && md.overlay.markPrice > 0
+      ? md.overlay.markPrice
+      : null;
+  const displayMarkPrice = overlayMarkPrice ?? effectiveMarkPrice;
   const markPriceLoadKeyRef = useRef<string>('');
   const markPriceRetryTimerRef = useRef<any>(null);
 
@@ -426,7 +436,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
     const market = marketData;
     
-    const currentMarkPrice = Number(effectiveMarkPrice > 0 ? effectiveMarkPrice : 0);
+    const currentMarkPrice = Number(displayMarkPrice > 0 ? displayMarkPrice : 0);
     
     // Funding and historical change not tracked in DB yet
     const currentFundingRate = 0;
@@ -477,7 +487,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
   }, [
     marketData,
-    effectiveMarkPrice,
+    displayMarkPrice,
     symbol
   ]);
 
@@ -494,19 +504,19 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Dispatch marketMarkPrice event when effectiveMarkPrice changes
   // This notifies the chart and other components that need the live price
   useEffect(() => {
-    if (effectiveMarkPrice <= 0 || !symbol) return;
+    if (displayMarkPrice <= 0 || !symbol) return;
     
     const mySymbol = String(symbol).toUpperCase();
-    console.log(`[MarkPrice] Dispatching marketMarkPrice: $${effectiveMarkPrice.toFixed(4)} for ${mySymbol}`);
+    console.log(`[MarkPrice] Dispatching marketMarkPrice: $${displayMarkPrice.toFixed(4)} for ${mySymbol}`);
     
     window.dispatchEvent(new CustomEvent('marketMarkPrice', {
       detail: {
         symbol: mySymbol,
-        price: effectiveMarkPrice,
+        price: displayMarkPrice,
         timestamp: Date.now(),
       }
     }));
-  }, [effectiveMarkPrice, symbol]);
+  }, [displayMarkPrice, symbol]);
 
   // Debug when enhanced token data changes leading to UI updates
   useEffect(() => {
@@ -652,11 +662,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Keep browser tab title in sync with the same effectiveMarkPrice shown in the header
   const symbolUpper = String(symbol || '').toUpperCase();
   useEffect(() => {
-    if (effectiveMarkPrice <= 0) return;
-    const fmt = effectiveMarkPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    if (displayMarkPrice <= 0) return;
+    const fmt = displayMarkPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     document.title = `$${fmt} | ${symbolUpper} | Dexextra`;
     return () => { document.title = 'Dexextra'; };
-  }, [effectiveMarkPrice, symbolUpper]);
+  }, [displayMarkPrice, symbolUpper]);
 
   // Scroll detection effect using Intersection Observer for better performance
   useEffect(() => {

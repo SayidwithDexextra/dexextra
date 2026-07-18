@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import CryptoMarketTicker, { type MarketTickerItem } from '@/components/CryptoMarketTicker/CryptoMarketTicker'
+import EarlyAccessRewards from '@/components/EarlyAccessRewards'
 
 const STATUS_ENDPOINT = '/api/site-settings/coming-soon'
 const WAITLIST_ENDPOINT = '/api/waitlist'
@@ -18,6 +19,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 interface ComingSoonGateProps {
   children: React.ReactNode
+  // Dev-only: force the overlay to render even for already-unlocked visitors,
+  // so the coming-soon experience can be previewed after passing the gate.
+  previewMode?: boolean
 }
 
 interface GlobalUnlockState {
@@ -27,7 +31,7 @@ interface GlobalUnlockState {
 
 type EmailStatus = 'idle' | 'submitting' | 'success' | 'error'
 
-export default function ComingSoonGate({ children }: ComingSoonGateProps) {
+export default function ComingSoonGate({ children, previewMode = false }: ComingSoonGateProps) {
   // Global launch flag (null = still loading from server).
   const [globalUnlocked, setGlobalUnlocked] = useState<boolean | null>(null)
   // Per-device whitelist access.
@@ -50,6 +54,10 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
   // Live crypto prices for the bottom ticker (a new instance of the home-page
   // ticker, fed externally from /api/crypto-ticker).
   const [cryptoItems, setCryptoItems] = useState<MarketTickerItem[]>([])
+
+  // Early Access rewards sheet — slides up from the bottom over the gate.
+  const [showRewards, setShowRewards] = useState(false)
+  const touchStartY = useRef<number | null>(null)
 
   const mountedRef = useRef(true)
 
@@ -94,10 +102,15 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
     fetchStatus()
 
     // Subscribe to the global flag so every open browser reveals the site the
-    // moment the team flips the launch switch.
+    // moment the team flips the launch switch. Use a per-subscription topic so
+    // multiple gate instances (e.g. the live gate + the /debug preview) and
+    // StrictMode's double-mount never collide on a reused, already-subscribed
+    // channel — which throws "cannot add postgres_changes callbacks after
+    // subscribe()".
     const supabase = getSupabaseClient()
+    const topic = `site-settings-coming-soon:${Math.random().toString(36).slice(2)}`
     const channel = supabase
-      .channel('site-settings-coming-soon')
+      .channel(topic)
       .on(
         'postgres_changes',
         {
@@ -222,9 +235,14 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
       // ignore storage errors — access still granted for this session
     }
     setIsExiting(true)
-    // Let the exit animation play before unmounting the gate.
+    // Let the exit animation play before revealing the app. Clear `isExiting`
+    // in the same tick we flip `deviceUnlocked` — otherwise the render guard
+    // (`isOpen && !isExiting`) stays false and the app never mounts, leaving a
+    // blank, faded-out gate on screen until a manual reload.
     setTimeout(() => {
-      if (mountedRef.current) setDeviceUnlocked(true)
+      if (!mountedRef.current) return
+      setDeviceUnlocked(true)
+      setIsExiting(false)
     }, 600)
   }, [])
 
@@ -273,10 +291,19 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
   // The gate only exists to hold back the public in production. In any
   // non-production build (local dev, preview, etc.) skip it entirely so
   // developers never have to unlock to navigate the site.
-  const bypassGate = process.env.NODE_ENV !== 'production'
+  //
+  // Testing override: set `NEXT_PUBLIC_FORCE_COMING_SOON=true` (e.g. in
+  // `.env.local`, then restart the dev server) to impose the gate on localhost
+  // exactly as it behaves in production — it then respects the real server flag
+  // and the per-device whitelist unlock, so you can test the full locked flow.
+  const forceGate =
+    String(process.env.NEXT_PUBLIC_FORCE_COMING_SOON || '').toLowerCase() === 'true'
+  const bypassGate = !previewMode && !forceGate && process.env.NODE_ENV !== 'production'
 
-  const isOpen = bypassGate || globalUnlocked === true || deviceUnlocked
-  const isLoading = !bypassGate && globalUnlocked === null && !deviceUnlocked
+  // In preview mode we always render the overlay — even for unlocked visitors —
+  // so the coming-soon experience can be inspected after passing the gate.
+  const isOpen = previewMode ? false : bypassGate || globalUnlocked === true || deviceUnlocked
+  const isLoading = previewMode ? false : !bypassGate && globalUnlocked === null && !deviceUnlocked
 
   // Dev bypass + returning whitelisted / post-launch users skip to the app.
   if (isOpen && !isExiting) {
@@ -293,7 +320,7 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
 
   return (
     <div
-      className={`fixed inset-0 z-[9998] bg-[#0A0A0A] flex flex-col transition-all duration-[600ms] ease-out ${
+      className={`fixed inset-0 z-[9998] bg-[#0A0A0A] flex flex-col overflow-hidden transition-all duration-[600ms] ease-out ${
         isExiting ? 'opacity-0 scale-[1.02] blur-sm pointer-events-none' : 'opacity-100 scale-100 blur-0'
       }`}
     >
@@ -445,6 +472,42 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
             )}
           </div>
 
+          {/* Early Access rewards teaser — swipe or click to slide the sheet up */}
+          <div className="mt-12 w-full max-w-sm">
+            <button
+              type="button"
+              onClick={() => setShowRewards(true)}
+              onTouchStart={(e) => {
+                touchStartY.current = e.touches[0]?.clientY ?? null
+              }}
+              onTouchEnd={(e) => {
+                const start = touchStartY.current
+                const end = e.changedTouches[0]?.clientY ?? null
+                if (start !== null && end !== null && start - end > 40) {
+                  setShowRewards(true)
+                }
+                touchStartY.current = null
+              }}
+              className="slideUpTeaser group w-full flex flex-col items-center gap-2 rounded-md border border-[#222222] hover:border-[#333333] bg-[#0F0F0F] hover:bg-[#1A1A1A] px-4 py-4 transition-all duration-200"
+              aria-label="Reveal Early Access rewards"
+            >
+              <span className="teaserChevron flex flex-col items-center -space-y-1 text-[#606060] group-hover:text-white transition-colors duration-200">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                </svg>
+                <svg className="w-4 h-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                </svg>
+              </span>
+              <span className="text-[11px] text-[#9CA3AF] group-hover:text-white uppercase tracking-[0.16em] transition-colors duration-200">
+                Slide up — get in early
+              </span>
+              <span className="text-[10px] text-[#606060] leading-snug max-w-[15rem]">
+                The earliest markets are the least crowded. See what getting here first unlocks.
+              </span>
+            </button>
+          </div>
+
           {/* Footer link */}
           <div className="mt-12 flex flex-col items-center gap-4">
             <div className="w-20 h-px bg-gradient-to-r from-transparent via-[#2A2A2A] to-transparent" />
@@ -472,6 +535,36 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
           </div>
         </div>
       </div>
+      </div>
+
+      {/* Early Access rewards sheet — slides up over the gate on a solid black
+          surface so the hero reads as pure black. */}
+      <div
+        className={`absolute inset-0 z-[9999] flex flex-col bg-black transition-transform duration-500 ease-out ${
+          showRewards ? 'translate-y-0' : 'translate-y-full pointer-events-none'
+        }`}
+        aria-hidden={!showRewards}
+      >
+        {/* Pull-down handle / close — matches the solid black hero (no divider). */}
+        <div className="relative flex-shrink-0 bg-black">
+          <button
+            type="button"
+            onClick={() => setShowRewards(false)}
+            className="group w-full flex flex-col items-center gap-1.5 py-3 hover:bg-[#0A0A0A] transition-colors duration-200"
+            aria-label="Close Early Access rewards"
+          >
+            <span className="w-9 h-1 rounded-full bg-[#2A2A2A] group-hover:bg-[#333333] transition-colors duration-200" />
+            <span className="text-[10px] text-[#606060] group-hover:text-[#9CA3AF] uppercase tracking-[0.16em] transition-colors duration-200">
+              Slide down to close
+            </span>
+          </button>
+        </div>
+
+        <div className="relative flex-1 overflow-y-auto scrollbar-none">
+          {showRewards && (
+            <EarlyAccessRewards variant="panel" onClose={() => setShowRewards(false)} />
+          )}
+        </div>
       </div>
 
       <style jsx>{`
@@ -502,8 +595,21 @@ export default function ComingSoonGate({ children }: ComingSoonGateProps) {
           will-change: transform, opacity;
         }
 
+        /* Gentle upward bob on the "slide up" teaser chevron */
+        @keyframes teaserBob {
+          0%, 100% { transform: translateY(2px); }
+          50%      { transform: translateY(-3px); }
+        }
+        .teaserChevron {
+          animation: teaserBob 1.8s ease-in-out infinite;
+          will-change: transform;
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .ambientGlow {
+            animation: none;
+          }
+          .teaserChevron {
             animation: none;
           }
         }

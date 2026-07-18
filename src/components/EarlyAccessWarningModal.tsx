@@ -3,7 +3,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
-const STORAGE_KEY = 'dexetera-mvp-warning-acknowledged';
+export const MVP_ACK_STORAGE_KEY = 'dexetera-mvp-warning-acknowledged';
+// Fired the moment the visitor acknowledges the MVP notice, so same-session
+// listeners (e.g. the product tour) can sequence themselves in AFTER it.
+export const MVP_ACK_EVENT = 'mvp-notice:acknowledged';
+
+// Back-compat alias for the original private name used within this file.
+const STORAGE_KEY = MVP_ACK_STORAGE_KEY;
+
+/** True once the visitor has acknowledged the MVP notice (persisted). */
+export function isMvpNoticeAcknowledged(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(MVP_ACK_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 interface MVPWarningModalProps {
   forceShow?: boolean;
@@ -24,7 +40,17 @@ export default function EarlyAccessWarningModal({ forceShow, onClose }: MVPWarni
     setTimeout(() => {
       setIsDismissed(true);
       if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, 'true');
+        // `forceShow` is the debug/replay path — don't persist or broadcast
+        // acknowledgment (or re-trigger the tour) when just previewing.
+        if (!forceShow) {
+          try {
+            localStorage.setItem(STORAGE_KEY, 'true');
+          } catch {
+            // storage may be unavailable (private mode, quota) — the live
+            // event below still sequences the tour for this session.
+          }
+          window.dispatchEvent(new CustomEvent(MVP_ACK_EVENT));
+        }
       }
       onClose?.();
     }, 200);
@@ -54,7 +80,7 @@ export default function EarlyAccessWarningModal({ forceShow, onClose }: MVPWarni
 
   const modalContent = (
     <div 
-      className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+      className={`fixed inset-0 z-[21000] flex items-center justify-center p-4 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
     >
       {/* Backdrop */}
       <div 
@@ -123,6 +149,10 @@ export default function EarlyAccessWarningModal({ forceShow, onClose }: MVPWarni
             <div className="flex items-start gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 mt-1 flex-shrink-0" />
               <span className="text-[10px] text-[#606060]">Features and functionality may not work as intended</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 mt-1 flex-shrink-0" />
+              <span className="text-[10px] text-[#606060]">Markets currently have low liquidity, which may affect pricing and order execution</span>
             </div>
             <div className="flex items-start gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 mt-1 flex-shrink-0" />
