@@ -215,7 +215,7 @@ export default function AnalyticsDashboard({ targetWallet }: AnalyticsDashboardP
       className="w-full min-h-screen"
       style={{ background: '#050505' }}
     >
-      <div className="max-w-[1400px] mx-auto px-6 pt-3 pb-24">
+      <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-14 pt-3 pb-24">
         {/* Hero Section */}
         <AccountHero
           summary={summary}
@@ -1064,7 +1064,7 @@ function SettlementsTab({
           <span className="text-[10px] text-[#606060]">{settlementActivities.length} total</span>
         </div>
 
-        <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
           {settlementActivities.map((activity) => {
             const isProfit = activity.amount >= 0
             return (
