@@ -226,7 +226,7 @@ export default function UserPage({ walletAddress, initialProfile, className }: U
   }
 
   return (
-    <div className={`dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden ${className || ''}`}>
+    <div className={`dex-page-enter-up w-full h-[calc(100vh-105px)] flex bg-transparent overflow-hidden ${className || ''}`}>
       <div className="flex-1 min-w-0 overflow-y-auto scrollbar-none text-white font-sans">
         {/* Header (modeled after Settings) */}
         <div className="border-b border-[#1A1A1A] bg-gradient-to-b from-[#141414] to-[#0F0F0F]">

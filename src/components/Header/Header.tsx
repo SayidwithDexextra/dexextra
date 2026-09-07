@@ -686,7 +686,7 @@ export default function Header() {
       <header 
         className="fixed top-0 right-0 z-40 flex items-center justify-between transition-all duration-300 ease-in-out"
         style={{
-          height: '48px',
+          height: '57px',
           backgroundColor: 'var(--t-chrome)',
           padding: '0 16px',
           borderBottom: '1px solid var(--t-chrome-border)',

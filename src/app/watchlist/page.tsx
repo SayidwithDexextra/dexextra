@@ -434,7 +434,7 @@ export default function WatchlistPage() {
   }, [getChangePercent, watchlistedRows, watchlistIds.length]);
 
   return (
-    <div className="dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-t-page overflow-hidden">
+    <div className="dex-page-enter-up w-full h-[calc(100vh-105px)] flex bg-t-page overflow-hidden">
       {/* Main Watchlist Content */}
       <div className="flex-1 flex flex-col min-w-0 px-3 py-4 sm:px-4 md:px-6 md:py-6 overflow-y-auto scrollbar-none">
         {/* Header */}

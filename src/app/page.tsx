@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import CryptoMarketTicker from '@/components/CryptoMarketTicker/CryptoMarketTicker';
-import Hero from '@/components/Hero/Hero';
-import Widget from '@/components/widgets/Widget';
+import { MarketWallHero, useMarketWallTiles } from '@/components/MarketWallHero';
+import { MarketStatsRow } from '@/components/MarketStatsRow';
 import { ProductCard, ProductCardData } from '@/components/ProductCard';
 import { MarketPreviewModal } from '@/components/MarketPreviewModal';
 import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
@@ -32,6 +32,8 @@ export default function Home() {
   const [rankingRows, setRankingRows] = useState<any[]>([]);
   const router = useRouter();
   const { walletData } = useWallet();
+  const { tiles: wallTiles, isLoading: wallLoading, totalMarkets: wallTotal } =
+    useMarketWallTiles(6);
 
   const statusFilter = useMemo(() => {
     switch (advancedFilters.status) {
@@ -421,17 +423,6 @@ export default function Home() {
   const eventsError = null
 
 
-  const heroData = {
-    title: "Dexetera",
-    author: "Trading Platform",
-    isVerified: true,
-    stats: {
-      mintPrice: "Free",
-      totalItems: 1000000,
-      mintStartsIn: "2024-12-31T23:59:59"
-    }
-  };
-
   const handleViewMarket = (productData: ProductCardData) => {
     setSelectedProduct(productData);
     setIsModalOpen(true);
@@ -532,14 +523,16 @@ export default function Home() {
         <CryptoMarketTicker />
       </div>
 
-      <Hero data={heroData} />
+      <MarketWallHero
+        tiles={wallTiles}
+        totalMarkets={wallTotal}
+        isLoading={wallLoading}
+      />
 
-      {/* Shared container — aligns Widget, Top Picks, and Active Markets */}
+      <MarketStatsRow />
+
+      {/* Shared container — aligns Top Picks and Active Markets */}
       <div className="w-full px-4 sm:px-8">
-        <div className="pt-8 pb-2">
-          <Widget />
-        </div>
-
         <DexeteraTopPicksCarousel
           title="Top Picks"
           subtitle="This week’s top picks"

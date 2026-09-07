@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import styles from './CryptoMarketTicker.module.css';
-import { Tooltip } from '../ui/Tooltip';
 
-interface MarketTickerItem {
+export interface MarketTickerItem {
   marketId: string;
   symbol: string;
   market_identifier: string;
@@ -17,7 +17,18 @@ interface MarketTickerItem {
   iconUrl?: string;
 }
 
-export type { MarketTickerItem };
+export interface TickerItem {
+  symbol: string;
+  price: string;
+  change: string;
+  direction: 'up' | 'down';
+}
+
+interface DisplayItem extends TickerItem {
+  id: string;
+  href: string;
+  external?: boolean;
+}
 
 interface CryptoMarketTickerProps {
   className?: string;
@@ -25,76 +36,74 @@ interface CryptoMarketTickerProps {
   pauseOnHover?: boolean;
   /**
    * Controlled mode: when provided, the ticker renders exactly these items and
-   * performs NO internal fetching. This lets callers spin up a new instance fed
-   * a different data source (e.g. live CoinGecko prices) without touching the
-   * default in-house-markets behavior used on the home page.
+   * performs NO internal fetching.
    */
   externalItems?: MarketTickerItem[];
 }
 
-// Old CoinGecko ticker used ~20 symbols; now we render ALL in-house markets (even if 0% change).
-// (We keep ClickHouse-ranked ones at the front when available.)
-
-// Cache configuration
 const CACHE_KEY = 'dexextra_market_ticker_v1';
 const CACHE_TIMESTAMP_KEY = 'dexextra_market_ticker_ts_v1';
-const CACHE_DURATION = 60 * 1000; // 60 seconds
+const CACHE_DURATION = 60 * 1000;
 
-export default function CryptoMarketTicker({ 
-  className = '', 
-  speed = 60,
+const formatPrice = (price: number): string => {
+  const n = Number(price) || 0;
+  const raw = String(n);
+  const decimals = (raw.split('.')[1] || '').replace(/0+$/, '').length;
+  const digits = Math.min(8, Math.max(2, decimals));
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(n);
+  } catch {
+    return `$${n}`;
+  }
+};
+
+const formatChange = (change: number): string => {
+  const n = Number(change) || 0;
+  const abs = Math.abs(n).toFixed(2);
+  return n >= 0 ? `+${abs}%` : `-${abs}%`;
+};
+
+function toDisplayItem(m: MarketTickerItem): DisplayItem | null {
+  if (!m?.marketId || !m.symbol || !Number.isFinite(m.price) || m.price < 0) return null;
+  const changeNum = Number(m.price_change_percentage_24h);
+  const change = Number.isFinite(changeNum) ? changeNum : 0;
+  const symbol = String(m.symbol).toUpperCase();
+  const slug = m.market_identifier || m.symbol;
+  return {
+    id: m.marketId,
+    symbol,
+    price: formatPrice(m.price),
+    change: formatChange(change),
+    direction: change >= 0 ? 'up' : 'down',
+    href: m.href || (slug ? `/token/${encodeURIComponent(slug)}` : '#'),
+    external: m.external,
+  };
+}
+
+export default function CryptoMarketTicker({
+  className = '',
+  speed = 48,
   pauseOnHover = true,
   externalItems,
 }: CryptoMarketTickerProps) {
-  // State management
   const [isLoading, setIsLoading] = useState(true);
-  const [isPaused, setIsPaused] = useState(false);
   const [items, setItems] = useState<MarketTickerItem[]>([]);
-
-  // Refs
   const isMountedRef = useRef(true);
 
-  // Cleanup on unmount
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
   }, []);
 
-  const fmtUsd = useMemo(
-    () =>
-      new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        maximumFractionDigits: 8,
-      }),
-    []
-  );
-
-  // Format price with appropriate decimals
-  const formatPrice = (price: number): string => {
-    try {
-      return fmtUsd.format(Number(price) || 0);
-    } catch {
-      return `$${Number(price) || 0}`;
-    }
-  };
-
-  // Format percentage change
-  const formatPercentage = (change: number): string => {
-    const formatted = Math.abs(change).toFixed(2);
-    return change >= 0 ? `+${formatted}%` : `-${formatted}%`;
-  };
-
-  // Get color class for percentage change
-  const getChangeColorClass = (change: number): string => {
-    return change >= 0 ? styles.positive : styles.negative;
-  };
-
-  // Save data to localStorage cache
   const saveToCache = useCallback((data: MarketTickerItem[]) => {
     if (typeof window === 'undefined' || !window.localStorage) return;
-    
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify(data));
       localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
@@ -103,19 +112,14 @@ export default function CryptoMarketTicker({
     }
   }, []);
 
-  // Load data from localStorage cache
   const loadFromCache = useCallback((): MarketTickerItem[] | null => {
     if (typeof window === 'undefined' || !window.localStorage) return null;
-    
     try {
       const cached = localStorage.getItem(CACHE_KEY);
       const timestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-      
       if (cached && timestamp) {
         const age = Date.now() - parseInt(timestamp);
-        if (age < CACHE_DURATION) {
-          return JSON.parse(cached);
-        }
+        if (age < CACHE_DURATION) return JSON.parse(cached);
       }
     } catch (error) {
       console.warn('Failed to load from cache:', error);
@@ -123,71 +127,49 @@ export default function CryptoMarketTicker({
     return null;
   }, []);
 
-  /**
-   * Load our in-house market ticker:
-   * - Market performance (price + 24h change) comes from ClickHouse via `/api/market-rankings`.
-   * - Market metadata (name/symbol + fallback price) comes from Supabase `markets` via `/api/markets`.
-   */
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       if (!isMountedRef.current) return;
 
       try {
-        // 1) Pull ALL markets (paged) for full coverage.
-        const fetchAllMarkets = async (): Promise<any[]> => {
-          const pageSize = 200;
-          const all: any[] = [];
-          let offset = 0;
-          let total: number | null = null;
+        const overviewRes = await fetch(
+          '/api/market-overview?limit=50&status=ACTIVE,SETTLEMENT_REQUESTED',
+          { signal, cache: 'no-store' }
+        );
+        const overviewJson = await overviewRes.json().catch(() => null);
+        if (!overviewRes.ok || !overviewJson?.success) throw new Error('markets_fetch_failed');
+        const markets: any[] = Array.isArray(overviewJson.markets) ? overviewJson.markets : [];
 
-          while (true) {
-            const url = `/api/markets?limit=${pageSize}&offset=${offset}`;
-            const res = await fetch(url, { signal });
-            const json = await res.json().catch(() => null);
-            if (!res.ok || !json?.success) throw new Error('markets_fetch_failed');
-
-            const page: any[] = Array.isArray(json.markets) ? json.markets : [];
-            const t = Number(json?.pagination?.total);
-            if (Number.isFinite(t) && t >= 0) total = t;
-
-            all.push(...page);
-            offset += pageSize;
-
-            if (page.length < pageSize) break;
-            if (total != null && all.length >= total) break;
-            if (signal?.aborted) break;
-          }
-
-          return all;
-        };
-
-        const markets = await fetchAllMarkets();
-
-        const byId = new Map<string, any>();
-        markets.forEach((m: any) => {
-          if (m?.id) byId.set(String(m.id), m);
+        const qs = new URLSearchParams({
+          kind: 'trending',
+          windowHours: '168',
+          limit: '100',
         });
-
-        // 2) Overlay clickhouse ranking data when available (but do not require it).
-        const qs = new URLSearchParams();
-        qs.set('kind', 'trending');
-        qs.set('windowHours', '168');
-        // Pull more than we display so we can still show 21 after filtering/joins.
-        qs.set('limit', '100');
-
-        const rankRes = await fetch(`/api/market-rankings?${qs.toString()}`, { signal });
+        const rankRes = await fetch(`/api/market-rankings?${qs}`, { signal, cache: 'no-store' });
         const rankJson = await rankRes.json().catch(() => null);
         const rows: any[] =
           rankRes.ok && rankJson?.success && Array.isArray(rankJson.rows) ? rankJson.rows : [];
 
+        const changeById = new Map<string, number>();
+        const changeBySymbol = new Map<string, number>();
+        const rankOrder: string[] = [];
+        for (const r of rows) {
+          const id = String(r?.marketUuid || r?.market_uuid || '').trim();
+          const pct = Number(r?.priceChange24hPct ?? r?.price_change_24h_pct);
+          if (id) {
+            rankOrder.push(id);
+            if (Number.isFinite(pct)) changeById.set(id, pct);
+          }
+          const sym = String(r?.symbol || '').toUpperCase().trim();
+          if (sym && Number.isFinite(pct)) changeBySymbol.set(sym, pct);
+        }
+
         const seen = new Set<string>();
         const out: MarketTickerItem[] = [];
 
-        const pushMarket = (marketId: string, opts?: { changePct24h?: number }) => {
-          const m = byId.get(marketId);
-          if (!m) return;
-          if (seen.has(marketId)) return;
-
+        const pushMarket = (m: any) => {
+          const marketId = String(m?.market_id || m?.id || '').trim();
+          if (!marketId || seen.has(marketId)) return;
           const symbol = String(m?.symbol || m?.market_identifier || marketId).toUpperCase();
           const name =
             typeof m?.name === 'string' && m.name.trim()
@@ -195,70 +177,53 @@ export default function CryptoMarketTicker({
               : typeof m?.market_identifier === 'string' && m.market_identifier.trim()
                 ? m.market_identifier.trim()
                 : symbol;
-          const description =
-            typeof m?.description === 'string' && m.description.trim() ? m.description.trim() : undefined;
-
-          // Price should always reflect Supabase `market_tickers.mark_price` (via /api/markets `initial_price`)
-          // regardless of any "stale" flags elsewhere.
-          const price = Number(m?.initial_price ?? m?.last_trade_price ?? 0) || 0;
-          const change = Number.isFinite(Number(opts?.changePct24h))
-            ? (Number(opts?.changePct24h) as number)
-            : 0;
-
+          const raw = Number(m?.mark_price ?? m?.initial_price ?? m?.last_trade_price ?? 0);
+          const price = raw > 1_000 ? raw / 1_000_000 : raw || 0;
+          const change =
+            changeById.get(marketId) ??
+            changeBySymbol.get(symbol) ??
+            0;
           const mi = String(m?.market_identifier || '').trim() || symbol;
-
           seen.add(marketId);
           out.push({
             marketId,
             symbol,
             market_identifier: mi,
             name,
-            description,
             price,
             price_change_percentage_24h: change,
           });
         };
 
-        // Prefer ClickHouse-ranked markets first (when present).
-        for (const r of rows) {
-          const id = String(r?.marketUuid || r?.market_uuid || '').trim();
-          if (!id) continue;
-          const change = Number(r?.priceChange24hPct ?? r?.price_change_24h_pct ?? 0);
-          pushMarket(id, {
-            changePct24h: Number.isFinite(change) ? change : 0,
-          });
+        const byId = new Map<string, any>();
+        markets.forEach((m: any) => {
+          const id = String(m?.market_id || m?.id || '');
+          if (id) byId.set(id, m);
+        });
+        for (const id of rankOrder) {
+          const m = byId.get(id);
+          if (m) pushMarket(m);
         }
-
-        // Fill the rest from Supabase markets so we render ALL markets, even with 0% change.
-        for (const m of markets) {
-          const id = String(m?.id || '').trim();
-          if (!id) continue;
-          pushMarket(id);
-        }
+        for (const m of markets) pushMarket(m);
 
         const finalItems = out.slice(0, 25);
-
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current || signal?.aborted) return;
         setItems(finalItems);
         setIsLoading(false);
         saveToCache(finalItems);
-      } catch (e) {
-        // Keep whatever we already have on screen.
+      } catch (e: any) {
+        if (e?.name === 'AbortError' || signal?.aborted) return;
         if (!isMountedRef.current) return;
         setIsLoading(false);
-        // eslint-disable-next-line no-console
         console.warn('Market ticker refresh failed:', e);
       }
     },
     [saveToCache]
   );
 
-  // Load from cache immediately, then refresh from ClickHouse + Supabase.
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Controlled mode: the caller owns the data. Mirror it in and skip all
-    // internal fetching/caching/polling entirely.
     if (externalItems) {
       setItems(externalItems);
       setIsLoading(false);
@@ -284,154 +249,73 @@ export default function CryptoMarketTicker({
     };
   }, [loadFromCache, refresh, externalItems]);
 
-  // Handle hover events for pause on hover
-  const handleMouseEnter = () => {
-    if (pauseOnHover) {
-      setIsPaused(true);
-    }
-  };
-
-  const handleMouseLeave = () => {
-    if (pauseOnHover) {
-      setIsPaused(false);
-    }
-  };
-
-  const validItems = useMemo(
-    () =>
-      (items || []).filter(
-        (m) => m && m.marketId && m.symbol && Number.isFinite(m.price) && m.price >= 0
-      ),
+  const displayItems = useMemo(
+    () => (items || []).map(toDisplayItem).filter((item): item is DisplayItem => item != null),
     [items]
   );
 
-  // Show loading state only briefly
-  if (isLoading && validItems.length === 0) {
-    const skeleton = [
-      { symbolW: 42, priceW: 78, changeW: 52 },
-      { symbolW: 34, priceW: 64, changeW: 46 },
-      { symbolW: 50, priceW: 84, changeW: 56 },
-      { symbolW: 38, priceW: 72, changeW: 48 },
-      { symbolW: 46, priceW: 80, changeW: 54 },
-      { symbolW: 36, priceW: 66, changeW: 44 },
-      { symbolW: 54, priceW: 90, changeW: 58 },
-    ];
+  const showTrack = displayItems.length > 0;
 
-    return (
-      <div className={`${styles.container} ${className}`}>
+  return (
+    <div
+      className={`${styles.container} ${pauseOnHover ? styles.pauseOnHover : ''} ${className}`}
+      role="marquee"
+      aria-label="Market ticker"
+    >
+      {showTrack ? (
         <div
-          className={styles.loading}
-          role="status"
-          aria-live="polite"
-          aria-label="Loading market data"
+          className={styles.track}
+          style={{ '--ticker-duration': `${speed}s` } as React.CSSProperties}
         >
-          <div
-            className={styles.loadingTicker}
-            style={{ '--loading-duration': '18s' } as React.CSSProperties}
-          >
-            {skeleton.concat(skeleton).map((s, index) => (
-              <div key={index} className={styles.loadingItem} aria-hidden="true">
-                <span
-                  className={styles.skeletonBar}
-                  style={{ '--w': `${s.symbolW}px` } as React.CSSProperties}
-                />
-                <span className={styles.skeletonDot} />
-                <span
-                  className={styles.skeletonBar}
-                  style={{ '--w': `${s.priceW}px` } as React.CSSProperties}
-                />
-                <span
-                  className={styles.skeletonBar}
-                  style={{ '--w': `${s.changeW}px` } as React.CSSProperties}
-                />
-              </div>
-            ))}
-          </div>
+          {displayItems.map((item) => (
+            <TickerRow key={item.id} item={item} />
+          ))}
+          {displayItems.map((item) => (
+            <TickerRow key={`${item.id}__dup`} item={item} duplicate />
+          ))}
         </div>
-      </div>
+      ) : null}
+    </div>
+  );
+}
+
+const TickerRow: React.FC<{ item: DisplayItem; duplicate?: boolean }> = ({
+  item,
+  duplicate = false,
+}) => {
+  const className = `${styles.item} ${item.direction === 'up' ? styles.up : styles.down}`;
+  const body = (
+    <>
+      <span className={styles.symbol}>{item.symbol}</span>
+      <span className={styles.separator}>•</span>
+      <span className={styles.price}>{item.price}</span>
+      <span className={styles.change}>{item.change}</span>
+    </>
+  );
+
+  if (item.external) {
+    return (
+      <a
+        href={item.href}
+        className={className}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-hidden={duplicate || undefined}
+        tabIndex={duplicate ? -1 : undefined}
+      >
+        {body}
+      </a>
     );
   }
 
   return (
-    <div className={`${styles.container} ${className}`}>
-      <div 
-        className={`${styles.ticker} ${isPaused ? styles.paused : ''}`}
-        style={{ '--ticker-duration': `${speed}s` } as React.CSSProperties}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        role="marquee"
-        aria-label="Dexextra market ticker"
-      >
-        {validItems.concat(validItems).map((m, index) => {
-          const href = m.href
-            ? m.href
-            : (m.market_identifier || m.symbol) ? `/token/${encodeURIComponent(m.market_identifier || m.symbol)}` : '#';
-          const tooltipTitle = m.symbol || 'Market';
-          const tooltipDescription =
-            typeof m.description === 'string' && m.description.trim()
-              ? m.description.trim().length > 220
-                ? `${m.description.trim().slice(0, 220)}…`
-                : m.description.trim()
-              : '';
-          const tooltipContent = (
-            <div className="space-y-1">
-              <div className="text-white">{m.name}</div>
-              {tooltipDescription ? (
-                <div className="text-[#808080] leading-snug">{tooltipDescription}</div>
-              ) : null}
-              <div className="flex items-center gap-3 pt-1 border-t border-[#1A1A1A] text-[9px]">
-                <div className="flex items-center gap-1">
-                  <span className="text-[#606060]">Price:</span>
-                  <span className="text-white">{formatPrice(m.price)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[#606060]">24h:</span>
-                  <span className={m.price_change_percentage_24h >= 0 ? 'text-[#00C851]' : 'text-[#FF4444]'}>
-                    {formatPercentage(m.price_change_percentage_24h)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-          return (
-            <Tooltip
-              key={`${m.marketId}-${index}`}
-              title={tooltipTitle}
-              content={tooltipContent}
-              maxWidth={360}
-            >
-              <a
-                href={href}
-                target={m.external ? '_blank' : undefined}
-                rel={m.external ? 'noopener noreferrer' : undefined}
-                className={styles.tickerItem}
-                aria-disabled={!m.symbol}
-                tabIndex={m.symbol ? 0 : -1}
-                onClick={(e) => {
-                  if (!m.symbol) e.preventDefault();
-                }}
-                aria-label={`${m.symbol} ${formatPrice(m.price)} ${formatPercentage(m.price_change_percentage_24h)}`}
-              >
-                {m.iconUrl ? (
-                  <img
-                    src={m.iconUrl}
-                    alt=""
-                    aria-hidden="true"
-                    loading="lazy"
-                    className={styles.icon}
-                  />
-                ) : null}
-                <span className={styles.symbol}>{m.symbol}</span>
-                <span className={styles.separator}>•</span>
-                <span className={styles.price}>{formatPrice(m.price)}</span>
-                <span className={`${styles.change} ${getChangeColorClass(m.price_change_percentage_24h)}`}>
-                  {formatPercentage(m.price_change_percentage_24h)}
-                </span>
-              </a>
-            </Tooltip>
-          );
-        })}
-      </div>
-    </div>
+    <Link
+      href={item.href}
+      className={className}
+      aria-hidden={duplicate || undefined}
+      tabIndex={duplicate ? -1 : undefined}
+    >
+      {body}
+    </Link>
   );
-} 
+};

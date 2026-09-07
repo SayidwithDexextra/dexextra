@@ -1543,10 +1543,13 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   if (shouldShowLoading) {
     return (
-      <LoadingScreen 
-        message={loadingMessage}
-        subtitle={loadingSubtitle}
-      />
+      <div className="token-page flex flex-col min-h-[calc(100dvh-56px)] bg-t-page text-t-fg">
+        <CryptoMarketTicker className="border-b border-t-stroke-sub flex-shrink-0" />
+        <LoadingScreen
+          message={loadingMessage}
+          subtitle={loadingSubtitle}
+        />
+      </div>
     );
   }
 
@@ -1858,7 +1861,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             </div>
 
-            <div className="hidden md:flex gap-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 27px)' }}>
+            <div className="hidden md:flex gap-1" style={{ height: 'calc(100vh - 105px - 40px - 1rem - 1.5rem + 27px)' }}>
               <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
                 <div className="flex-1 min-h-0 overflow-hidden relative" data-walkthrough="token-chart">
                   {currentMarketId ? (

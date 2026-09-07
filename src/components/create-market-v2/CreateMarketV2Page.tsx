@@ -228,7 +228,7 @@ export function CreateMarketV2Page() {
         <div className="w-full overflow-hidden">
           <CryptoMarketTicker />
         </div>
-        <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
+        <div className="relative min-h-[calc(100vh-152px)] w-full bg-[#1a1a1a] text-white">
           <div className="relative mx-auto w-full max-w-5xl px-4 pt-24 pb-8 sm:px-6 sm:pt-32 lg:px-8 lg:pt-40">
             <div className="flex flex-col items-center text-center">
               <h2 className="text-xl font-normal text-white text-center">
@@ -249,7 +249,7 @@ export function CreateMarketV2Page() {
       <div className="w-full overflow-hidden">
         <CryptoMarketTicker />
       </div>
-      <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
+      <div className="relative min-h-[calc(100vh-152px)] w-full bg-[#1a1a1a] text-white">
         <div className={`relative mx-auto w-full max-w-5xl px-4 pb-8 sm:px-6 lg:px-8 transition-[padding] duration-300 ${isReviewStep ? 'pt-6 sm:pt-8 lg:pt-10' : 'pt-24 sm:pt-32 lg:pt-40'}`}>
         <div className="flex flex-col items-center text-center">
           {!isReviewStep && (

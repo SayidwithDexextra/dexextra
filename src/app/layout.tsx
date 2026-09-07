@@ -1,15 +1,19 @@
 import type { Metadata } from 'next'
-import { Inter, Space_Grotesk } from 'next/font/google'
-import { GeistMono } from 'geist/font/mono'
+import { Manrope, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import ClientLayout from '@/components/ClientLayout'
 // Removed CentralizedVaultProvider import - smart contract functionality deleted
 
-const inter = Inter({ subsets: ['latin'] })
-
-const spaceGrotesk = Space_Grotesk({
+const manrope = Manrope({
   subsets: ['latin'],
-  variable: '--font-space-grotesk',
+  variable: '--font-manrope',
+  display: 'swap',
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
 })
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org'
@@ -89,7 +93,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${manrope.variable} ${jetbrainsMono.variable}`}>
       <head>
         {/* Preload TradingView charting library so it's cached before the chart component mounts */}
         <link rel="preload" href="/charting_library/charting_library.js" as="script" />
@@ -150,7 +154,7 @@ try{var ld=Object.getOwnPropertyDescriptor(window,'location');
           }}
         />
       </head>
-      <body className={`${inter.className} ${spaceGrotesk.variable} ${GeistMono.variable}`}>
+      <body className={manrope.className}>
         <ClientLayout>
           {children}
         </ClientLayout>

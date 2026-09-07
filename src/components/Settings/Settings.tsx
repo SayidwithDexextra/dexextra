@@ -810,7 +810,7 @@ export default function Settings({ className }: SettingsProps) {
 
   return (
     <>
-    <div className={`dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden ${className || ''}`}>
+    <div className={`dex-page-enter-up w-full h-[calc(100vh-105px)] flex bg-transparent overflow-hidden ${className || ''}`}>
       <div className="flex-1 min-w-0 overflow-y-auto scrollbar-none text-t-fg font-sans">
         <ActionStatusModal
           isOpen={uiStatusModal.isOpen}

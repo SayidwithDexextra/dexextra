@@ -100,8 +100,8 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                           className="flex-1"
                           style={{ 
                             marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`,
-                            marginTop: isMobile ? '56px' : '48px',
-                            minHeight: isMobile ? 'calc(100vh - 56px)' : 'calc(100vh - 96px)',
+                            marginTop: isMobile ? '56px' : '57px',
+                            minHeight: isMobile ? 'calc(100vh - 56px)' : 'calc(100vh - 105px)',
                             marginBottom: isMobile ? '0px' : '48px',
                             backgroundColor: 'var(--primary-bg)',
                             minWidth: 0,

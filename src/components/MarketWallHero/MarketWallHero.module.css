@@ -1,0 +1,434 @@
+/* Market Wall hero — matches Hero.module.css conventions.
+   Uses the theme vars already defined in src/app/globals.css:
+   --t-card #0F0F0F, --t-card-hover #1A1A1A, --t-stroke #222222,
+   --t-stroke-sub #1A1A1A, --t-stroke-hover #333333 */
+
+.hero {
+  position: relative;
+  margin: 16px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid var(--t-stroke);
+  background: var(--t-card);
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+}
+
+/* ─── Animated background (pointer-events none so CTAs stay clickable) ─── */
+.bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.grid {
+  position: absolute;
+  inset: -40px;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(120% 90% at 20% 0%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(120% 90% at 20% 0%, #000 0%, transparent 78%);
+  animation: gridDrift 14s linear infinite;
+  will-change: transform;
+}
+
+@keyframes gridDrift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-40px, -40px, 0);
+  }
+}
+
+.glowGreen {
+  position: absolute;
+  top: -30%;
+  left: -10%;
+  width: 70%;
+  height: 150%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(74, 222, 128, 0.1) 0%, transparent 65%);
+  filter: blur(28px);
+  animation: glowA 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes glowA {
+  0%,
+  100% {
+    transform: translate3d(-6%, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(10%, -8%, 0) scale(1.15);
+  }
+}
+
+.glowBlue {
+  position: absolute;
+  bottom: -40%;
+  right: -5%;
+  width: 60%;
+  height: 150%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(96, 165, 250, 0.09) 0%, transparent 65%);
+  filter: blur(32px);
+  animation: glowB 28s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes glowB {
+  0%,
+  100% {
+    transform: translate3d(4%, 4%, 0) scale(1.1);
+  }
+  50% {
+    transform: translate3d(-8%, -4%, 0) scale(1);
+  }
+}
+
+.sweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.03), transparent);
+  animation: sweep 11s linear infinite;
+  will-change: transform;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+/* ─── Left: editorial column ─── */
+.left {
+  position: relative;
+  padding: 43px 36px 34px;
+  border-right: 1px solid var(--t-stroke-sub);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 30px;
+}
+
+.eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #606060;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.title {
+  margin: 17px 0 0;
+  font-size: clamp(29px, 2.9vw, 40px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: #ffffff;
+  text-wrap: pretty;
+}
+
+.subtitle {
+  margin: 17px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #808080;
+  max-width: 42ch;
+}
+
+.ctaRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ctaPrimary,
+.ctaSecondary {
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.ctaPrimary {
+  background: #ffffff;
+  color: #0f0f0f;
+  font-weight: 600;
+}
+.ctaPrimary:hover {
+  background: #e5e5e5;
+}
+
+.ctaArrow {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.ctaSecondary {
+  background: var(--t-card-hover);
+  border-color: var(--t-stroke);
+  color: #ffffff;
+  font-weight: 500;
+}
+.ctaSecondary:hover {
+  background: #2a2a2a;
+  border-color: var(--t-stroke-hover);
+}
+
+/* ─── Status legend ─── */
+.status {
+  display: flex;
+  gap: 18px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #606060;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.statusItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.dotUp {
+  background: #4ade80;
+}
+.dotDown {
+  background: #f87171;
+}
+.dotLive {
+  background: #4ade80;
+  animation: statusPulse 2.5s ease-in-out infinite;
+}
+.dotInfo {
+  background: #60a5fa;
+}
+.dotIdle {
+  background: #404040;
+}
+
+@keyframes statusPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ─── Right: market wall ─── */
+.right {
+  position: relative;
+  padding: 17px 16px;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+.panelHead h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+}
+.badge {
+  font-size: 10px;
+  color: #606060;
+  background: var(--t-card-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+
+.tile {
+  background: rgba(15, 15, 15, 0.72);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--t-stroke);
+  border-radius: 6px;
+  padding: 12px 10px;
+  min-height: 99px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+.tile:hover {
+  background: #1a1a1a;
+  border-color: var(--t-stroke-hover);
+}
+.tile:focus-visible {
+  outline: none;
+  border-color: var(--t-stroke-hover);
+  box-shadow: 0 0 0 1px var(--t-stroke-hover);
+}
+
+.tileName {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.tileName span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #808080;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileSpark {
+  height: 24px;
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  flex: none;
+  display: block;
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 24px;
+  overflow: visible;
+}
+
+.tileFoot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+}
+.tilePrice {
+  color: #ffffff;
+}
+.tileChangeUp {
+  color: #4ade80;
+}
+.tileChangeDown {
+  color: #f87171;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  background: var(--t-card);
+  border: 1px solid var(--t-stroke);
+  border-radius: 6px;
+  padding: 12px 10px;
+  min-height: 99px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #808080;
+}
+
+/* ─── Skeletons ─── */
+.skelBar {
+  height: 9px;
+  border-radius: 4px;
+  background: #2a2a2a;
+  animation: statusPulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dotLive,
+  .skelBar,
+  .grid,
+  .glowGreen,
+  .glowBlue,
+  .sweep {
+    animation: none;
+  }
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 1024px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .left {
+    border-right: none;
+    border-bottom: 1px solid var(--t-stroke-sub);
+  }
+}
+
+@media (max-width: 768px) {
+  .hero {
+    margin: 10px;
+    border-radius: 16px;
+  }
+  .left {
+    padding: 34px 20px 25px;
+  }
+  .right {
+    padding: 14px 12px;
+  }
+  .ctaRow {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ctaPrimary,
+  .ctaSecondary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    margin: 8px;
+    border-radius: 14px;
+  }
+  .wall {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}

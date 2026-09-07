@@ -21,7 +21,7 @@ export default function DevCreateMarketPreviewRoute() {
         <CryptoMarketTicker />
       </div>
 
-      <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
+      <div className="relative min-h-[calc(100vh-152px)] w-full bg-[#1a1a1a] text-white">
         {/* Preview banner */}
         <div className="sticky top-0 z-20 w-full border-b border-amber-500/30 bg-amber-500/[0.08] backdrop-blur">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
