@@ -6,10 +6,18 @@ import type { MarketListItem, MarketListValueField } from './types';
 
 const ROW_COUNT = 4;
 
-function formatChange(changePct: number | null, direction: 'up' | 'down'): string {
-  if (changePct == null) return '—';
+function formatChange(changePct: number, direction: 'up' | 'down'): string {
   const abs = Math.abs(changePct).toFixed(1);
   return `${direction === 'up' ? '▲' : '▼'} ${abs}%`;
+}
+
+function displayValue(item: MarketListItem, valueField: MarketListValueField): string {
+  if (valueField === 'volume24h' && item.volumeNum > 0 && item.volume24h) {
+    return item.volume24h;
+  }
+  if (item.priceNum > 0 && item.price) return item.price;
+  if (item.volumeNum > 0 && item.volume24h) return item.volume24h;
+  return item.price || item.volume24h || '';
 }
 
 export interface MarketListProps {
@@ -17,7 +25,6 @@ export interface MarketListProps {
   markets: MarketListItem[];
   valueField: MarketListValueField;
   isLoading?: boolean;
-  error?: string | null;
 }
 
 const PanelHeader: React.FC<{ title: string; count: string }> = ({ title, count }) => (
@@ -32,7 +39,6 @@ const MarketList: React.FC<MarketListProps> = ({
   markets,
   valueField,
   isLoading = false,
-  error = null,
 }) => {
   const shown = markets.slice(0, ROW_COUNT);
 
@@ -42,13 +48,6 @@ const MarketList: React.FC<MarketListProps> = ({
       <div className={styles.list}>
         {isLoading ? (
           Array.from({ length: ROW_COUNT }, (_, i) => <SkeletonRow key={i} />)
-        ) : error ? (
-          <div className={`${styles.item} ${styles.itemIdle}`}>
-            <div className={styles.leftGroup}>
-              <i className={`${styles.dot} ${styles.dotError}`} />
-              <span className={styles.name}>{error}</span>
-            </div>
-          </div>
         ) : shown.length === 0 ? (
           <div className={`${styles.item} ${styles.itemIdle}`}>
             <div className={styles.leftGroup}>
@@ -68,28 +67,29 @@ const ListRow: React.FC<{ item: MarketListItem; valueField: MarketListValueField
   item,
   valueField,
 }) => {
+  const hasChange = item.changePct != null;
   const isUp = item.direction === 'up';
-  const changeText = formatChange(item.changePct, item.direction);
-  const signed =
-    item.changePct == null
-      ? 'unchanged'
-      : `${item.changePct >= 0 ? '+' : ''}${item.changePct.toFixed(1)}%`;
-  const value = valueField === 'volume24h' ? item.volume24h : item.price;
+  const value = displayValue(item, valueField);
+  const signed = hasChange
+    ? `${item.changePct! >= 0 ? '+' : ''}${item.changePct!.toFixed(1)}%`
+    : null;
 
   return (
     <Link href={`/token/${encodeURIComponent(item.slug)}`} className={styles.item}>
       <span className={styles.leftGroup}>
-        <i className={`${styles.dot} ${isUp ? styles.dotUp : styles.dotDown}`} />
+        <i className={`${styles.dot} ${hasChange ? (isUp ? styles.dotUp : styles.dotDown) : styles.dotIdle}`} />
         <span className={styles.name}>{item.name}</span>
       </span>
       <span className={styles.rightGroup}>
-        <span className={styles.value}>{value}</span>
-        <span
-          className={`${styles.change} ${isUp ? styles.up : styles.down}`}
-          aria-label={`${item.direction === 'up' ? 'up' : 'down'} ${signed}`}
-        >
-          <span aria-hidden="true">{changeText}</span>
-        </span>
+        {value ? <span className={styles.value}>{value}</span> : null}
+        {hasChange ? (
+          <span
+            className={`${styles.change} ${isUp ? styles.up : styles.down}`}
+            aria-label={`${item.direction === 'up' ? 'up' : 'down'} ${signed}`}
+          >
+            <span aria-hidden="true">{formatChange(item.changePct!, item.direction)}</span>
+          </span>
+        ) : null}
       </span>
     </Link>
   );

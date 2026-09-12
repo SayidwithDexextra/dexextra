@@ -51,14 +51,12 @@ const MarketStatsRow: React.FC = () => {
         markets={trending.markets}
         valueField="price"
         isLoading={trending.isLoading}
-        error={trending.error}
       />
       <MarketList
         title="Top Volume"
         markets={topVolume.markets}
         valueField="volume24h"
         isLoading={topVolume.isLoading}
-        error={topVolume.error}
       />
     </div>
   );
