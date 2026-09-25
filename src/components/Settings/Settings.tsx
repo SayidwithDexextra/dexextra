@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ethers } from 'ethers'
 import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { ProfileApi } from '@/lib/profileApi'
 import { formDataToUserProfile, userProfileToFormData, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
@@ -26,6 +27,7 @@ export default function Settings({ className }: SettingsProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { walletData, refreshProfile } = useWallet()
+  const { canMutate } = useDataAddress()
   const [walletCopied, setWalletCopied] = useState(false)
   const [uiStatusModal, setUiStatusModal] = useState<{
     isOpen: boolean
@@ -100,7 +102,7 @@ export default function Settings({ className }: SettingsProps) {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'profile' | 'banner' = 'profile') => {
     const file = e.target.files?.[0]
-    if (!file || !walletData.address) {
+    if (!canMutate || !file || !walletData.address) {
       return
     }
 
@@ -180,7 +182,7 @@ export default function Settings({ className }: SettingsProps) {
   }
 
   const handleRemoveImage = async (type: 'profile' | 'banner' = 'profile') => {
-    if (!walletData.address) {
+    if (!canMutate || !walletData.address) {
       return
     }
 
@@ -758,6 +760,10 @@ export default function Settings({ className }: SettingsProps) {
   }
 
   const handleSave = async () => {
+    if (!canMutate) {
+      setErrorMessage('Profile edits are disabled while viewing another user')
+      return
+    }
     if (!walletData.isConnected || !walletData.address) {
       setErrorMessage('Please connect your wallet first')
       return

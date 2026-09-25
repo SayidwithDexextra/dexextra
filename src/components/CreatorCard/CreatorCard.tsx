@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import styles from './CreatorCard.module.css';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
+import { useDataAddress } from '@/hooks/useDataAddress';
 
 interface CreatorCardProps {
   creatorWallet?: string;
@@ -27,6 +28,7 @@ export default function CreatorCard({
   const [creatorProfile, setCreatorProfile] = useState<CreatorProfile | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { canMutate } = useDataAddress();
 
   // Fetch creator profile
   useEffect(() => {
@@ -72,7 +74,7 @@ export default function CreatorCard({
   }, [currentUserWallet, creatorProfile?.id]);
 
   const handleFollow = useCallback(async () => {
-    if (!currentUserWallet || !creatorProfile?.id) return;
+    if (!canMutate || !currentUserWallet || !creatorProfile?.id) return;
 
     setIsLoading(true);
     try {
@@ -106,7 +108,7 @@ export default function CreatorCard({
     } finally {
       setIsLoading(false);
     }
-  }, [currentUserWallet, creatorProfile?.id, isFollowing]);
+  }, [canMutate, currentUserWallet, creatorProfile?.id, isFollowing]);
 
   const formatWallet = (wallet: string) => {
     return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
@@ -147,7 +149,8 @@ export default function CreatorCard({
           <button
             className={`${styles.followBtn} ${isFollowing ? styles.followBtnActive : ''}`}
             onClick={handleFollow}
-            disabled={isLoading}
+            disabled={!canMutate || isLoading}
+            title={canMutate ? undefined : 'Visual only — exit demo view to follow'}
           >
             {isLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
           </button>

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Image from 'next/image'
 import useWallet from '@/hooks/useWallet'
-import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
+import { useChromeAvatar, useViewAs } from '@/contexts/ViewAsContext'
 import WalletModal from './WalletModal'
 import WalletAccountModal from './WalletAccountModal'
 import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
@@ -149,6 +149,17 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   const [showAccountModal, setShowAccountModal] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const { walletData, formatAddress, formatBalance } = useWallet()
+  const { isViewingAs, demoName, viewAddress, reopenModal } = useViewAs()
+  const chromeAvatar = useChromeAvatar(walletData.userProfile?.profile_image_url)
+  const lensName = demoName || (viewAddress ? formatAddress(viewAddress) : 'Demo view')
+  const chromeName = walletData.isConnecting
+    ? 'Connecting...'
+    : isViewingAs
+      ? lensName
+      : walletData.isConnected
+        ? formatAddress(walletData.address || '')
+        : 'Connect Wallet'
+  const chromeHasIdentity = walletData.isConnected || isViewingAs
   const router = useRouter()
   const pathname = usePathname()
 
@@ -244,6 +255,10 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   }
 
   const openWalletSurface = async () => {
+    if (isViewingAs && !walletData.isConnected) {
+      reopenModal()
+      return
+    }
     // If the user is using Magic, prefer Magic's built-in wallet UI.
     if (walletData.isConnected && isMagicSelectedWallet()) {
       const res = await showMagicWalletUI()
@@ -356,29 +371,26 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                       className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden text-sm font-bold"
                       style={{
                         color: 'var(--t-chrome-fg)',
-                        background: walletData.isConnected 
+                        background: chromeHasIdentity
                           ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                           : 'linear-gradient(135deg, #666 0%, #888 100%)',
                       }}
                     >
                       {walletData.isConnecting 
                         ? <span>⏳</span>
-                        : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={40} height={40} className="w-full h-full object-cover" />
+                        : <Image src={chromeAvatar} alt="Profile" width={40} height={40} className="w-full h-full object-cover" />
                       }
                     </div>
                     <div>
                       <div className="font-medium text-base" style={{ color: 'var(--t-chrome-fg)' }}>
-                        {walletData.isConnecting 
-                          ? 'Connecting...'
-                          : walletData.isConnected 
-                            ? formatAddress(walletData.address || '')
-                            : 'Connect Wallet'
-                        }
+                        {chromeName}
                       </div>
                       <div style={{ color: 'var(--t-chrome-fg-sub)', fontSize: '13px' }}>
-                        {walletData.isConnected 
-                          ? formatBalance(walletData.balance || '0')
-                          : 'Tap to connect'
+                        {isViewingAs
+                          ? 'Visual only'
+                          : walletData.isConnected 
+                            ? formatBalance(walletData.balance || '0')
+                            : 'Tap to connect'
                         }
                       </div>
                     </div>
@@ -500,29 +512,26 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                 className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden text-sm font-bold"
                 style={{
                   color: 'var(--t-chrome-fg)',
-                  background: walletData.isConnected 
+                  background: chromeHasIdentity
                     ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                     : 'linear-gradient(135deg, #666 0%, #888 100%)',
                 }}
               >
                 {walletData.isConnecting 
                   ? <span>⏳</span>
-                  : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={36} height={36} className="w-full h-full object-cover" />
+                  : <Image src={chromeAvatar} alt="Profile" width={36} height={36} className="w-full h-full object-cover" />
                 }
               </div>
               <div>
                 <div className="font-medium text-sm" style={{ color: 'var(--t-chrome-fg)' }}>
-                  {walletData.isConnecting 
-                    ? 'Connecting...'
-                    : walletData.isConnected 
-                      ? formatAddress(walletData.address || '')
-                      : 'Connect Wallet'
-                  }
+                  {chromeName}
                 </div>
                 <div style={{ color: 'var(--t-chrome-fg-sub)', fontSize: '12px' }}>
-                  {walletData.isConnected 
-                    ? formatBalance(walletData.balance || '0')
-                    : 'Click to connect'
+                  {isViewingAs
+                    ? 'Visual only'
+                    : walletData.isConnected 
+                      ? formatBalance(walletData.balance || '0')
+                      : 'Click to connect'
                   }
                 </div>
               </div>
@@ -538,19 +547,21 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden text-xs font-bold cursor-pointer"
               style={{
                 color: 'var(--t-chrome-fg)',
-                background: walletData.isConnected 
-                  ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
-                  : 'linear-gradient(135deg, #666 0%, #888 100%)',
+                background: chromeHasIdentity
+                    ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
+                    : 'linear-gradient(135deg, #666 0%, #888 100%)',
               }}
               onClick={openWalletSurface}
-              title={walletData.isConnected 
-                ? `${formatAddress(walletData.address || '')} - ${formatBalance(walletData.balance || '0')}`
-                : 'Connect Wallet'
+              title={isViewingAs
+                ? `${lensName} — visual only`
+                : walletData.isConnected 
+                  ? `${formatAddress(walletData.address || '')} - ${formatBalance(walletData.balance || '0')}`
+                  : 'Connect Wallet'
               }
             >
               {walletData.isConnecting 
                 ? <span>⏳</span>
-                : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={32} height={32} className="w-full h-full object-cover" />
+                : <Image src={chromeAvatar} alt="Profile" width={32} height={32} className="w-full h-full object-cover" />
               }
             </div>
           </div>

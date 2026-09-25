@@ -2,6 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { createGaslessSession, type GaslessSessionPhase } from '@/lib/gasless';
 
 type SessionState = {
@@ -19,6 +20,7 @@ const SessionContext = createContext<SessionState | undefined>(undefined);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const { walletData } = useWallet() as any;
+  const { canMutate } = useDataAddress();
   const address = walletData?.address as string | undefined;
   const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -121,6 +123,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       console.error('[SessionContext] Gasless trading is not enabled');
       return { success: false, error: 'Gasless trading is not enabled. Please check configuration.' };
     }
+    if (!canMutate) {
+      return { success: false, error: 'Trading is disabled while viewing another user.' };
+    }
     if (!address) {
       console.error('[SessionContext] No wallet address available');
       return { success: false, error: 'Please connect your wallet first.' };
@@ -168,7 +173,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [GASLESS_ENABLED, address, storageKey, storageExpiryKey, storageMetaKey]);
+  }, [GASLESS_ENABLED, canMutate, address, storageKey, storageExpiryKey, storageMetaKey]);
 
   const clear = useCallback(() => {
     if (typeof window !== 'undefined' && storageKey) {

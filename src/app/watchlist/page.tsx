@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import useWallet from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
 import type { MarketOverviewRow } from '@/hooks/useMarketOverview';
 import { WatchlistMetricsBar } from '@/components/watchlist/WatchlistMetricsBar';
@@ -34,6 +35,7 @@ type WatchedUser = {
 export default function WatchlistPage() {
   const router = useRouter();
   const { walletData } = useWallet();
+  const { dataAddress, connectedAddress, canMutate } = useDataAddress();
   const [watchlistIds, setWatchlistIds] = useState<string[]>([]);
   const [watchlistMarkets, setWatchlistMarkets] = useState<MarketOverviewRow[]>([]);
   const [watchlistUserIds, setWatchlistUserIds] = useState<string[]>([]);
@@ -48,7 +50,7 @@ export default function WatchlistPage() {
   const [copiedWatchedUserId, setCopiedWatchedUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    const walletAddress = walletData?.address;
+    const walletAddress = dataAddress;
     if (!walletAddress) {
       setWatchlistIds([]);
       setWatchlistMarkets([]);
@@ -121,7 +123,7 @@ export default function WatchlistPage() {
 
     run();
     return () => ctrl.abort();
-  }, [walletData?.address]);
+  }, [dataAddress]);
 
   const { data: overview, error: marketsError } = useMarketOverview({
     limit: 500,
@@ -223,7 +225,7 @@ export default function WatchlistPage() {
   const handleAddMarketFromModal = useCallback(
     async ({ id, metricId }: { id: string; metricId?: string }) => {
       if (!id) return;
-      if (!walletData?.address) return;
+      if (!canMutate || !connectedAddress) return;
       if (watchlistPending.includes(id)) return;
       if (watchlistIds.includes(id)) return;
 
@@ -241,7 +243,7 @@ export default function WatchlistPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            wallet_address: walletData.address,
+            wallet_address: connectedAddress,
             market_id: id,
             metric_id: metricId,
           }),
@@ -257,13 +259,13 @@ export default function WatchlistPage() {
         setWatchlistPending((prev) => prev.filter((x) => x !== id));
       }
     },
-    [walletData?.address, watchlistIds, watchlistPending, overview]
+    [canMutate, connectedAddress, watchlistIds, watchlistPending, overview]
   );
 
   const handleAddUserFromModal = useCallback(
     async ({ id }: { id: string }) => {
       if (!id) return;
-      if (!walletData?.address) return;
+      if (!canMutate || !connectedAddress) return;
       if (watchlistUserPending.includes(id)) return;
       if (watchlistUserIds.includes(id)) return;
 
@@ -275,7 +277,7 @@ export default function WatchlistPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            wallet_address: walletData.address,
+            wallet_address: connectedAddress,
             watched_user_id: id,
           }),
         });
@@ -289,13 +291,13 @@ export default function WatchlistPage() {
         setWatchlistUserPending((prev) => prev.filter((x) => x !== id));
       }
     },
-    [walletData?.address, watchlistUserIds, watchlistUserPending]
+    [canMutate, connectedAddress, watchlistUserIds, watchlistUserPending]
   );
 
   const handleRemoveWatchedUser = useCallback(
     async (id: string) => {
       if (!id) return;
-      if (!walletData?.address) return;
+      if (!canMutate || !connectedAddress) return;
       if (watchlistUserPending.includes(id)) return;
 
       const prevIds = watchlistUserIds;
@@ -310,7 +312,7 @@ export default function WatchlistPage() {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            wallet_address: walletData.address,
+            wallet_address: connectedAddress,
             watched_user_id: id,
           }),
         });
@@ -325,7 +327,7 @@ export default function WatchlistPage() {
         setWatchlistUserPending((prev) => prev.filter((x) => x !== id));
       }
     },
-    [walletData?.address, watchlistUserIds, watchlistUserPending, watchlistUsers]
+    [canMutate, connectedAddress, watchlistUserIds, watchlistUserPending, watchlistUsers]
   );
 
   const handleCopyWatchedUserAddress = useCallback(async (u: WatchedUser) => {
@@ -341,7 +343,7 @@ export default function WatchlistPage() {
   const handleWatchlistToggle = async (row: MarketOverviewRow) => {
     const marketId = row.market_id;
     if (!marketId) return;
-    if (!walletData?.address) return;
+    if (!canMutate || !connectedAddress) return;
     if (watchlistPending.includes(marketId)) return;
 
     const isWatchlisted = watchlistIds.includes(marketId);
@@ -358,7 +360,7 @@ export default function WatchlistPage() {
         method: isWatchlisted ? 'DELETE' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          wallet_address: walletData.address,
+          wallet_address: connectedAddress,
           market_id: marketId,
           metric_id: row.market_identifier || row.symbol,
         }),
@@ -397,7 +399,7 @@ export default function WatchlistPage() {
     return ((hash % 200) - 100) / 10;
   }, []);
 
-  const isWalletConnected = Boolean(walletData?.address);
+  const isWalletConnected = Boolean(dataAddress);
   const showEmpty =
     isWalletConnected &&
     !watchlistLoading &&
@@ -993,7 +995,7 @@ export default function WatchlistPage() {
       <AddAssetsModal
         isOpen={isAddAssetsOpen}
         onClose={() => setIsAddAssetsOpen(false)}
-        walletAddress={walletData?.address}
+        walletAddress={canMutate ? connectedAddress : undefined}
         watchlistIds={watchlistIds}
         watchlistUserIds={watchlistUserIds}
         pendingMarketIds={watchlistPending}

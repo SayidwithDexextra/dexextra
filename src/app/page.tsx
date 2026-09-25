@@ -10,6 +10,7 @@ import { MarketPreviewModal } from '@/components/MarketPreviewModal';
 import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
 import useWallet from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
 import { transformOverviewToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
 import { MarketToolbar, MarketToolbarFilterSettings } from '@/components/MarketToolbar';
@@ -32,6 +33,7 @@ export default function Home() {
   const [rankingRows, setRankingRows] = useState<any[]>([]);
   const router = useRouter();
   const { walletData } = useWallet();
+  const { dataAddress, connectedAddress, canMutate } = useDataAddress();
   const { tiles: wallTiles, isLoading: wallLoading, totalMarkets: wallTotal } =
     useMarketWallTiles(6);
 
@@ -83,7 +85,7 @@ export default function Home() {
   const baseMarkets = useMemo(() => (overview as any[]) || [], [overview]);
 
   useEffect(() => {
-    const walletAddress = walletData?.address;
+    const walletAddress = dataAddress;
     if (!walletAddress) {
       setWatchlistIds([]);
       setIsWatchlistSorted(false);
@@ -108,7 +110,7 @@ export default function Home() {
     };
     run();
     return () => ctrl.abort();
-  }, [walletData?.address]);
+  }, [dataAddress]);
   
   // Extract unique categories from markets for filter options
   const marketFilters = useMemo(() => {
@@ -481,8 +483,8 @@ export default function Home() {
     const marketId = card.id;
     const metricId = card.metricId || '';
     if (!marketId) return;
-    if (!walletData?.address) {
-      console.warn('Connect a wallet to add to watchlist.');
+    if (!canMutate || !connectedAddress) {
+      console.warn('Watchlist changes are disabled while viewing another user.');
       return;
     }
     if (watchlistPending.includes(marketId)) return;
@@ -497,7 +499,7 @@ export default function Home() {
         method: isWatchlisted ? 'DELETE' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          wallet_address: walletData.address,
+          wallet_address: connectedAddress,
           market_id: marketId,
           metric_id: metricId,
         }),
@@ -571,7 +573,7 @@ export default function Home() {
                 onWatchlistToggle={handleWatchlistToggle}
                 watchlistIds={watchlistIds}
                 watchlistPendingIds={watchlistPending}
-                isWatchlistDisabled={!walletData?.address}
+                isWatchlistDisabled={!canMutate || !connectedAddress}
                 isLoading={marketsLoading}
                 toolbar={
                   <MarketToolbar

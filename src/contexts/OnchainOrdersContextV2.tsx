@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { getPusherClient } from '@/lib/pusher-client';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -130,8 +130,8 @@ function mapV2Order(raw: any): OnchainOrder | null {
 
 // ── Provider ───────────────────────────────────────────────────────────
 export function OnchainOrdersProvider({ children }: { children: React.ReactNode }) {
-  const wallet = useWallet() as any;
-  const walletAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
+  const { dataAddress } = useDataAddress();
+  const walletAddress: string | null = dataAddress;
 
   const [orders, setOrders] = useState<OnchainOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);

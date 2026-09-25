@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
 import { supabase } from '@/lib/supabase'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { getRpcUrl, getChainId } from '@/lib/network'
 import { OBTradeExecutionFacetABI } from '@/lib/contracts'
 
@@ -76,10 +76,10 @@ export interface UseOnChainTradesResult {
 }
 
 export function useOnChainTrades(): UseOnChainTradesResult {
-  const { walletData } = useWallet() as any
+  const { dataAddress } = useDataAddress()
   // Use lowercase like useAccountActivity does
-  const walletAddress = walletData?.address?.toLowerCase() || null
-  const isConnected = Boolean(walletData?.isConnected && walletAddress)
+  const walletAddress = dataAddress?.toLowerCase() || null
+  const isConnected = Boolean(walletAddress)
 
   const [trades, setTrades] = useState<OnChainTrade[]>([])
   const [uniqueMarkets, setUniqueMarkets] = useState<Array<{ marketId: string; marketAddress: string; symbol: string }>>([])

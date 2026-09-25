@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
 import { supabase } from '@/lib/supabase'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { getRpcUrl, getChainId } from '@/lib/network'
 import { OBTradeExecutionFacetABI } from '@/lib/contracts'
 
@@ -263,9 +263,9 @@ export function useAccountActivity(options: UseAccountActivityOptions = {}): Use
     dateRange,
   } = options
 
-  const { walletData } = useWallet() as any
-  const walletAddress = walletData?.address?.toLowerCase() || null
-  const isConnected = Boolean(walletData?.isConnected && walletAddress)
+  const { dataAddress } = useDataAddress()
+  const walletAddress = dataAddress?.toLowerCase() || null
+  const isConnected = Boolean(walletAddress)
 
   const [activities, setActivities] = useState<ActivityRecord[]>([])
   const [trades, setTrades] = useState<TradeRecord[]>([])

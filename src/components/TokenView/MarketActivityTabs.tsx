@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
@@ -501,7 +502,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     }));
   }, [globalOnchainOrders]);
   const wallet = useWallet() as any;
-  const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
+  const { dataAddress, connectedAddress, canMutate } = useDataAddress();
+  const walletAddress = dataAddress;
   const GASLESS = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   const truncateMarketName = useCallback((raw: string, maxWords = 3) => {
     const cleaned = String(raw || '').replace(/\s+/g, ' ').trim();
@@ -1581,6 +1583,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
 
   // Handle top-up action
   const handleTopUp = (position: Position) => {
+    if (!canMutate) return;
     setTopUpPositionId(position.id);
     setTopUpSymbol(position.symbol);
     setCurrentMargin(position.margin);
@@ -1593,7 +1596,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   };
 
   const handleTopUpSubmit = async () => {
-    if (!topUpPositionId || !topUpAmount || !walletAddress) return;
+    if (!canMutate || !connectedAddress) return;
+    if (!topUpPositionId || !topUpAmount) return;
 
     const amtNum = Number(topUpAmount);
     if (Number.isNaN(amtNum) || amtNum <= 0) {
@@ -1610,7 +1614,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         const activeSessionId =
           globalSessionId ||
           (typeof window !== 'undefined'
-            ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+            ? (window.localStorage.getItem(`gasless:session:${connectedAddress}`) || '')
             : '');
 
         let res: { success: boolean; txHash?: string; error?: string };
@@ -1618,7 +1622,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         if (activeSessionId && globalSessionActive === true) {
           res = await sessionTopUpPosition({
             vault: CONTRACT_ADDRESSES.CORE_VAULT,
-            trader: walletAddress,
+            trader: connectedAddress,
             marketId,
             amount: topUpAmount,
             sessionId: activeSessionId,
@@ -1629,7 +1633,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         } else {
           res = await gaslessTopUpPosition({
             vault: CONTRACT_ADDRESSES.CORE_VAULT,
-            trader: walletAddress,
+            trader: connectedAddress,
             marketId,
             amount: topUpAmount,
           });
@@ -1685,7 +1689,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   };
 
   const handleCloseSubmit = async () => {
-    if (!closePositionId || !closeSize || !walletAddress) return;
+    if (!canMutate || !connectedAddress) return;
+    if (!closePositionId || !closeSize) return;
     
     const validationError = validateCloseSize(closeSize);
     if (validationError) {
@@ -1748,7 +1753,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         const activeSessionId =
           globalSessionId ||
           (typeof window !== 'undefined'
-            ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+            ? (window.localStorage.getItem(`gasless:session:${connectedAddress}`) || '')
             : '');
         if (!activeSessionId || globalSessionActive !== true) {
           throw new Error('Trading session is not enabled. Click Enable Trading before closing positions gaslessly.');
@@ -1757,7 +1762,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           method: 'sessionPlaceMarginMarket',
           orderBook: obAddress,
           sessionId: activeSessionId,
-          trader: walletAddress as string,
+          trader: connectedAddress as string,
           amountWei: amountWei,
           isBuy,
         });
@@ -2212,12 +2217,12 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   }, [activeTab, walletAddress, fetchOrderHistory]);
 
   const handleCancelAllOrders = useCallback(async () => {
-    if (isCancelingAll || !walletAddress || displayedOpenOrders.length === 0) return;
+    if (!canMutate || isCancelingAll || !connectedAddress || displayedOpenOrders.length === 0) return;
 
     const activeSessionId =
       globalSessionId ||
       (typeof window !== 'undefined'
-        ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+        ? (window.localStorage.getItem(`gasless:session:${connectedAddress}`) || '')
         : '');
 
     if (GASLESS && (!activeSessionId || globalSessionActive !== true)) {
@@ -2259,7 +2264,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
             method: 'sessionCancelOrder',
             orderBook: obAddress,
             sessionId: activeSessionId,
-            trader: walletAddress as string,
+            trader: connectedAddress as string,
             orderId: oid as unknown as bigint,
           });
 
@@ -2364,10 +2369,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     }
 
     setIsCancelingAll(false);
-  }, [isCancelingAll, walletAddress, displayedOpenOrders, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders, showError]);
+  }, [canMutate, connectedAddress, isCancelingAll, displayedOpenOrders, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders, showError]);
 
   const handleModifySubmit = useCallback(async () => {
-    if (!modifyOrder || !walletAddress || isModifying) return;
+    if (!canMutate || !modifyOrder || !connectedAddress || isModifying) return;
 
     const newPrice = parseFloat(modifyPrice);
     const newSize = parseFloat(modifySize);
@@ -2390,7 +2395,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     const activeSessionId =
       globalSessionId ||
       (typeof window !== 'undefined'
-        ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+        ? (window.localStorage.getItem(`gasless:session:${connectedAddress}`) || '')
         : '');
 
     if (GASLESS && (!activeSessionId || globalSessionActive !== true)) {
@@ -2424,7 +2429,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         method: 'sessionCancelOrder',
         orderBook: obAddress,
         sessionId: activeSessionId,
-        trader: walletAddress as string,
+        trader: connectedAddress as string,
         orderId: oid as unknown as bigint,
       });
 
@@ -2476,7 +2481,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         method: 'sessionPlaceMarginLimit',
         orderBook: obAddress,
         sessionId: activeSessionId,
-        trader: walletAddress as string,
+        trader: connectedAddress as string,
         priceWei: priceWei as unknown as bigint,
         amountWei: sizeWei as unknown as bigint,
         isBuy,
@@ -2539,7 +2544,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     } finally {
       setIsModifying(false);
     }
-  }, [modifyOrder, modifyPrice, modifySize, walletAddress, isModifying, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders]);
+  }, [canMutate, connectedAddress, modifyOrder, modifyPrice, modifySize, isModifying, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders]);
 
   const tabs = [
     { id: 'positions' as TabType, label: 'Positions', shortLabel: 'Pos', count: displayedPositions.length },
@@ -2974,13 +2979,16 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                           <div className="flex items-center gap-1.5 sm:gap-2">
                             <button
                               onClick={() => handleTopUp(position)}
-                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200"
+                              disabled={!canMutate}
+                              title={canMutate ? undefined : 'Visual only — exit demo view to top up'}
+                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <span className="sm:hidden">Top Up</span>
                               <span className="hidden sm:inline">Top Up Position</span>
                             </button>
                             <button
                               onClick={async () => {
+                                if (!canMutate) return;
                                 setClosePositionId(position.id);
                                 setCloseSymbol(position.symbol);
                                 setMaxSize(position.size);
@@ -3000,7 +3008,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                 }
                               }}
                               data-walkthrough="token-activity-close-position"
-                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
+                              disabled={!canMutate}
+                              title={canMutate ? undefined : 'Visual only — exit demo view to close'}
+                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <span className="sm:hidden">Close</span>
                               <span className="hidden sm:inline">Close Position</span>
@@ -3041,7 +3051,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         </span>
                         <button
                           onClick={handleCancelAllOrders}
-                          disabled={isCancelingAll || isCancelingOrder}
+                          disabled={!canMutate || isCancelingAll || isCancelingOrder}
+                          title={canMutate ? undefined : 'Visual only — exit demo view to cancel'}
                           className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 border border-red-400/20 hover:border-red-400/30 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isCancelingAll
@@ -3228,13 +3239,15 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                         {order.type === 'LIMIT' && (
                                           <button
                                             onClick={() => {
+                                              if (!canMutate) return;
                                               setModifyOrder(order);
                                               setModifyPrice(String(order.price));
                                               setModifySize(String(order.size));
                                               setModifyError(null);
                                               setShowModifyModal(true);
                                             }}
-                                            disabled={isCancelingOrder || isCancelingAll || isModifying}
+                                            disabled={!canMutate || isCancelingOrder || isCancelingAll || isModifying}
+                                            title={canMutate ? undefined : 'Visual only — exit demo view to modify'}
                                             className="px-2 sm:px-2.5 py-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 bg-blue-400/5 hover:bg-blue-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                                           >
                                             Modify
@@ -3242,6 +3255,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                         )}
                                         <button
                                           onClick={async () => {
+                                            if (!canMutate) return;
                                             const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                             const revertOrder = () => {
                                               cancelSlideOut(removalKey);
@@ -3256,14 +3270,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                               setIsCancelingOrder(true);
                                               const metric = String(order.metricId || order.symbol);
                                               const obAddress = order.orderBookAddress || resolveOrderBookAddress(metric || order.symbol);
-                                              if (GASLESS && walletAddress && obAddress) {
+                                              if (GASLESS && connectedAddress && obAddress) {
                                                 let oid: bigint;
                                                 try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
                                                 if (oid === 0n) throw new Error('Invalid order id');
                                                 const activeSessionId =
                                                   globalSessionId ||
                                                   (typeof window !== 'undefined'
-                                                    ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+                                                    ? (window.localStorage.getItem(`gasless:session:${connectedAddress}`) || '')
                                                     : '');
                                                 if (!activeSessionId || globalSessionActive !== true) {
                                                   throw new Error('Trading session is not enabled. Click Enable Trading before using gasless cancel.');
@@ -3274,7 +3288,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                                   method: 'sessionCancelOrder',
                                                   orderBook: obAddress,
                                                   sessionId: activeSessionId,
-                                                  trader: walletAddress as string,
+                                                  trader: connectedAddress as string,
                                                   orderId: oid as unknown as bigint,
                                                 });
                                                 if (!r.success) {
@@ -3353,7 +3367,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                               setIsCancelingOrder(false);
                                             }
                                           }}
-                                          disabled={isCancelingOrder}
+                                          disabled={!canMutate || isCancelingOrder}
+                                          title={canMutate ? undefined : 'Visual only — exit demo view to cancel'}
                                           className="px-2 sm:px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                           {isCancelingOrder ? 'Canceling...' : 'Cancel Order'}

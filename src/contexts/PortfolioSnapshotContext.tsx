@@ -12,7 +12,7 @@
 'use client'
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { usePositions } from '@/hooks/usePositions'
 import { CHAIN_CONFIG } from '@/lib/contractConfig'
@@ -177,9 +177,9 @@ function persistPositionsToSession(key: string, payload: PositionsSessionPayload
 }
 
 export function PortfolioSnapshotProvider({ children }: { children: React.ReactNode }) {
-  const { walletData } = useWallet() as any
-  const walletAddress: string | null = walletData?.address || null
-  const isConnected = Boolean(walletData?.isConnected && walletAddress)
+  const { dataAddress } = useDataAddress()
+  const walletAddress: string | null = dataAddress
+  const isConnected = Boolean(walletAddress)
 
   // Single source hooks
   const summary = usePortfolioSummary(walletAddress, {

@@ -6,7 +6,7 @@ import React, { useMemo } from 'react'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { usePortfolioData } from '@/hooks/usePortfolioData'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 
 type KPI = {
 	label: string
@@ -41,7 +41,7 @@ function Sparkline() {
 
 export default function EvaluationCard() {
 	const theme = getPortfolioTheme()
-	const { walletData } = useWallet() as any
+	const { dataAddress } = useDataAddress()
 	const {
 		totalCollateral,
 		availableBalance,
@@ -52,13 +52,13 @@ export default function EvaluationCard() {
 		socializedLoss,
 		isLoading,
 		isHealthy,
-	} = useCoreVault()
-	const portfolio = usePortfolioSummary(walletData?.address || null, {
-		enabled: Boolean(walletData?.isConnected && walletData?.address),
+	} = useCoreVault(dataAddress || undefined)
+	const portfolio = usePortfolioSummary(dataAddress, {
+		enabled: Boolean(dataAddress),
 		refreshIntervalMs: 15_000,
 	})
 	// Prevent a brief flash of fallback (often incorrect) values before the detailed summary loads.
-	const hidePortfolioUntilSummaryReady = Boolean(walletData?.isConnected && portfolio.isLoading && !portfolio.summary)
+	const hidePortfolioUntilSummaryReady = Boolean(dataAddress && portfolio.isLoading && !portfolio.summary)
 	const { positions, activeOrdersCount, hasLoadedOnce: portfolioHasLoaded, isLoading: isLoadingPortfolio } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 
 	// Parse numeric values safely

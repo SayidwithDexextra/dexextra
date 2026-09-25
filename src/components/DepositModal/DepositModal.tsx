@@ -10,6 +10,7 @@ import DepositTokenSelect from './DepositTokenSelect'
 import DepositExternalInput from './DepositExternalInput'
 import SpokeDepositModal from '@/components/DepositModal/SpokeDepositModal'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { useGeoRestriction } from '@/hooks/useGeoRestriction'
 import { useDepositGasEstimate } from '@/hooks/useDepositGasEstimate'
@@ -34,6 +35,7 @@ export default function DepositModal({
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'success' | 'error'>('pending')
   const [error, setError] = useState<string | null>(null)
   const { walletAddress } = useWalletAddress()
+  const { canMutate } = useDataAddress()
   const coreVault = useCoreVault()
   const { isRestricted: isGeoRestricted, countryName: geoCountryName } = useGeoRestriction()
   const { gasFeeUsd, gasFeeEth, isLoading: isGasLoading } = useDepositGasEstimate(42161) // Arbitrum
@@ -190,6 +192,11 @@ export default function DepositModal({
 
   // Function to handle deposit
   const handleDeposit = async () => {
+    if (!canMutate) {
+      setError('Deposits are disabled while viewing another user')
+      setStep('error')
+      return
+    }
     if (!depositAmount) return
     
     setStep('processing')

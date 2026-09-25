@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useWallet } from './useWallet'
+import { useDataAddress } from './useDataAddress'
 import { usePositions } from './usePositions'
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig'
 
@@ -64,8 +64,8 @@ type OrdersSessionCachePayload = {
  * Ensures consistent loading, retry logic, and prevents race conditions
  */
 export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?: number; listenToEvents?: boolean }): PortfolioData {
-	const { walletData } = useWallet() as any
-	const walletAddress = walletData?.address
+	const { dataAddress } = useDataAddress()
+	const walletAddress = dataAddress
 	const enabled = options?.enabled !== false
 	const listenToEvents = options?.listenToEvents !== false
 

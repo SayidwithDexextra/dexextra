@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
-import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
+import { useDataAddress } from '@/hooks/useDataAddress'
+import { useChromeAvatar, useViewAs } from '@/contexts/ViewAsContext'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { useMarkets } from '@/hooks/useMarkets'
@@ -50,15 +51,21 @@ const DEXETERA_PLACEHOLDER_ICON_SRC = '/Dexicon/LOGO-Dexetera-05.svg'
 export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarProps) {
 	const router = useRouter()
 	const { walletData } = useWallet() as any
-	const walletAddress: string | null = walletData?.address || null
-	const isWalletConnected = Boolean(walletData?.isConnected && walletAddress)
-	const isMagicWallet = Boolean(isWalletConnected && isMagicSelectedWallet())
-	const profileImageUrl: string | null = walletData?.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE
-	const profileLabel: string = String(
-		walletData?.userProfile?.display_name ||
-		walletData?.userProfile?.username ||
-		(walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : 'Guest')
-	)
+	const { dataAddress, canMutate, isViewingAs } = useDataAddress()
+	const { demoName } = useViewAs()
+	const connectedAddress: string | null = walletData?.address || null
+	const walletAddress: string | null = dataAddress
+	const isWalletConnected = Boolean(walletAddress)
+	const isReallyConnected = Boolean(walletData?.isConnected && connectedAddress)
+	const isMagicWallet = Boolean(isReallyConnected && isMagicSelectedWallet())
+	const profileImageUrl = useChromeAvatar(walletData?.userProfile?.profile_image_url)
+	const profileLabel: string = isViewingAs
+		? (demoName || (walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : 'Demo view'))
+		: String(
+			walletData?.userProfile?.display_name ||
+			walletData?.userProfile?.username ||
+			(walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : 'Guest')
+		)
 	const profileInitial = (profileLabel.trim().slice(0, 1) || 'D').toUpperCase()
 
 	// Sidebar view state (portfolio overview vs inline withdraw)
@@ -420,7 +427,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	}, [sidebarView])
 
 	const handleWithdraw = async () => {
-		if (!canWithdraw) return
+		if (!canMutate || !canWithdraw) return
 		setWithdrawSubmitting(true)
 		setWithdrawNotice({ kind: 'none', message: '' })
 		setWithdrawTxHash('')
@@ -555,7 +562,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									...(hasRevenue ? [{ id: 'revenue' as const, label: 'Revenue' }] : []),
 								] as Array<{ id: SidebarView; label: string }>).map((t) => {
 									const isActive = sidebarView === t.id
-									const isDisabled = t.id !== 'portfolio' && !isWalletConnected
+									const isDisabled =
+										(t.id !== 'portfolio' && !isWalletConnected) ||
+										(t.id === 'withdraw' && !canMutate)
 									return (
 										<button
 											key={t.id}
@@ -604,10 +613,11 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								<button
 									type="button"
 									onClick={() => {
+										if (!canMutate) return
 										onClose()
 										setTimeout(() => {
 											if (typeof window !== 'undefined') {
-												if (!isWalletConnected) {
+												if (!isReallyConnected) {
 													window.dispatchEvent(new CustomEvent('walkthrough:wallet:open'))
 												} else {
 													window.dispatchEvent(new CustomEvent('walkthrough:deposit:open'))
@@ -615,7 +625,14 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											}
 										}, 350)
 									}}
-									className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-t-stroke text-t-fg-sub hover:border-[#4a9eff] hover:bg-[#4a9eff]/10 hover:text-[#4a9eff]"
+									disabled={!canMutate}
+									title={!canMutate ? 'Visual only — exit demo view to deposit' : undefined}
+									className={[
+										'h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200',
+										!canMutate
+											? 'border-t-stroke text-t-fg-muted opacity-60 cursor-not-allowed'
+											: 'border-t-stroke text-t-fg-sub hover:border-[#4a9eff] hover:bg-[#4a9eff]/10 hover:text-[#4a9eff]',
+									].join(' ')}
 									aria-label="Deposit funds"
 								>
 									<Wallet className="w-3.5 h-3.5" />
@@ -1441,7 +1458,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									) : null}
 
 									<button
-										disabled={!canWithdraw || coreVault.isLoading || withdrawSubmitting}
+										disabled={!canMutate || !canWithdraw || coreVault.isLoading || withdrawSubmitting}
+										title={canMutate ? undefined : 'Visual only — exit demo view to withdraw'}
 										onClick={handleWithdraw}
 										className={[
 											'w-full mt-4 text-[11px] font-medium rounded-md px-3 py-2.5 border transition-all duration-200',

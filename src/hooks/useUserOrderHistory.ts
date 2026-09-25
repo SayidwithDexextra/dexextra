@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 
 export interface UserOrder {
   orderId: string
@@ -41,9 +41,9 @@ export interface UseUserOrderHistoryResult {
 }
 
 export function useUserOrderHistory(): UseUserOrderHistoryResult {
-  const { walletData } = useWallet() as any
-  const walletAddress = walletData?.address || null
-  const isConnected = Boolean(walletData?.isConnected && walletAddress)
+  const { dataAddress } = useDataAddress()
+  const walletAddress = dataAddress
+  const isConnected = Boolean(walletAddress)
 
   const [orders, setOrders] = useState<UserOrder[]>([])
   const [isLoading, setIsLoading] = useState(false)

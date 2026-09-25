@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSupabaseClient } from '@/lib/supabase-browser';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
+import { useDataAddress } from '@/hooks/useDataAddress';
 
 // Database types
 export interface DbComment {
@@ -155,6 +156,7 @@ export function useComments({
   sortBy = 'newest',
   limit = 20,
 }: UseCommentsOptions): UseCommentsReturn {
+  const { canMutate } = useDataAddress();
   const [comments, setComments] = useState<Comment[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -341,6 +343,9 @@ export function useComments({
   // Submit comment
   const submitComment = useCallback(
     async (text: string, images?: File[]): Promise<{ success: boolean; error?: string }> => {
+      if (!canMutate) {
+        return { success: false, error: 'Comments are disabled while viewing another user' };
+      }
       if (!userWallet) {
         return { success: false, error: 'Wallet not connected' };
       }
@@ -411,12 +416,15 @@ export function useComments({
         };
       }
     },
-    [marketId, marketIdentifier, userWallet, userName, supabase, refetch]
+    [canMutate, marketId, marketIdentifier, userWallet, userName, supabase, refetch]
   );
 
   // Submit reply
   const submitReply = useCallback(
     async (parentId: string, text: string): Promise<{ success: boolean; error?: string }> => {
+      if (!canMutate) {
+        return { success: false, error: 'Comments are disabled while viewing another user' };
+      }
       if (!userWallet) {
         return { success: false, error: 'Wallet not connected' };
       }
@@ -464,7 +472,7 @@ export function useComments({
         };
       }
     },
-    [marketId, marketIdentifier, userWallet, userName, supabase, refetch]
+    [canMutate, marketId, marketIdentifier, userWallet, userName, supabase, refetch]
   );
 
   // Recursive helper to update a comment at any nesting depth
@@ -498,7 +506,7 @@ export function useComments({
   // Like comment
   const likeComment = useCallback(
     async (commentId: string) => {
-      if (!userWallet) return;
+      if (!canMutate || !userWallet) return;
 
       try {
         await supabase.from('comment_likes').insert({
@@ -517,13 +525,13 @@ export function useComments({
         console.error('Error liking comment:', err);
       }
     },
-    [userWallet, supabase]
+    [canMutate, userWallet, supabase]
   );
 
   // Unlike comment
   const unlikeComment = useCallback(
     async (commentId: string) => {
-      if (!userWallet) return;
+      if (!canMutate || !userWallet) return;
 
       try {
         await supabase
@@ -543,12 +551,15 @@ export function useComments({
         console.error('Error unliking comment:', err);
       }
     },
-    [userWallet, supabase]
+    [canMutate, userWallet, supabase]
   );
 
   // Delete comment (soft delete)
   const deleteComment = useCallback(
     async (commentId: string) => {
+      if (!canMutate) {
+        return { success: false, error: 'Comments are disabled while viewing another user' };
+      }
       if (!userWallet) {
         console.error('Cannot delete comment: no user wallet connected');
         return;
@@ -621,13 +632,13 @@ export function useComments({
         console.error('Error deleting comment:', err);
       }
     },
-    [userWallet, supabase]
+    [canMutate, userWallet, supabase]
   );
 
   // Report comment
   const reportComment = useCallback(
     async (commentId: string, reason: string, description?: string) => {
-      if (!userWallet) return;
+      if (!canMutate || !userWallet) return;
 
       try {
         await supabase.from('comment_reports').insert({
@@ -640,7 +651,7 @@ export function useComments({
         console.error('Error reporting comment:', err);
       }
     },
-    [userWallet, supabase]
+    [canMutate, userWallet, supabase]
   );
 
   // Initial fetch

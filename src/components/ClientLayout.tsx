@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import Navbar from "./Navbar";
 import Header from "./Header";
 import { WalletProvider } from "@/hooks/useWallet";
+import { ViewAsProvider } from "@/contexts/ViewAsContext";
 import Footer from "./Footer";
 import { DeploymentOverlayProvider } from "@/contexts/DeploymentOverlayContext";
 import { SessionProvider } from "@/contexts/SessionContext";
@@ -20,6 +21,7 @@ import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
 import ComingSoonGate from "@/components/ComingSoonOverlay";
 import GeoBlockWarningModal from "@/components/GeoBlockWarningModal";
 import EarlyAccessWarningModal from "@/components/EarlyAccessWarningModal";
+import DemoViewModal from "@/components/ViewAs/DemoViewModal";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { useReferralCapture } from "@/hooks/useReferralCapture";
 
@@ -69,6 +71,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
   return (
     <ComingSoonGate>
       <WalletProvider>
+        <ViewAsProvider>
         <SessionProvider>
         <OnchainOrdersProvider>
         <DeploymentOverlayProvider>
@@ -80,6 +83,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                   <ExternalAppOpenGuard />
                   <GeoBlockWarningModal />
                   <EarlyAccessWarningModal />
+                  <DemoViewModal />
                   <WalkthroughAutoStart />
                   <div className="relative">
                     <Header />
@@ -126,6 +130,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
         </DeploymentOverlayProvider>
         </OnchainOrdersProvider>
       </SessionProvider>
+        </ViewAsProvider>
     </WalletProvider>
     </ComingSoonGate>
   );

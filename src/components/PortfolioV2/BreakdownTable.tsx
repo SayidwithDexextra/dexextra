@@ -4,7 +4,7 @@ import Card from './Card'
 import { useMemo } from 'react'
 import { usePortfolioData } from '@/hooks/usePortfolioData'
 import { useMarkets } from '@/hooks/useMarkets'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { cancelOrderForMarket } from '@/hooks/useOrderBook'
 import React, { useEffect, useRef, useState } from 'react'
 import ClosedPositionModal from './ClosedPositionModal'
@@ -43,8 +43,8 @@ const logGoddBreakdown = (step: number, message: string, data?: any) => {
 export default function BreakdownTable() {
 	const { positions, ordersBuckets, isLoading: isLoadingPortfolio, hasLoadedOnce: portfolioHasLoaded, refreshOrders } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 	const { markets, isLoading: marketsLoading } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
-	const { walletData } = useWallet() as any
-	const walletAddress = walletData?.address
+	const { dataAddress, canMutate } = useDataAddress()
+	const walletAddress = dataAddress
 	const [cancellingId, setCancellingId] = useState<string | null>(null)
 	const [closeModal, setCloseModal] = useState<{ open: boolean; positionId: string | null; symbol: string; maxSize: number }>({
 		open: false,
@@ -437,6 +437,7 @@ export default function BreakdownTable() {
 									<div className="py-3 text-right pr-2">
 										<button
 											onClick={async () => {
+												if (!canMutate) return
 												try {
 													setCancellingId(row.id)
 													const ok = await cancelOrderForMarket(row.id, row.metric)
@@ -448,7 +449,8 @@ export default function BreakdownTable() {
 													setCancellingId((prev) => (prev === row.id ? null : prev))
 												}
 											}}
-											disabled={cancellingId === row.id}
+											disabled={!canMutate || cancellingId === row.id}
+											title={canMutate ? undefined : 'Visual only — exit demo view to cancel'}
 											className="text-xs p-1 rounded border text-red-400 disabled:opacity-50"
 											style={{ borderColor: '#333333' }}
 										>

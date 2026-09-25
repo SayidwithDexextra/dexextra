@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useWallet from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 import { useSession } from '@/contexts/SessionContext'
 import EnableTradingModal from './EnableTradingModal'
 
@@ -12,9 +13,10 @@ import EnableTradingModal from './EnableTradingModal'
  */
 export default function EnableTradingPrompt() {
   const { walletData } = useWallet()
+  const { canMutate } = useDataAddress()
   const { sessionActive } = useSession()
 
-  const isConnected = Boolean(walletData?.isConnected && walletData?.address)
+  const isConnected = Boolean(canMutate && walletData?.isConnected && walletData?.address)
   const isSessionKnown = sessionActive !== null
 
   // Track previous connection state to detect "just connected"
@@ -82,8 +84,6 @@ export default function EnableTradingPrompt() {
       window.localStorage.setItem(storageKey, `${Date.now()}`)
     }
   }
-
-  if (!open) return null
 
   return (
     <EnableTradingModal

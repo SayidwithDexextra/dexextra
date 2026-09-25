@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import type { Address } from 'viem';
 import { createClientWithRPC } from '@/lib/viemClient';
 import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { initializeContracts, formatTokenAmount, parseTokenAmount } from '@/lib/contracts';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { env } from '@/lib/env';
@@ -59,6 +60,7 @@ export interface VaultBalances {
 
 export function useCoreVault(walletAddress?: string) {
   const wallet = useWallet() as any;
+  const { dataAddress, connectedAddress, canMutate } = useDataAddress();
   const address = wallet?.walletData?.address || null;
   const isConnected = wallet?.walletData?.isConnected;
   const [contracts, setContracts] = useState<any>(null);
@@ -83,8 +85,9 @@ export function useCoreVault(walletAddress?: string) {
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initStartedRef = useRef<boolean>(false);
   
-  // Use provided wallet address or default to connected wallet
-  const userAddress = walletAddress || address;
+  // Reads follow the view-as lens; writes always use the connected wallet.
+  const userAddress = walletAddress || dataAddress || address;
+  const writeAddress = connectedAddress;
   
   // Contract addresses for the UI
   const vaultAddress = CONTRACT_ADDRESSES.CORE_VAULT;
@@ -734,18 +737,19 @@ export function useCoreVault(walletAddress?: string) {
 
   // Deposit collateral - returns transaction hash for compatibility with DepositModal
   const depositCollateral = useCallback(async (amount: string): Promise<string> => {
+    if (!canMutate) throw new Error('Deposits are disabled while viewing another user');
     const currentContracts = await getWriteContracts();
     if (!currentContracts) throw new Error('Contracts not initialized or wallet not connected');
-    if (!userAddress) throw new Error('Wallet address not available');
+    if (!writeAddress) throw new Error('Wallet address not available');
 
     try {
-      console.log(`💰 [RPC] Starting collateral deposit for ${userAddress.slice(0, 6)}...`, { amount });
+      console.log(`💰 [RPC] Starting collateral deposit for ${writeAddress.slice(0, 6)}...`, { amount });
       // Parse amount to BigInt with 6 decimals (USDC standard)
       const amountWei = parseTokenAmount(amount);
 
       // Preflight: ensure sufficient USDC balance
       try {
-        const balanceWei: bigint = await currentContracts.mockUSDC.balanceOf(userAddress);
+        const balanceWei: bigint = await currentContracts.mockUSDC.balanceOf(writeAddress);
         if (balanceWei < amountWei) {
           const have = formatTokenAmount(balanceWei);
           const need = formatTokenAmount(amountWei);
@@ -774,7 +778,7 @@ export function useCoreVault(walletAddress?: string) {
 
       // Ensure allowance is sufficient; approve only if needed
       try {
-        const currentAllowance: bigint = await currentContracts.mockUSDC.allowance(userAddress, vaultAddress);
+        const currentAllowance: bigint = await currentContracts.mockUSDC.allowance(writeAddress, vaultAddress);
         if (currentAllowance < amountWei) {
           console.log(`📡 [RPC] Approving USDC transfer for vault (needed: ${formatTokenAmount(amountWei)})`);
           const startTimeApprove = Date.now();
@@ -799,7 +803,7 @@ export function useCoreVault(walletAddress?: string) {
       const receipt = await depositTx.wait();
 
       recordVaultTransaction({
-        wallet_address: userAddress,
+        wallet_address: writeAddress,
         tx_type: 'deposit',
         amount: parseFloat(amount),
         chain_id: getChainId(),
@@ -819,15 +823,16 @@ export function useCoreVault(walletAddress?: string) {
       }
       throw err;
     }
-  }, [userAddress, fetchBalances, getWriteContracts]);
+  }, [canMutate, writeAddress, fetchBalances, getWriteContracts]);
 
   // Withdraw collateral — all withdrawals route through cross-chain to Arbitrum
   // Hub direct withdrawals removed (all liquidity is on Arbitrum spoke)
   const withdrawCollateral = useCallback(async (amount: string, preferredSpokeChainId?: number): Promise<WithdrawResult> => {
-    if (!userAddress) throw new Error('Wallet address not available');
+    if (!canMutate) throw new Error('Withdrawals are disabled while viewing another user');
+    if (!writeAddress) throw new Error('Wallet address not available');
 
     try {
-      console.log(`[withdraw] Starting cross-chain withdrawal for ${userAddress.slice(0, 6)}...`, { amount });
+      console.log(`[withdraw] Starting cross-chain withdrawal for ${writeAddress.slice(0, 6)}...`, { amount });
       const requestedAmount = parseFloat(amount);
       
       if (requestedAmount <= 0.001) {
@@ -842,7 +847,7 @@ export function useCoreVault(walletAddress?: string) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user: userAddress,
+          user: writeAddress,
           amount: requestedAmount.toFixed(6),
           targetChainId: targetChain,
         }),
@@ -859,7 +864,7 @@ export function useCoreVault(walletAddress?: string) {
       const explorerTxUrl = buildExplorerTxUrl(targetChain, spokeTxHash);
 
       recordVaultTransaction({
-        wallet_address: userAddress,
+        wallet_address: writeAddress,
         tx_type: 'withdraw',
         amount: requestedAmount,
         chain_id: targetChain,
@@ -882,7 +887,7 @@ export function useCoreVault(walletAddress?: string) {
       console.error('Withdrawal failed:', err);
       throw err;
     }
-  }, [userAddress, fetchBalances]);
+  }, [canMutate, writeAddress, fetchBalances]);
 
   // Unified withdrawable = hub withdrawable + cross-chain credit, capped at available
   // balance (which already accounts for margin locked in open positions).

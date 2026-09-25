@@ -4,6 +4,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
+import { formatViewAsLabel, useViewAs } from '@/contexts/ViewAsContext';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
 import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfolioData';
@@ -146,6 +148,8 @@ const isActiveOrder = (order: OrderBookOrder | null | undefined): order is Order
 
 export default function TradingPanel({ tokenData, initialAction, marketData }: TradingPanelProps) {
   const wallet = useWallet() as any;
+  const { dataAddress, canMutate, isViewingAs } = useDataAddress();
+  const { demoName, viewAddress } = useViewAs();
   const isConnected = !!(wallet?.walletData?.isConnected ?? wallet?.isConnected);
   const address = (wallet?.walletData?.address ?? wallet?.address) as string | null;
   const connect = wallet?.connect as (() => Promise<void>);
@@ -452,7 +456,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     isLoadingOrders: portfolioOrdersLoading,
     refreshOrders: refreshPortfolioOrders,
     error: portfolioOrdersError
-  } = usePortfolioData({ enabled: Boolean(isConnected), refreshInterval: 0 });
+  } = usePortfolioData({ enabled: Boolean(dataAddress), refreshInterval: 0 });
 
   const normalizedSymbol = useMemo(() => (metricId ? metricId.toUpperCase() : null), [metricId]);
 
@@ -512,8 +516,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   }, [hydrateSessionOrders]);
 
   const bucketOrdersForMarket = useMemo(
-    () => deriveOrdersForSymbolFromBuckets(ordersBuckets, normalizedSymbol, address),
-    [ordersBuckets, normalizedSymbol, address]
+    () => deriveOrdersForSymbolFromBuckets(ordersBuckets, normalizedSymbol, dataAddress || address),
+    [ordersBuckets, normalizedSymbol, dataAddress, address]
   );
 
   const activeOrders = useMemo(() => {
@@ -2931,6 +2935,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const handleTradeClick = async () => {
+    if (!canMutate) return;
     if (!isConnected) {
       await connect();
       return;
@@ -3783,7 +3788,24 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
         {/* Trade Button */}
         <div className="flex gap-2 mt-1.5 flex-shrink-0">
-          {!isConnected ? (
+          {isViewingAs ? (
+            <button
+              type="button"
+              disabled
+              title="Visual only — exit demo view to trade"
+              className="flex-1 transition-all duration-150 border-none rounded-md"
+              style={{
+                padding: '10px',
+                fontSize: '13px',
+                fontWeight: '600',
+                backgroundColor: '#1A1A1A',
+                color: '#9CA3AF',
+                cursor: 'not-allowed'
+              }}
+            >
+              {formatViewAsLabel(demoName, viewAddress)} — visual only
+            </button>
+          ) : !isConnected ? (
             <button 
               onClick={() => setShowWalletModal(true)}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md bg-[#3B82F6] text-t-fg"

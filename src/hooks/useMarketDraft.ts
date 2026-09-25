@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MarketDraftState, MarketDraftSummary, CreationStep, PipelineStage } from '@/types/marketDraft';
 import { DRAFT_SCHEMA_VERSION } from '@/types/marketDraft';
 import type { PipelineResumeState } from '@/lib/createMarketOnChain';
+import { useDataAddress } from '@/hooks/useDataAddress';
 
 const LS_ACTIVE_KEY = 'dexextra:market-draft:active';
 const LS_PREFIX = 'dexextra:market-draft:';
@@ -130,6 +131,7 @@ async function archiveDraftOnServer(id: string, wallet: string): Promise<boolean
 }
 
 export function useMarketDraft(walletAddress: string | null) {
+  const { canMutate } = useDataAddress();
   const wallet = walletAddress?.toLowerCase() ?? null;
   const [drafts, setDrafts] = useState<MarketDraftSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -173,10 +175,10 @@ export function useMarketDraft(walletAddress: string | null) {
   const flushToServer = useCallback(async () => {
     const w = walletRef.current;
     const draft = activeDraftRef.current;
-    if (!w || !draft || !dirtyRef.current) return;
+    if (!canMutate || !w || !draft || !dirtyRef.current) return;
     dirtyRef.current = false;
     await upsertDraftToServer(draft, w);
-  }, []);
+  }, [canMutate]);
 
   // Periodic sync to server
   useEffect(() => {

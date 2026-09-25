@@ -1,13 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useEffect, useMemo, useRef, useState, useCallback, useId, type ReactNode } from 'react'
 import useWallet from '@/hooks/useWallet'
 import { useSession } from '@/contexts/SessionContext'
 import { ensureGaslessChain } from '@/lib/gasless'
-import EnableTradingActivation, { type ActivationPhase } from './EnableTradingActivation'
+import { type ActivationPhase } from './EnableTradingActivation'
+import styles from './EnableTradingModal.module.css'
 
 type EnablePhase = 'idle' | ActivationPhase
+type StepState = 'complete' | 'pending' | 'active'
+
+const EXIT_MS = 150
+const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
 export interface EnableTradingModalProps {
   isOpen: boolean
@@ -33,37 +37,45 @@ export interface EnableTradingModalProps {
   successHoldMs?: number
 }
 
-function CircleCheckIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="M10 18.25a8.25 8.25 0 1 0 0-16.5 8.25 8.25 0 0 0 0 16.5Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        opacity="0.9"
-      />
-      <path
-        d="M6.2 10.2 8.7 12.7 13.8 7.6"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
+function StepCard({
+  state,
+  step,
+  title,
+  meta,
+  current,
+}: {
+  state: StepState
+  step: number
+  title: string
+  meta: ReactNode
+  current?: boolean
+}) {
+  const cardState =
+    state === 'complete' ? styles.cardComplete : state === 'active' ? styles.cardActive : styles.cardPending
+  const statusText = state === 'complete' ? 'completed' : state === 'active' ? 'in progress' : 'not started'
 
-function CircleDotIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="M10 18.25a8.25 8.25 0 1 0 0-16.5 8.25 8.25 0 0 0 0 16.5Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        opacity="0.9"
-      />
-      <path d="M10 12.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z" fill="currentColor" />
-    </svg>
+    <li className={`${styles.card} ${cardState}`} aria-current={current ? 'step' : undefined}>
+      <div className={styles.cardTop}>
+        <div className={styles.indicator}>
+          {state === 'complete' ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="#0F0F0F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 12.5l5 5L19 7" />
+            </svg>
+          ) : state === 'active' ? (
+            <span className={styles.spinner} aria-hidden="true" />
+          ) : (
+            <span className={styles.digit}>{step}</span>
+          )}
+        </div>
+        <span className={styles.stepLabel}>STEP {step}</span>
+      </div>
+      <div>
+        <div className={styles.cardTitle}>{title}</div>
+        <div className={styles.cardMeta}>{meta}</div>
+        <span className={styles.srOnly}>{statusText}</span>
+      </div>
+    </li>
   )
 }
 
@@ -78,12 +90,18 @@ export default function EnableTradingModal({
   successHoldMs = 1600,
 }: EnableTradingModalProps) {
   const { walletData, providers, connect, formatAddress } = useWallet()
-  const { sessionActive, loading, enableTrading, sessionId } = useSession()
+  const { sessionActive, loading, enableTrading } = useSession()
   const [isWorking, setIsWorking] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
   const [internalPhase, setInternalPhase] = useState<EnablePhase>('idle')
   const timersRef = useRef<number[]>([])
+  const titleId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const primaryRef = useRef<HTMLButtonElement>(null)
+  const [visible, setVisible] = useState(false)
+  const [exiting, setExiting] = useState(false)
+  const [rendered, setRendered] = useState(false)
 
   // forcePhase (debug) takes precedence over the internal state machine.
   const phase: EnablePhase = forcePhase ?? internalPhase
@@ -113,7 +131,23 @@ export default function EnableTradingModal({
     []
   )
 
-  const shouldRender = isOpen
+  useEffect(() => {
+    if (isOpen) {
+      setRendered(true)
+      setExiting(false)
+      const id = window.requestAnimationFrame(() => setVisible(true))
+      return () => window.cancelAnimationFrame(id)
+    }
+
+    if (!rendered) return
+    setVisible(false)
+    setExiting(true)
+    const timeout = window.setTimeout(() => {
+      setRendered(false)
+      setExiting(false)
+    }, EXIT_MS)
+    return () => window.clearTimeout(timeout)
+  }, [isOpen, rendered])
 
   const runSimulatedFlow = useCallback(() => {
     clearTimers()
@@ -230,15 +264,6 @@ export default function EnableTradingModal({
     handlePrimary();
   }, [handlePrimary, retryCount])
 
-  const primaryCta = useMemo(() => {
-    if (simulate) return 'Sign to Activate'
-    if (!isConnected) return 'Connect Wallet'
-    if (!gaslessEnabled) return 'Gasless Disabled'
-    if (loading || isWorking) return 'Signing...'
-    if (sessionActive) return 'Activated'
-    return 'Sign to Activate'
-  }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled, simulate])
-
   const primaryDisabled = useMemo(() => {
     if (simulate) return false
     if (!isConnected) return false
@@ -246,227 +271,183 @@ export default function EnableTradingModal({
     return loading || isWorking || sessionActive
   }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled, simulate])
 
-  // Ensure hooks above always run; decide rendering after hooks are declared
-  if (!shouldRender) {
-    return null
-  }
-
-  const walletRowLeftIcon = isConnected ? (
-    <CircleCheckIcon className="h-5 w-5 text-green-400" />
-  ) : (
-    <CircleDotIcon className="h-5 w-5 text-[#404040]" />
-  )
-
-  const sessionRowLeftIcon = sessionActive ? (
-    <CircleCheckIcon className="h-5 w-5 text-green-400" />
-  ) : (
-    <CircleDotIcon className="h-5 w-5 text-[#404040]" />
-  )
-
-  const headerSubtext =
-    phase === 'awaiting'
-      ? 'Awaiting wallet signature'
-      : phase === 'finalizing'
-        ? 'Registering session'
-        : phase === 'success'
-          ? 'Session active'
-          : isConnected
-            ? 'Wallet Connected'
-            : 'Wallet Not Connected'
+  const signaturePending = isActivating || loading || isWorking
+  const sessionComplete = Boolean(sessionActive || phase === 'success')
+  const step1State: StepState = isConnected ? 'complete' : 'pending'
+  const step2State: StepState = sessionComplete ? 'complete' : isActivating ? 'active' : 'pending'
+  const connectorDone = step1State === 'complete' && step2State === 'complete'
+  const currentStep = step1State !== 'complete' ? 1 : step2State !== 'complete' ? 2 : undefined
 
   // Block interruption while the signature is being registered on-chain.
   const showCloseButton = phase !== 'finalizing'
 
+  const handleDismiss = useCallback(() => {
+    if (phase === 'finalizing') return
+    onClose()
+  }, [phase, onClose])
+
+  useEffect(() => {
+    if (!visible || exiting) return
+    const root = dialogRef.current
+    if (!root) return
+    const previous = document.activeElement as HTMLElement | null
+    primaryRef.current?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        handleDismiss()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (nodes.length === 0) return
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previous?.focus?.()
+    }
+  }, [visible, exiting, handleDismiss])
+
+  if (!rendered) {
+    return null
+  }
+
+  const overlayClass = [
+    styles.overlay,
+    visible && !exiting ? styles.visible : '',
+    exiting ? styles.exiting : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const buttonDisabled = primaryDisabled || isActivating
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
+    <div className={overlayClass}>
+      <div className={styles.backdrop} onClick={handleDismiss} />
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-200"
-        onClick={phase === 'finalizing' ? undefined : onClose}
-      />
-
-      {/* Container */}
-      <motion.div
-        layout
-        className="relative z-10 w-full max-w-[34rem] bg-[#0F0F0F] rounded-md border border-[#222222] shadow-2xl"
+        ref={dialogRef}
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
       >
-        {/* Close */}
-        {showCloseButton && (
-          <button
-            onClick={onClose}
-            className="absolute right-4 top-4 group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 z-10"
-            aria-label="Close"
-          >
-            <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18 18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
+        <div className={styles.glow} aria-hidden="true" />
 
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-[#1A1A1A]">
-          <div className="flex flex-col items-center justify-center gap-1.5">
-            <div className="w-10 h-10 rounded-full bg-[#141414] border border-[#2E2E2E] flex items-center justify-center">
-              <img src="/Dexicon/LOGO-Dexetera-05.svg" alt="Dexetera" className="w-5 h-5 opacity-90" />
+        <div className={styles.header}>
+          {isConnected ? (
+            <div className={styles.pill}>
+              <span className={styles.pillDot} />
+              Wallet Connected
             </div>
-            <div className="flex flex-col items-center">
-              <span className="text-sm font-medium text-white tracking-wide text-center">Activate Gasless Mode</span>
-              <span className="text-[10px] text-[#606060] text-center">
-                {headerSubtext}
-              </span>
-            </div>
-          </div>
+          ) : (
+            <span />
+          )}
+          {showCloseButton ? (
+            <button
+              type="button"
+              className={styles.close}
+              onClick={handleDismiss}
+              aria-label="Close"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          ) : (
+            <span />
+          )}
         </div>
 
-        {/* Body */}
-        <AnimatePresence mode="wait" initial={false}>
-          {phase !== 'idle' ? (
-            <motion.div
-              key="activation"
-              className="px-4 py-3 min-h-[13.5rem] flex flex-col items-center justify-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-            >
-              <EnableTradingActivation phase={phase} />
-            </motion.div>
-          ) : (
-        <motion.div
-          key="config"
-          className="px-4 py-3 min-h-[13.5rem]"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.25 }}
-        >
-          <div className="space-y-3">
-            {/* Wallet row */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-              <div className="flex items-center justify-between p-2.5">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="flex items-center justify-center">{walletRowLeftIcon}</div>
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-[11px] font-medium text-[#9CA3AF] min-w-0 truncate">Wallet Connected</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-white font-mono truncate max-w-[10rem]">
-                    {isConnected ? addressShort : '—'}
-                  </span>
-                </div>
-              </div>
-              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                  <div className="text-[9px] pt-1.5">
-                    <span className="text-[#606060] block">
-                      {isConnected ? 'Wallet is ready.' : 'Connect your wallet to continue.'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
+        <h2 id={titleId} className={styles.title}>
+          Activate Gasless Mode
+        </h2>
 
-            {/* Session row */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-              <div className="flex items-center justify-between p-2.5">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="flex items-center justify-center">{sessionRowLeftIcon}</div>
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-[11px] font-medium text-[#9CA3AF] min-w-0 truncate">Trading Session</span>
-                    {(loading || isWorking) && !sessionActive ? (
-                      <span className="text-[10px] text-blue-400">Signing…</span>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`text-[10px] px-1.5 py-0.5 rounded border
-                      ${sessionActive ? 'text-green-400 bg-[#1A1A1A] border-[#333333]' : 'text-[#606060] bg-[#1A1A1A] border-[#222222]'}
-                    `}
-                  >
-                    {sessionActive ? 'Active' : 'Inactive'}
-                  </div>
-                </div>
-              </div>
-              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                  <div className="text-[9px] pt-1.5">
-                    <span className="text-[#606060] block">
-                      {sessionActive
-                        ? sessionId
-                          ? `Session: ${sessionId.slice(0, 10)}…`
-                          : 'Session is active.'
-                        : gaslessEnabled
-                          ? 'Sign once to create a short-lived gasless trading session.'
-                          : 'Gasless trading is disabled by configuration.'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Error / Config hint */}
-          {errorMessage && (
-            <div className="mt-4 bg-[#1A1A1A] border border-red-900/50 rounded-md p-3">
-              <div className="flex items-start gap-2">
-                <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[11px] text-red-400 block break-words">{errorMessage}</span>
-                  <button
-                    onClick={handleRetry}
-                    disabled={isWorking}
-                    className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isWorking ? 'Retrying...' : 'Try again'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {!gaslessEnabled && (
-            <div className="mt-4 bg-[#1A1A1A] border border-[#333333] rounded-md p-3">
-              <span className="text-[10px] text-[#606060]">
-                Gasless trading is disabled. Set <span className="font-mono text-white">NEXT_PUBLIC_GASLESS_ENABLED=true</span> to enable.
-              </span>
-            </div>
-          )}
-
-          {/* CTA */}
-          <button
-            onClick={handlePrimary}
-            disabled={primaryDisabled}
-            className={`mt-4 w-full h-10 rounded-md text-white text-sm font-medium transition-all duration-200
-              ${sessionActive
-                ? 'bg-green-600/70 cursor-default'
-                : primaryDisabled
-                  ? 'bg-[#2A2A2A] text-[#808080] cursor-not-allowed'
-                  : 'bg-[#166534] hover:bg-[#15803D]'}
-            `}
+        <ol className={styles.steps}>
+          <StepCard
+            state={step1State}
+            step={1}
+            title="Wallet Connected"
+            current={currentStep === 1}
+            meta={addressShort ? <span className={styles.address}>{addressShort}</span> : null}
+          />
+          <li
+            className={`${styles.connector} ${connectorDone ? styles.connectorDone : ''}`}
+            aria-hidden="true"
           >
-            {primaryCta}
-          </button>
+            <span className={styles.connectorLine} />
+          </li>
+          <StepCard
+            state={step2State}
+            step={2}
+            title="Trading Session"
+            current={currentStep === 2}
+            meta={
+              <span className={`${styles.badge} ${sessionComplete ? styles.badgeActive : styles.badgeInactive}`}>
+                {sessionComplete ? 'Active' : 'Inactive'}
+              </span>
+            }
+          />
+        </ol>
 
-          <p className="mt-2 text-[10px] text-[#606060] text-center">
-            By signing, you agree to our
-            <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
-              Terms
-            </a>
-            and
-            <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
-              Privacy Policy
-            </a>
-            .
+        {errorMessage && (
+          <div className={`${styles.notice} ${styles.noticeError}`}>
+            <span>{errorMessage}</span>
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={isWorking}
+              className={styles.retry}
+            >
+              {isWorking ? 'Retrying...' : 'Try again'}
+            </button>
+          </div>
+        )}
+        {!gaslessEnabled && (
+          <div className={styles.notice}>
+            Gasless trading is disabled. Set <span className={styles.mono}>NEXT_PUBLIC_GASLESS_ENABLED=true</span> to enable.
+          </div>
+        )}
+
+        <div className={styles.spacer} />
+
+        <div className={styles.footer}>
+          <p className={styles.legal}>
+            By signing, you agree to our{' '}
+            <a href="/terms">Terms</a>
+            {' '}and{' '}
+            <a href="/privacy">Privacy Policy</a>.
           </p>
-        </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+          <button
+            ref={primaryRef}
+            type="button"
+            className={styles.primary}
+            onClick={handlePrimary}
+            disabled={buttonDisabled}
+          >
+            {signaturePending ? (
+              'Waiting for signature…'
+            ) : (
+              <>
+                Sign to Activate
+                <span className={styles.arrow} aria-hidden="true">→</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
-
-

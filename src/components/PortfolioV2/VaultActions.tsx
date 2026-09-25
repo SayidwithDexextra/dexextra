@@ -4,13 +4,13 @@ import React, { useState } from 'react'
 import VaultActionModal from './VaultActionModal'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 
 export default function VaultActions() {
-	const { availableBalance, totalCollateral, withdrawableBalance } = useCoreVault()
-	const { walletData } = useWallet() as any
-	const portfolio = usePortfolioSummary(walletData?.address || null, {
-		enabled: Boolean(walletData?.isConnected && walletData?.address),
+	const { dataAddress, canMutate } = useDataAddress()
+	const { availableBalance, totalCollateral, withdrawableBalance } = useCoreVault(dataAddress || undefined)
+	const portfolio = usePortfolioSummary(dataAddress, {
+		enabled: Boolean(dataAddress),
 		refreshIntervalMs: 15_000,
 	})
 	const [showDeposit, setShowDeposit] = useState(false)
@@ -48,14 +48,18 @@ export default function VaultActions() {
 					</div>
 					<div className="flex items-center gap-3 mt-3">
 						<button
-							onClick={() => setShowDeposit(true)}
-							className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#1A1A1A] border border-[#222222] text-white"
+							onClick={() => canMutate && setShowDeposit(true)}
+							disabled={!canMutate}
+							title={!canMutate ? 'Visual only — exit demo view to deposit' : undefined}
+							className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#1A1A1A] border border-[#222222] text-white disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							Deposit
 						</button>
 						<button
-							onClick={() => setShowWithdraw(true)}
-							className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#1A1A1A] border border-[#222222] text-white"
+							onClick={() => canMutate && setShowWithdraw(true)}
+							disabled={!canMutate}
+							title={!canMutate ? 'Visual only — exit demo view to withdraw' : undefined}
+							className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#1A1A1A] border border-[#222222] text-white disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							Withdraw
 						</button>

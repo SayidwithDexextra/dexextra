@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
-import { useWallet } from '@/hooks/useWallet'
+import { useDataAddress } from '@/hooks/useDataAddress'
 
 type ActionType = 'deposit' | 'withdraw'
 
@@ -15,9 +15,9 @@ type VaultActionModalProps = {
 
 export default function VaultActionModal({ isOpen, action, onClose }: VaultActionModalProps) {
 	const { availableBalance, totalCollateral, totalWithdrawable, depositCollateral, withdrawCollateral, isLoading } = useCoreVault()
-	const { walletData } = useWallet() as any
-	const portfolio = usePortfolioSummary(walletData?.address || null, {
-		enabled: Boolean(walletData?.isConnected && walletData?.address),
+	const { dataAddress, canMutate } = useDataAddress()
+	const portfolio = usePortfolioSummary(dataAddress, {
+		enabled: Boolean(dataAddress),
 		refreshIntervalMs: 15_000,
 	})
 	const [amount, setAmount] = useState<string>('')
@@ -140,9 +140,9 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 				</div>
 				<div className="px-4 py-3 border-t border-[#1A1A1A]">
 					<button
-						disabled={!canSubmit || isLoading || submitting}
+						disabled={!canMutate || !canSubmit || isLoading || submitting}
 						onClick={async () => {
-							if (!canSubmit) return
+							if (!canMutate || !canSubmit) return
 							setSubmitting(true)
 							setNotice({ kind: 'none', message: '' })
 							setTxHash('')

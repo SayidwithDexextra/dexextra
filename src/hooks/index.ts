@@ -4,6 +4,7 @@ export { useETHPrice } from './useETHPrice';
 export { useTokenData } from './useTokenData';
 export { useMarketData } from './useMarketData';
 export { useWalletAddress } from './useWalletAddress';
+export { useDataAddress } from './useDataAddress';
 export { useWalletPortfolio } from './useWalletPortfolio';
 export { usePageTitle, useDynamicPageTitle } from './usePageTitle';
 

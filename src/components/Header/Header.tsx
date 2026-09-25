@@ -27,7 +27,9 @@ import WalletModal from '../WalletModal'
 import NotificationsPanel from '../NotificationsPanel'
 import { useNotifications } from '@/contexts/NotificationContext'
 import { useWallet } from '@/hooks/useWallet'
-import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
+import { useDataAddress } from '@/hooks/useDataAddress'
+import { useChromeAvatar, useViewAs } from '@/contexts/ViewAsContext'
+import DemoViewChip from '@/components/ViewAs/DemoViewChip'
 // Removed direct contract reads; align with useCoreVault hook outputs
 import DecryptedText from './DecryptedText';
 // Removed NetworkStatus import (only used in commented code)
@@ -91,6 +93,10 @@ export default function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const { walletData, portfolio } = useWallet()
+  const { dataAddress, canMutate, isViewingAs } = useDataAddress()
+  const { demoName, viewAddress, reopenModal } = useViewAs()
+  const chromeAvatar = useChromeAvatar(walletData.userProfile?.profile_image_url)
+  const hasAccountData = Boolean(dataAddress)
   const { unreadCount: notificationsUnread } = useNotifications()
 
   // Fire a one-shot "pop" on the bell badge whenever the unread count
@@ -153,13 +159,13 @@ export default function Header() {
   const hasCompletedInitialAnimationRef = useRef(false)
   
   // Align with useCoreVault data as single source of truth
-  const core = useCoreVault(walletData.address || undefined)
+  const core = useCoreVault(dataAddress || undefined)
   // Global cached snapshot: used by both Header + PortfolioSidebar.
   const { snapshot, isReady: snapshotReady } = usePortfolioSnapshot()
   
   // Avoid showing fallback values that can be briefly wrong until the snapshot is ready.
-  const hidePortfolioUntilSummaryReady = Boolean(walletData.isConnected && !snapshotReady)
-  const showPortfolioSkeleton = Boolean(walletData.isConnected && hidePortfolioUntilSummaryReady)
+  const hidePortfolioUntilSummaryReady = Boolean(dataAddress && !snapshotReady)
+  const showPortfolioSkeleton = Boolean(dataAddress && hidePortfolioUntilSummaryReady)
   const isVaultConnected = !!core.isConnected
   
   const vaultAvailableCollateral = (() => {
@@ -193,7 +199,7 @@ export default function Header() {
     return Number.NaN
   })()
   const unrealizedPnL = unrealizedPnLNum
-  const unrealizedPnlColor = !walletData.isConnected
+  const unrealizedPnlColor = !hasAccountData
     ? 'var(--t-chrome-fg)'
     : !Number.isFinite(unrealizedPnL)
       ? 'var(--t-chrome-fg)'
@@ -263,7 +269,7 @@ export default function Header() {
     const onSummary = (e: any) => {
       try {
         // Only accept updates for connected user and only re-render when cents-level display would change.
-        if (!walletData.isConnected) return
+        if (!hasAccountData) return
         const d = e.detail || null
         if (!d) return
 
@@ -296,7 +302,7 @@ export default function Header() {
         window.removeEventListener('coreVaultSummary', onSummary)
       }
     }
-  }, [walletData.isConnected])
+  }, [hasAccountData])
 
   // Debug logs removed to prevent any rendering interference 
 
@@ -314,15 +320,15 @@ export default function Header() {
     })
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
-  const displayUnrealizedPnL = !walletData.isConnected ? '$0.00' : formatCurrency(unrealizedPnL, true)
+  const displayUnrealizedPnL = !hasAccountData ? '$0.00' : formatCurrency(unrealizedPnL, true)
 
   // Calculate portfolio value from VaultRouter, re-animating only when 2-decimal display changes
   const roundedPortfolioCents = useMemo(() => {
-    if (!walletData.isConnected) return 0
+    if (!hasAccountData) return 0
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     if (!Number.isFinite(vaultPortfolioValue)) return Number.NaN
     return Math.round(vaultPortfolioValue * 100)
-  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, vaultPortfolioValue])
+  }, [hasAccountData, hidePortfolioUntilSummaryReady, vaultPortfolioValue])
   const totalPortfolioValue = useMemo(() => {
     if (!Number.isFinite(roundedPortfolioCents)) return '$—'
     const portfolioVal = roundedPortfolioCents / 100
@@ -331,11 +337,11 @@ export default function Header() {
   
   // Calculate available cash display, re-animating only when 2-decimal display changes
   const roundedCashCents = useMemo(() => {
-    if (!walletData.isConnected) return 0
+    if (!hasAccountData) return 0
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     if (!Number.isFinite(vaultAvailableCollateral)) return Number.NaN
     return Math.round(vaultAvailableCollateral * 100)
-  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, vaultAvailableCollateral])
+  }, [hasAccountData, hidePortfolioUntilSummaryReady, vaultAvailableCollateral])
   
   const cashValueDisplay = useMemo(() => {
     if (!Number.isFinite(roundedCashCents)) return '$—'
@@ -344,22 +350,22 @@ export default function Header() {
 
   // Re-animate *only* when the cents-level display changes (prevents constant re-animation on noisy updates).
   const roundedUnrealizedPnLCents = useMemo(() => {
-    if (!walletData.isConnected) return 0
+    if (!hasAccountData) return 0
     if (hidePortfolioUntilSummaryReady) return Number.NaN
     if (!Number.isFinite(unrealizedPnL)) return Number.NaN
     return Math.round(unrealizedPnL * 100)
-  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, unrealizedPnL])
+  }, [hasAccountData, hidePortfolioUntilSummaryReady, unrealizedPnL])
 
   const animateCentsKey = useMemo(() => {
-    if (!walletData.isConnected) return null
+    if (!hasAccountData) return null
     if (hidePortfolioUntilSummaryReady) return null
     if (![roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents].every((n) => Number.isFinite(n))) return null
     return [roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents].join('|')
-  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
+  }, [hasAccountData, hidePortfolioUntilSummaryReady, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
 
   useEffect(() => {
-    // Reset tracking when wallet disconnects
-    if (!walletData.isConnected) {
+    // Reset tracking when the read-path address goes away
+    if (!hasAccountData) {
       lastAnimateCentsKeyRef.current = null
       hasCompletedInitialAnimationRef.current = false
       return
@@ -383,19 +389,23 @@ export default function Header() {
       lastAnimateCentsKeyRef.current = animateCentsKey
       setVaultUpdateSeq((s) => s + 1)
     }
-  }, [walletData.isConnected, animateCentsKey])
+  }, [hasAccountData, animateCentsKey])
 
   // Handle different states for display values
-  const displayPortfolioValue = !walletData.isConnected 
+  const displayPortfolioValue = !hasAccountData 
     ? '$0.00'
     : totalPortfolioValue
   
-  const displayCashValue = !walletData.isConnected 
+  const displayCashValue = !hasAccountData 
     ? '$0.00'
     : cashValueDisplay
 
   // Helper function to get display name
   const getDisplayName = () => {
+    if (isViewingAs) {
+      if (demoName) return demoName
+      if (viewAddress) return `${viewAddress.slice(0, 6)}...${viewAddress.slice(-4)}`
+    }
     if (!walletData.isConnected) return 'Connect Wallet'
     if (walletData.userProfile?.display_name) return walletData.userProfile.display_name
     if (walletData.userProfile?.username) return walletData.userProfile.username
@@ -405,10 +415,9 @@ export default function Header() {
 
   // Helper function to get avatar
   const getAvatarContent = () => {
-    const imgUrl = walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE
     return (
       <Image 
-        src={imgUrl} 
+        src={chromeAvatar} 
         alt="Profile" 
         width={20}
         height={20}
@@ -624,6 +633,10 @@ export default function Header() {
             {/* Connect/Profile Button */}
             <button
               onClick={() => {
+                if (isViewingAs && !walletData.isConnected) {
+                  reopenModal()
+                  return
+                }
                 if (!walletData.isConnected) {
                   setIsWalletModalOpen(true)
                 } else {
@@ -632,31 +645,33 @@ export default function Header() {
               }}
               className="flex items-center justify-center h-9 px-4 rounded-full font-medium text-sm transition-all duration-200"
               style={{
-                backgroundColor: walletData.isConnected ? 'transparent' : '#4a9eff',
+                backgroundColor: walletData.isConnected || isViewingAs ? 'transparent' : '#4a9eff',
                 color: 'var(--t-chrome-fg)',
-                border: walletData.isConnected ? '1px solid var(--t-chrome-border)' : 'none',
+                border: walletData.isConnected || isViewingAs ? '1px solid var(--t-chrome-border)' : 'none',
               }}
-              ref={walletData.isConnected ? profileTriggerRef : undefined}
+              ref={walletData.isConnected || isViewingAs ? profileTriggerRef : undefined}
               data-walkthrough="header-connect-wallet"
-              aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
+              aria-label={isViewingAs ? `Viewing as ${getDisplayName()}` : walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
               onMouseEnter={(e) => {
-                if (walletData.isConnected) {
-                  (e.currentTarget as any).style.borderColor = 'var(--t-chrome-border)'
-                  (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
+                const el = e.currentTarget
+                if (walletData.isConnected || isViewingAs) {
+                  el.style.borderColor = 'var(--t-chrome-border)'
+                  el.style.backgroundColor = 'var(--t-chrome-hover)'
                 } else {
-                  (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
+                  el.style.backgroundColor = '#3d8ae6'
                 }
               }}
               onMouseLeave={(e) => {
-                if (walletData.isConnected) {
-                  (e.currentTarget as any).style.borderColor = 'var(--t-chrome-border)'
-                  (e.currentTarget as any).style.backgroundColor = 'transparent'
+                const el = e.currentTarget
+                if (walletData.isConnected || isViewingAs) {
+                  el.style.borderColor = 'var(--t-chrome-border)'
+                  el.style.backgroundColor = 'transparent'
                 } else {
-                  (e.currentTarget as any).style.backgroundColor = '#4a9eff'
+                  el.style.backgroundColor = '#4a9eff'
                 }
               }}
             >
-              {walletData.isConnected ? (
+              {walletData.isConnected || isViewingAs ? (
                 <div className="flex items-center gap-2">
                   <div 
                     className="w-6 h-6 rounded-full flex items-center justify-center overflow-hidden"
@@ -665,7 +680,7 @@ export default function Header() {
                     }}
                   >
                     <Image 
-                      src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} 
+                      src={chromeAvatar} 
                       alt="Profile" 
                       width={24}
                       height={24}
@@ -859,7 +874,7 @@ export default function Header() {
                       className="w-2 h-2 rounded-full"
                       style={{
                         backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
-                        opacity: walletData.isConnected ? 1 : 0.3
+                        opacity: hasAccountData ? 1 : 0.3
                       }}
                       title={isVaultConnected ? 'Connected to CoreVault' : 'Vault disconnected'}
                     />
@@ -954,6 +969,7 @@ export default function Header() {
                 }}
                 onClick={() => {
                   if (isGeoRestricted) return;
+                  if (!canMutate) return;
                   console.log('Deposit button clicked');
                   if (!walletData.isConnected) {
                     setIsWalletModalOpen(true);
@@ -961,6 +977,8 @@ export default function Header() {
                   }
                   setIsDepositModalOpen(true);
                 }}
+                disabled={isGeoRestricted || !canMutate}
+                title={!canMutate ? 'Visual only — exit demo view to deposit' : undefined}
               >
                 <span>Deposit</span>
               <span
@@ -1048,32 +1066,34 @@ export default function Header() {
             />
           </div>
 
+          <DemoViewChip />
+
           {/* User Profile Section */}
           <button
             type="button"
             aria-haspopup="menu"
             aria-expanded={isProfileModalOpen}
-            aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
+            aria-label={isViewingAs ? `Viewing as ${getDisplayName()}` : walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
             className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 focus:outline-none ${
-              !walletData.isConnected ? 'border border-[var(--t-chrome-border-sub)] hover:border-[var(--t-chrome-border)]' : ''
+              !walletData.isConnected && !isViewingAs ? 'border border-[var(--t-chrome-border-sub)] hover:border-[var(--t-chrome-border)]' : ''
             }`}
             data-walkthrough="header-connect-wallet"
             ref={profileTriggerRef}
             style={{
               // Subtle gradient flare to draw attention when disconnected (design-system compliant)
-              background: !walletData.isConnected
+              background: !walletData.isConnected && !isViewingAs
                 ? `
                     radial-gradient(130px 46px at 18% 42%, rgba(255,184,0,0.28), transparent 62%),
                     radial-gradient(110px 44px at 78% 58%, rgba(249,115,22,0.20), transparent 66%),
                     linear-gradient(180deg, rgba(26,26,26,0.90), rgba(15,15,15,0.90))
                   `
                 : 'transparent',
-              boxShadow: !walletData.isConnected
+              boxShadow: !walletData.isConnected && !isViewingAs
                 ? '0 0 0 1px rgba(255,184,0,0.18), 0 12px 26px rgba(0, 0, 0, 0.40)'
                 : 'none'
             }}
             onMouseEnter={(e) => {
-              if (!walletData.isConnected) {
+              if (!walletData.isConnected && !isViewingAs) {
                 (e.currentTarget as any).style.background = `
                   radial-gradient(150px 52px at 18% 42%, rgba(255,184,0,0.42), transparent 64%),
                   radial-gradient(120px 50px at 78% 58%, rgba(249,115,22,0.30), transparent 68%),
@@ -1085,7 +1105,7 @@ export default function Header() {
               }
             }}
             onMouseLeave={(e) => {
-              if (!walletData.isConnected) {
+              if (!walletData.isConnected && !isViewingAs) {
                 (e.currentTarget as any).style.background = `
                   radial-gradient(130px 46px at 18% 42%, rgba(255,184,0,0.28), transparent 62%),
                   radial-gradient(110px 44px at 78% 58%, rgba(249,115,22,0.20), transparent 66%),
@@ -1097,6 +1117,10 @@ export default function Header() {
               }
             }}
             onClick={() => {
+              if (isViewingAs && !walletData.isConnected) {
+                reopenModal()
+                return
+              }
               if (!walletData.isConnected) {
                 setIsWalletModalOpen(true)
                 return

@@ -44,6 +44,7 @@ import { getSupabaseClient } from '@/lib/supabase-browser';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { LifecycleDevDrawer } from '@/components/LifecycleDevDrawer';
 import useWallet from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 import { RolloverNotificationModal } from '@/components/RolloverNotificationModal';
 import { ShareModal } from '@/components/ShareModal';
@@ -82,6 +83,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const md = useMarketData();
   const sp = useSearchParams();
   const { walletData } = useWallet();
+  const { dataAddress, connectedAddress, canMutate } = useDataAddress();
   const isDeploying = sp.get('deploying') === '1';
   const pipelineIdParam = sp.get('pipelineId') || sp.get('pipeline') || null;
   const deploymentOverlay = useDeploymentOverlay();
@@ -1351,7 +1353,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   // Fetch watchlist status for this market
   useEffect(() => {
     const marketId = currentMarketId;
-    const walletAddress = walletData?.address;
+    const walletAddress = dataAddress;
     if (!marketId || !walletAddress) {
       setIsWatchlisted(false);
       return;
@@ -1369,7 +1371,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       }
     })();
     return () => controller.abort();
-  }, [currentMarketId, walletData?.address]);
+  }, [currentMarketId, dataAddress]);
 
   // Fetch watchlist count for this market
   useEffect(() => {
@@ -1396,8 +1398,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   // Handle watchlist toggle
   const handleWatchlistToggle = useCallback(async () => {
     const marketId = currentMarketId;
-    const walletAddress = walletData?.address;
-    if (!marketId || !walletAddress || isWatchlistLoading) return;
+    const walletAddress = connectedAddress;
+    if (!canMutate || !marketId || !walletAddress || isWatchlistLoading) return;
 
     setIsWatchlistLoading(true);
     const wasWatchlisted = isWatchlisted;
@@ -1422,7 +1424,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     } finally {
       setIsWatchlistLoading(false);
     }
-  }, [currentMarketId, walletData?.address, isWatchlisted, isWatchlistLoading]);
+  }, [canMutate, connectedAddress, currentMarketId, isWatchlisted, isWatchlistLoading]);
 
   const handleSettlementPnl = useCallback((pnl: SettlementPnLSummary | null) => {
     setSettlementPnlData(pnl);

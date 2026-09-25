@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
+import { useDataAddress } from '@/hooks/useDataAddress';
 import { useCoreVault } from '@/hooks/useCoreVault';
 import { useSession } from '@/contexts/SessionContext';
 import { publicClient } from '@/lib/viemClient';
@@ -149,6 +150,7 @@ export function SettlementInterface({
   settlementPnl,
 }: SettlementInterfaceProps) {
   const { walletData } = useWallet();
+  const { canMutate } = useDataAddress();
   const { availableBalance, fetchBalances: refreshVaultBalance } = useCoreVault();
   const { sessionId, sessionActive, enableTrading, loading: sessionLoading } = useSession();
   const [challengePrice, setChallengePrice] = useState('');
@@ -385,6 +387,7 @@ export function SettlementInterface({
   const hasSession = Boolean(sessionActive && sessionId);
 
   const handleChallenge = async () => {
+    if (!canMutate) { setChallengeNotice({ type: 'error', text: 'Challenges are disabled while viewing another user.' }); return; }
     if (!challengePrice) return;
     const price = Number(challengePrice);
     if (price <= 0 || !Number.isFinite(price)) { setChallengeNotice({ type: 'error', text: 'Enter a valid positive price.' }); return; }

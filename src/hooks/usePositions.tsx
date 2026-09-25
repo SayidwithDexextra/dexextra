@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWallet } from './useWallet';
+import { useDataAddress } from './useDataAddress';
 import { initializeContracts } from '@/lib/contracts';
 import { formatUnits } from 'viem';
 import { ethers } from 'ethers';
@@ -68,9 +69,10 @@ export function usePositions(
   options?: { enabled?: boolean; pollIntervalMs?: number; listenToEvents?: boolean }
 ): PositionState {
   const wallet = useWallet() as any;
-  const walletAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
+  const { dataAddress } = useDataAddress();
+  const walletAddress: string | null = dataAddress;
   const walletSigner = wallet?.walletData?.signer ?? wallet?.signer ?? null;
-  const walletIsConnected: boolean = !!(wallet?.walletData?.isConnected ?? wallet?.isConnected);
+  const walletIsConnected: boolean = !!walletAddress;
   const [contracts, setContracts] = useState<any>(null);
   const inFlightRef = useRef(false);
   const pendingRefreshRef = useRef(false);
