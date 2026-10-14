@@ -25,7 +25,7 @@ const ogDescription =
   'Create a market on any measurable metric. Trade or hedge real-world risk with leverage in USDC. Non-custodial, gasless, live on mainnet.'
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://dexetera.xyz'),
+  metadataBase: new URL('https://www.dexetera.xyz'),
   title: {
     default: defaultTitle,
     template: '%s | Dexetera',
@@ -63,10 +63,10 @@ export const metadata: Metadata = {
     siteName: 'Dexetera',
     title: ogTitle,
     description: ogDescription,
-    url: 'https://dexetera.xyz',
+    url: 'https://www.dexetera.xyz',
     images: [
       {
-        url: 'https://dexetera.xyz/og-image.png',
+        url: 'https://www.dexetera.xyz/og-image.png',
         width: 1200,
         height: 627,
         alt: 'Dexetera: trade any metric',
@@ -77,7 +77,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: ogTitle,
     description: ogDescription,
-    images: ['https://dexetera.xyz/og-image.png'],
+    images: ['https://www.dexetera.xyz/og-image.png'],
     creator: '@dexeteralabs',
     site: '@dexeteralabs',
   },

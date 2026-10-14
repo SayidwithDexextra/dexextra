@@ -1,6 +1,6 @@
 import type { LearnArticle } from '@/content/learn/types';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.dexetera.xyz';
 
 /**
  * Emits Article + BreadcrumbList (+ optional FAQPage) JSON-LD for a learn post.

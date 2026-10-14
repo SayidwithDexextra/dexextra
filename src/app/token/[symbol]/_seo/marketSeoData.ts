@@ -5,7 +5,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const SEO_BASE_URL =
-  process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
+  process.env.NEXT_PUBLIC_APP_URL || 'https://www.dexetera.xyz';
 
 export interface MarketSeoData {
   /** The raw route param (used for URLs / OG image even when the market isn't found). */

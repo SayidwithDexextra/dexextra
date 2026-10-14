@@ -47,7 +47,7 @@ export async function generateMetadata({
   const sp = await searchParams;
   const variant = resolveVariant(firstParam(sp.variant));
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.dexetera.xyz';
   // Link unfurls use the landscape (1.91:1) image — the universal card size.
   const ogImageUrl = `${baseUrl}/api/og/market/${symbol}?variant=${variant}`;
   const pageUrl = `${baseUrl}/token/${symbol}`;

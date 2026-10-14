@@ -6,7 +6,7 @@ import {
   RESEARCH_CONFIG,
 } from '@/content/research';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.dexetera.xyz';
 
 export const metadata: Metadata = {
   title: 'Research — Prediction-Market Intelligence',

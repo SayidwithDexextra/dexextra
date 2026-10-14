@@ -12,7 +12,7 @@ import ResearchSegments from '@/components/research/ResearchSegments';
 import ResearchJsonLd from '@/components/research/ResearchJsonLd';
 import SampleBanner from '@/components/research/SampleBanner';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.dexetera.xyz';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
