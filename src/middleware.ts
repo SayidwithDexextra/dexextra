@@ -15,6 +15,7 @@ const GEO_EXEMPT_PATHS = [
   '/static',
   '/Dexicon',
   '/charting_library',
+  '/og-image.png',
 ]
 
 // API routes that should be BLOCKED for geo-restricted users (action endpoints only)

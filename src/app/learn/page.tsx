@@ -10,7 +10,7 @@ import {
   withAlpha,
 } from '@/components/learn/learnTaxonomy';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
 
 export const metadata: Metadata = {
   title: 'Learn — Prediction & Permissionless Futures Markets',

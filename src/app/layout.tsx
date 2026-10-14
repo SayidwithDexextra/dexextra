@@ -16,14 +16,16 @@ const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
 })
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org'
-
 const defaultTitle = 'Dexetera — Trade Any Metric'
 const defaultDescription =
   'Dexetera is a decentralized trading platform for permissionless futures markets on any measurable metric. Create, trade, and settle markets on real-world data.'
 
+const ogTitle = 'Dexetera: live on-chain derivatives exchange'
+const ogDescription =
+  'Create a market on any measurable metric. Trade or hedge real-world risk with leverage in USDC. Non-custodial, gasless, live on mainnet.'
+
 export const metadata: Metadata = {
-  metadataBase: new URL(baseUrl),
+  metadataBase: new URL('https://dexetera.xyz'),
   title: {
     default: defaultTitle,
     template: '%s | Dexetera',
@@ -59,14 +61,23 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: 'Dexetera',
-    title: defaultTitle,
-    description: defaultDescription,
-    url: baseUrl,
+    title: ogTitle,
+    description: ogDescription,
+    url: 'https://dexetera.xyz',
+    images: [
+      {
+        url: 'https://dexetera.xyz/og-image.png',
+        width: 1200,
+        height: 627,
+        alt: 'Dexetera: trade any metric',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: defaultTitle,
-    description: defaultDescription,
+    title: ogTitle,
+    description: ogDescription,
+    images: ['https://dexetera.xyz/og-image.png'],
     creator: '@dexeteralabs',
     site: '@dexeteralabs',
   },

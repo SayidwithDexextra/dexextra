@@ -7,7 +7,7 @@ import {
   RESEARCH_CONFIG,
 } from '@/content/research';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 

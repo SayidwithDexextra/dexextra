@@ -9,7 +9,7 @@ import ReadingProgress from '@/components/learn/ReadingProgress';
 import ShareRow from '@/components/learn/ShareRow';
 import { getCategoryStyle, withAlpha } from '@/components/learn/learnTaxonomy';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
 
 interface PageProps {
   params: Promise<{ slug: string }>;

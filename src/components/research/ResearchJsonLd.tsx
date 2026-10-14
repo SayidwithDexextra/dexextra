@@ -1,6 +1,6 @@
 import type { ResearchPost } from '@/content/research/types';
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.org';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dexetera.xyz';
 
 /**
  * Article + Dataset + BreadcrumbList (+ optional FAQPage) JSON-LD for a research
