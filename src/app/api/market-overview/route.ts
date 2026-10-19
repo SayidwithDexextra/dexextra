@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
         decimals,
         is_active,
         market_status,
+        settlement_date,
         total_volume,
         total_trades,
         created_at
@@ -111,6 +112,7 @@ export async function GET(request: NextRequest) {
         decimals: m.decimals,
         is_active: m.is_active,
         market_status: m.market_status,
+        settlement_date: m.settlement_date ?? null,
         total_volume: m.total_volume,
         total_trades: m.total_trades,
         created_at: m.created_at,

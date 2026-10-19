@@ -1,0 +1,70 @@
+/* Dexetera hero market card. Values copied 1:1 from the dexetera.org market wall small card.
+   Uses the app's tokens when present, with the landing values as fallbacks. */
+.card {
+  --hmc-card: var(--t-card, #0F0F0F);
+  --hmc-line: var(--t-stroke, #222222);
+  --hmc-line-hover: var(--t-stroke-hover, #333333);
+  --hmc-t1: #FFFFFF;
+  --hmc-t3: #808080;
+  --hmc-t4: #606060;
+  --hmc-glass: rgba(255, 255, 255, 0.04);
+  --hmc-glass-line: rgba(255, 255, 255, 0.06);
+  --hmc-green: #4ADE80;
+  --hmc-red: #F87171;
+  --hmc-amber: #FACC15;
+  --hmc-amber-text: #D4A017;
+  --hmc-sans: Manrope, "Manrope Fallback", system-ui, sans-serif;
+  --hmc-mono: var(--font-geist-mono, "JetBrains Mono"), "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  background: var(--hmc-card);
+  border: 1px solid var(--hmc-line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--hmc-t1);
+  min-width: 0;
+  text-decoration: none;
+  font-family: var(--hmc-sans);
+  transition: border-color .15s, transform .15s;
+}
+.card:hover { border-color: var(--hmc-line-hover); transform: translateY(-1px); color: var(--hmc-t1); }
+.card:focus-visible { outline: none; border-color: var(--hmc-line-hover); box-shadow: 0 0 0 1px var(--hmc-line-hover); }
+
+.top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cat {
+  font-size: 10px; font-weight: 500; line-height: normal; color: var(--hmc-t3);
+  background: var(--hmc-glass); border: 1px solid var(--hmc-glass-line);
+  border-radius: 4px; padding: 3px 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.tag, .tagLive { font-family: var(--hmc-mono); font-size: 9px; letter-spacing: 0.08em; line-height: normal; flex: none; color: var(--hmc-t4); }
+.tagLive { color: var(--hmc-green); }
+
+.id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.name { font-size: 13px; font-weight: 600; line-height: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sym { font-family: var(--hmc-mono); font-size: 10px; line-height: normal; color: var(--hmc-t4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.px { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.price { font-family: var(--hmc-mono); font-size: 15px; font-weight: 600; line-height: normal; }
+.up, .down, .flat { font-family: var(--hmc-mono); font-size: 11px; line-height: normal; }
+.up { color: var(--hmc-green); }
+.down { color: var(--hmc-red); }
+.flat { color: var(--hmc-t4); }
+.sparkBox { flex: 1; min-width: 0; height: 36px; display: block; }
+.spark { width: 100%; height: 100%; display: block; overflow: visible; }
+
+.settle {
+  align-self: flex-start; font-family: var(--hmc-mono); font-size: 9px; line-height: normal;
+  color: var(--hmc-amber-text);
+  background: color-mix(in srgb, var(--hmc-amber) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hmc-amber) 20%, transparent);
+  border-radius: 4px; padding: 2px 6px;
+}
+
+/* Grid for the hero "Active Markets" panel (replaces .wall). */
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+@media (max-width: 1024px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }

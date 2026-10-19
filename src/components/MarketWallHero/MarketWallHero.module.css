@@ -219,12 +219,6 @@
   border-radius: 50%;
   flex: none;
 }
-.dotUp {
-  background: #4ade80;
-}
-.dotDown {
-  background: #f87171;
-}
 .dotLive {
   background: #4ade80;
   animation: statusPulse 2.5s ease-in-out infinite;
@@ -276,86 +270,6 @@
   font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-.wall {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 6px;
-}
-
-.tile {
-  background: rgba(15, 15, 15, 0.72);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--t-stroke);
-  border-radius: 6px;
-  padding: 12px 10px;
-  min-height: 99px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  cursor: pointer;
-  text-decoration: none;
-  transition: all 0.2s;
-}
-.tile:hover {
-  background: #1a1a1a;
-  border-color: var(--t-stroke-hover);
-}
-.tile:focus-visible {
-  outline: none;
-  border-color: var(--t-stroke-hover);
-  box-shadow: 0 0 0 1px var(--t-stroke-hover);
-}
-
-.tileName {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-.tileName span {
-  font-size: 11px;
-  font-weight: 500;
-  color: #808080;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tileSpark {
-  height: 24px;
-  width: 100%;
-  min-width: 0;
-  align-self: stretch;
-  flex: none;
-  display: block;
-}
-
-.spark {
-  display: block;
-  width: 100%;
-  height: 24px;
-  overflow: visible;
-}
-
-.tileFoot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10px;
-}
-.tilePrice {
-  color: #ffffff;
-}
-.tileChangeUp {
-  color: #4ade80;
-}
-.tileChangeDown {
-  color: #f87171;
-}
-
 .empty {
   grid-column: 1 / -1;
   background: var(--t-card);
@@ -372,6 +286,16 @@
 }
 
 /* ─── Skeletons ─── */
+.skelCard {
+  border-radius: 12px;
+  min-height: 153px;
+  background: var(--t-card);
+  border: 1px solid var(--t-stroke);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .skelBar {
   height: 9px;
   border-radius: 4px;
@@ -427,8 +351,5 @@
   .hero {
     margin: 8px;
     border-radius: 14px;
-  }
-  .wall {
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   }
 }

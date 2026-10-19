@@ -54,6 +54,17 @@ function downsample(values: number[], n = 8): number[] {
   });
 }
 
+function pickCategory(category: unknown): string | undefined {
+  const list = Array.isArray(category)
+    ? category
+    : typeof category === 'string' && category
+      ? [category]
+      : [];
+  return list
+    .map((entry) => String(entry).trim())
+    .find((entry) => entry.length > 0 && entry.toLowerCase() !== 'top picks');
+}
+
 function changeFromSeries(series?: number[]): number | null {
   if (!series || series.length < 2) return null;
   const first = series[0];
@@ -134,9 +145,12 @@ export function useMarketWallTiles(limit = 6) {
       return {
         id: String(m.market_id || ''),
         slug: m.market_identifier || m.symbol,
+        symbol: symbol || identifier,
         name: m.name || m.symbol,
+        category: pickCategory(m.category),
         price: fmtUsd(price),
         changePct,
+        settlementDate: m.settlement_date ?? null,
       };
     });
 

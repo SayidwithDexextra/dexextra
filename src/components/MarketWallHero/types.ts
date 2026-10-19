@@ -3,16 +3,22 @@ export interface MarketWallTile {
   id: string;
   /** market_identifier || symbol — used for the /token/[id] href */
   slug: string;
+  /** symbol, falling back to market_identifier. Shown as SYMBOL/USDC */
+  symbol: string;
   /** name || symbol */
   name: string;
+  /** first category that is not "Top Picks" */
+  category?: string;
   /** formatted, e.g. "$29,686.80" */
   price: string;
   /** 24h change in percent; null renders as "—" */
   changePct: number | null;
   /** Computed once from changePct. null changePct defaults to 'up'. */
   direction: 'up' | 'down';
-  /** optional price series for the sparkline; omit to keep the reserved 22px empty */
+  /** price series for the sparkline, oldest to newest */
   series?: number[];
+  /** markets.settlement_date; omitted when the row has none */
+  settlementDate?: string | null;
 }
 
 export interface MarketWallHeroProps {
